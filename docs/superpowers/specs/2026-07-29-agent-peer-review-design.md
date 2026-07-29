@@ -203,7 +203,16 @@ Plus schema-validation tests for every schema, light smoke tests for the CLI and
 
 ## 14. Distribution
 
-Publish `@input-output-hk/agent-review` (public npm or GitHub Packages — decided at release). Usable via `npm i -g` or `npx`. MCP host wiring example:
+Publish `@input-output-hk/agent-review` to **GitHub Packages** (registry `https://npm.pkg.github.com`; the package scope must match the `input-output-hk` org). Consumers add a one-line `.npmrc` mapping and authenticate with a token carrying `read:packages` — **the same GitHub token the agent already uses for the review flow can carry that scope**, so no extra credential is introduced. A CI workflow publishes on release with `permissions: packages: write`.
+
+Machine `.npmrc`:
+
+```ini
+@input-output-hk:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+Install via `npm i -g @input-output-hk/agent-review` (or `npx`). MCP host wiring example (registry configured as above):
 
 ```json
 { "command": "npx", "args": ["-y", "@input-output-hk/agent-review", "serve"] }
@@ -232,7 +241,7 @@ Scheduling, Slack, Discord, Jira, GitLab, multi-backend/non-GitHub transports, d
 
 Resolved in this design: (1) auth/identity + per-person routing; (2) how the claim pins the SHA and survives restarts; (3) claim concurrency/race handling; (4) SHA drift after claim; (5) skill distribution across heterogeneous hosts (interface serves skill content); (6) untrusted-PR-code execution risk; (7) label collisions with GitHub defaults; (8) an interface for non-MCP hosts (CLI + orchestration skill); (9) default-review behavior when no skill is requested; (10) config schema + resolution order; (11) idempotent bootstrap, pagination, stale-claim TTL, closed/merged handling; (12) review-outcome → GitHub-review-event mapping; (13) token scopes.
 
-Deferred (non-blocking): npm publish target (public npm vs GitHub Packages).
+Decided: publish to **GitHub Packages** under `@input-output-hk` (§14). No open decisions remain.
 
 ## 18. Repository layout (target)
 
