@@ -7,7 +7,7 @@ export class FakeGitHubGateway implements GitHubGateway {
   comments = new Map<string, IssueComment[]>();
   requested = new Map<string, Set<string>>();
   labels = new Map<string, LabelSpec[]>();
-  reviews: Array<{ repo: string; pr: number; commitId: string; event: string; body: string }> = [];
+  reviews: Array<{ repo: string; pr: number; commitId: string; event: string; body: string; comments?: Array<{ path: string; line: number; body: string }> }> = [];
   private commentId = 1;
   private key(repo: string, pr: number) { return `${repo}#${pr}`; }
 
@@ -51,8 +51,8 @@ export class FakeGitHubGateway implements GitHubGateway {
   async deleteComment(repo: string, commentId: number): Promise<void> {
     for (const [k, list] of this.comments) this.comments.set(k, list.filter((c) => c.id !== commentId));
   }
-  async submitReview(repo: string, pr: number, review: { commitId: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string }): Promise<{ url: string }> {
-    this.reviews.push({ repo, pr, commitId: review.commitId, event: review.event, body: review.body });
+  async submitReview(repo: string, pr: number, review: { commitId: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: Array<{ path: string; line: number; body: string }> }): Promise<{ url: string }> {
+    this.reviews.push({ repo, pr, commitId: review.commitId, event: review.event, body: review.body, comments: review.comments });
     this.requested.get(this.key(repo, pr))?.delete(this.login); // native: submitting clears the request
     return { url: `https://github.com/${repo}/pull/${pr}#pullrequestreview-1` };
   }
