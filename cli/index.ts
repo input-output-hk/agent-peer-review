@@ -73,4 +73,10 @@ program.command("complete")
     }));
   });
 
+program.command("serve").description("Run the MCP server over stdio").action(async () => {
+  const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
+  const { buildServer } = await import("../mcp/server.js");
+  await buildServer().connect(new StdioServerTransport());
+});
+
 program.parseAsync().catch((e) => { printLine(`Error: ${(e as Error).message}`); process.exitCode = 1; });
