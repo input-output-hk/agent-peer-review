@@ -1,0 +1,33 @@
+{
+  "$ref": "#/definitions/config",
+  "definitions": {
+    "config": {
+      "type": "object",
+      "properties": {
+        "githubLogin": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "defaultRepo": {
+          "type": "string"
+        },
+        "skillsDir": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "runChecks": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

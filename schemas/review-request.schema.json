@@ -1,0 +1,43 @@
+{
+  "$ref": "#/definitions/review-request",
+  "definitions": {
+    "review-request": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^[^/]+\\/[^/]+$"
+        },
+        "pr": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "reviewers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "pr",
+        "reviewers"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
