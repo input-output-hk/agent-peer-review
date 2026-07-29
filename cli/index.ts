@@ -1,6 +1,11 @@
 #!/usr/bin/env node
+import { hostname } from "node:os";
+import { readFileSync } from "node:fs";
 import { Command } from "commander";
-import { loadConfig, OctokitGateway, bootstrap, SKILL_NAMES } from "../core/index.js";
+import {
+  loadConfig, OctokitGateway, bootstrap, SKILL_NAMES,
+  createReview, listReviews, claimReview, completeReview,
+} from "../core/index.js";
 import { printJson, printLine } from "./render.js";
 
 const program = new Command();
@@ -28,6 +33,44 @@ program.command("labels")
   .action(async (action: string, opts: { repo: string }) => {
     if (action !== "bootstrap") throw new Error(`unknown labels action: ${action}`);
     printJson(await bootstrap(gh(), { repo: opts.repo }));
+  });
+
+const csv = (v?: string): string[] => (v ? v.split(",").map((s) => s.trim()).filter(Boolean) : []);
+const readMaybeFile = (v: string): string => (v.startsWith("@") ? readFileSync(v.slice(1), "utf8") : v);
+
+program.command("request")
+  .requiredOption("--repo <owner/name>").requiredOption("--pr <n>", "PR number")
+  .requiredOption("--reviewers <csv>", "comma-separated GitHub logins to request review from")
+  .option("--skills <csv>", "comma-separated skills", "")
+  .option("--note <text>")
+  .action(async (o) => {
+    printJson(await createReview(gh(), { repo: o.repo, pr: Number(o.pr), skills: csv(o.skills), reviewers: csv(o.reviewers), note: o.note }));
+  });
+
+program.command("list")
+  .requiredOption("--repo <owner/name>")
+  .option("--reviewer <login>", "filter by requested login (defaults to your own)")
+  .action(async (o) => {
+    const login = o.reviewer ?? cfg().githubLogin ?? undefined;
+    printJson(await listReviews(gh(), { repo: o.repo, login }));
+  });
+
+program.command("claim")
+  .requiredOption("--repo <owner/name>").requiredOption("--pr <n>")
+  .action(async (o) => {
+    printJson(await claimReview({ gh: gh(), config: cfg(), machine: hostname(), now: new Date().toISOString() }, { repo: o.repo, pr: Number(o.pr) }));
+  });
+
+program.command("complete")
+  .requiredOption("--repo <owner/name>").requiredOption("--pr <n>")
+  .requiredOption("--event <event>", "approve | request-changes | comment")
+  .requiredOption("--summary <text|@file>")
+  .option("--comments <@file>", "JSON array of {path,line,body}")
+  .action(async (o) => {
+    printJson(await completeReview({ gh: gh(), config: cfg() }, {
+      repo: o.repo, pr: Number(o.pr), event: o.event, summary: readMaybeFile(o.summary),
+      comments: o.comments ? JSON.parse(readMaybeFile(o.comments)) : undefined,
+    }));
   });
 
 program.parseAsync().catch((e) => { printLine(`Error: ${(e as Error).message}`); process.exitCode = 1; });
