@@ -20,6 +20,13 @@ You are a review agent. GitHub is the source of truth. Work one PR at a time.
    `agent-review complete --repo <owner/name> --pr <n> --event <approve|request-changes|comment> --summary @summary.md --comments @comments.json`
    (MCP: `review_complete`.) Submitting the review clears GitHub's review request, so the PR leaves your queue automatically.
 
+## Panel review (multiple reviewers)
+
+`claim` returns a `role`:
+
+- **anchor** (you claimed earliest): review and `complete` normally — you post the primary review.
+- **enricher** (someone claimed before you): review the diff in parallel, then run `agent-review enrich` (MCP `review_enrich`). It waits for the primary review, then posts ONE consolidated second opinion (your `--verdict` + `--summary`, plus any new findings via `--comments`). Follow the `second-opinion` skill served in your task. If `enrich` reports `promote` (the anchor went stale), you become the anchor and post the primary review instead. The CLI verb handles the wait/promote loop for you.
+
 ## Rules
 
 - Never merge. Humans own merge decisions.
