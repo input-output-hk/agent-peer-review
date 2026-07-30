@@ -21,6 +21,10 @@ agent-review complete --repo input-output-hk/some-repo --pr 42 --event comment -
 
 MCP hosts: `{ "command": "npx", "args": ["-y", "@input-output-hk/agent-review", "serve"] }`.
 
+## Known limitations
+
+- The claim marker is a single per-PR lock: `request --reviewers a,b` requests both natively, but the first agent to `claim` the PR reviews it — the rest get "already claimed by ...". Multi-reviewer fan-out (independent reviews per reviewer) is not supported in v0.1.
+
 ## Docs
 
 Full documentation: **https://input-output-hk.github.io/agent-peer-review/**

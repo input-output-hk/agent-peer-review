@@ -14,6 +14,11 @@ program.option("-c, --config <path>", "explicit config file path");
 
 const gh = () => new OctokitGateway();
 const cfg = () => loadConfig(program.opts().config);
+const repoOf = (o: { repo?: string }): string => {
+  const r = o.repo ?? cfg().defaultRepo;
+  if (!r) throw new Error("--repo is required (or set defaultRepo in your config)");
+  return r;
+};
 
 program.command("config").description("Show the resolved machine config").action(() => printJson(cfg()));
 
@@ -28,47 +33,47 @@ program.command("skills")
 
 program.command("labels")
   .argument("<action>", "bootstrap")
-  .requiredOption("--repo <owner/name>")
+  .option("--repo <owner/name>")
   .description("Bootstrap the label profile (agent + skills) on a repo")
-  .action(async (action: string, opts: { repo: string }) => {
+  .action(async (action: string, opts: { repo?: string }) => {
     if (action !== "bootstrap") throw new Error(`unknown labels action: ${action}`);
-    printJson(await bootstrap(gh(), { repo: opts.repo }));
+    printJson(await bootstrap(gh(), { repo: repoOf(opts) }));
   });
 
 const csv = (v?: string): string[] => (v ? v.split(",").map((s) => s.trim()).filter(Boolean) : []);
 const readMaybeFile = (v: string): string => (v.startsWith("@") ? readFileSync(v.slice(1), "utf8") : v);
 
 program.command("request")
-  .requiredOption("--repo <owner/name>").requiredOption("--pr <n>", "PR number")
+  .option("--repo <owner/name>").requiredOption("--pr <n>", "PR number")
   .requiredOption("--reviewers <csv>", "comma-separated GitHub logins to request review from")
   .option("--skills <csv>", "comma-separated skills", "")
   .option("--note <text>")
   .action(async (o) => {
-    printJson(await createReview(gh(), { repo: o.repo, pr: Number(o.pr), skills: csv(o.skills), reviewers: csv(o.reviewers), note: o.note }));
+    printJson(await createReview(gh(), { repo: repoOf(o), pr: Number(o.pr), skills: csv(o.skills), reviewers: csv(o.reviewers), note: o.note }));
   });
 
 program.command("list")
-  .requiredOption("--repo <owner/name>")
+  .option("--repo <owner/name>")
   .option("--reviewer <login>", "filter by requested login (defaults to your own)")
   .action(async (o) => {
     const login = o.reviewer ?? cfg().githubLogin ?? undefined;
-    printJson(await listReviews(gh(), { repo: o.repo, login }));
+    printJson(await listReviews(gh(), { repo: repoOf(o), login }));
   });
 
 program.command("claim")
-  .requiredOption("--repo <owner/name>").requiredOption("--pr <n>")
+  .option("--repo <owner/name>").requiredOption("--pr <n>")
   .action(async (o) => {
-    printJson(await claimReview({ gh: gh(), config: cfg(), machine: hostname(), now: new Date().toISOString() }, { repo: o.repo, pr: Number(o.pr) }));
+    printJson(await claimReview({ gh: gh(), config: cfg(), machine: hostname(), now: new Date().toISOString() }, { repo: repoOf(o), pr: Number(o.pr) }));
   });
 
 program.command("complete")
-  .requiredOption("--repo <owner/name>").requiredOption("--pr <n>")
+  .option("--repo <owner/name>").requiredOption("--pr <n>")
   .requiredOption("--event <event>", "approve | request-changes | comment")
   .requiredOption("--summary <text|@file>")
   .option("--comments <@file>", "JSON array of {path,line,body}")
   .action(async (o) => {
     printJson(await completeReview({ gh: gh(), config: cfg() }, {
-      repo: o.repo, pr: Number(o.pr), event: o.event, summary: readMaybeFile(o.summary),
+      repo: repoOf(o), pr: Number(o.pr), event: o.event, summary: readMaybeFile(o.summary),
       comments: o.comments ? JSON.parse(readMaybeFile(o.comments)) : undefined,
     }));
   });
