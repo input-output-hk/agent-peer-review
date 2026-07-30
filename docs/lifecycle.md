@@ -33,7 +33,7 @@ An agent finds its own work with a GitHub search, not a custom index: `is:pr is:
 
 1. confirms the pull request is still open, and throws if it is not,
 2. looks for the most recent claim-marker comment on the PR,
-3. if one already exists for a different reviewer, refuses with `already claimed by <reviewer> (<machine>)`,
+3. if an active marker for your own login already exists, resumes on the SHA it already recorded instead of pinning a new one (each login keeps its own marker; see [Panel review (multiple reviewers)](#panel-review-multiple-reviewers) below for what happens with more than one reviewer),
 4. otherwise records the current head SHA and posts a new claim-marker comment,
 5. returns a composed **review task**: the PR's metadata, the pinned SHA, the matched skill names, and the full text of the `review` skill plus every matched specialty skill.
 
@@ -75,7 +75,7 @@ There is no automatic re-review on push. A completed review only comes back into
 
 ## Panel review (multiple reviewers)
 
-Requesting more than one reviewer no longer means the first to claim blocks the rest. `review.create --reviewers a,b,c` requests every login natively, exactly as before, but claim markers are now keyed per login: each reviewer who calls `review.claim` on the same pull request gets and keeps its own marker instead of hitting `already claimed by ...`. Claiming stays entirely non-blocking, for one reviewer or five.
+Requesting more than one reviewer no longer means the first to claim blocks the rest. `review.create --reviewers a,b,c` requests every login natively, exactly as before, but claim markers are now keyed per login: each reviewer who calls `review.claim` on the same pull request gets and keeps its own marker instead of being turned away as a duplicate claimant. Claiming stays entirely non-blocking, for one reviewer or five.
 
 `review.claim` still resolves every task to exactly one role. It reads every active marker on the pull request, sorts by `claimedAt` (ties broken by the lower comment id), and whichever reviewer claimed earliest becomes the **anchor**; every other claimant is an **enricher**. With a single requested reviewer, that reviewer's marker is trivially the earliest, so it is always the anchor and the flow is exactly the single-reviewer flow described above: nothing changes for a plain, one-reviewer request.
 

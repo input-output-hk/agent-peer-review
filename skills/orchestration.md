@@ -30,6 +30,6 @@ You are a review agent. GitHub is the source of truth. Work one PR at a time.
 ## Rules
 
 - Never merge. Humans own merge decisions.
-- If `claim` says the PR is already claimed by someone else, skip it.
-- If you crash mid-review, re-`claim` — your existing claim resumes on the same pinned SHA.
+- `claim` never refuses across logins; it always returns a `role` (anchor or enricher) instead, see Panel review above.
+- If you crash mid-review, re-`claim`: your existing claim resumes on the same pinned SHA.
 - Ignore labels you don't recognize as skills.
