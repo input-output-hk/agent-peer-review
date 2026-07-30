@@ -83,18 +83,19 @@ program.command("enrich")
   .requiredOption("--verdict <agree|disagree|mixed>")
   .requiredOption("--summary <text|@file>")
   .option("--comments <@file>", "JSON array of {path,line,body} new findings")
-  .option("--poll <seconds>", "5")
-  .option("--timeout <seconds>", "1800")
+  .option("--poll <seconds>", "seconds between polls", "5")
+  .option("--timeout <seconds>", "seconds before giving up", "1800")
   .action(async (o) => {
     const enrichment = { overallVerdict: o.verdict, summary: readMaybeFile(o.summary), newFindings: o.comments ? JSON.parse(readMaybeFile(o.comments)) : undefined };
     const repo = repoOf(o), pr = Number(o.pr), ttlMs = Number(o.timeout) * 1000;
     const deadline = Date.now() + ttlMs;
+    const ghi = gh(), config = cfg();
     for (;;) {
-      const res = await enrichReview({ gh: gh(), config: cfg(), ttlMs, nowMs: Date.now() }, { repo, pr, ...enrichment });
+      const res = await enrichReview({ gh: ghi, config, ttlMs, nowMs: Date.now() }, { repo, pr, ...enrichment });
       if (res.status === "enriched") { printJson(res); return; }
       if (res.status === "promote") {
         const event = o.verdict === "agree" ? "approve" : o.verdict === "disagree" ? "request-changes" : "comment";
-        printJson(await completeReview({ gh: gh(), config: cfg() }, { repo, pr, event, summary: enrichment.summary, comments: enrichment.newFindings }));
+        printJson(await completeReview({ gh: ghi, config }, { repo, pr, event, summary: enrichment.summary, comments: enrichment.newFindings }));
         return;
       }
       if (Date.now() >= deadline) { printLine("Timed out waiting for the primary review."); process.exitCode = 1; return; }
