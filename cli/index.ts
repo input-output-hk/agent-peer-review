@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import {
   loadConfig, OctokitGateway, bootstrap, SKILL_NAMES,
-  createReview, listReviews, claimReview, completeReview,
+  createReview, listReviews, claimReview, completeReview, enrichReview,
 } from "../core/index.js";
 import { printJson, printLine } from "./render.js";
 
@@ -76,6 +76,30 @@ program.command("complete")
       repo: repoOf(o), pr: Number(o.pr), event: o.event, summary: readMaybeFile(o.summary),
       comments: o.comments ? JSON.parse(readMaybeFile(o.comments)) : undefined,
     }));
+  });
+
+program.command("enrich")
+  .requiredOption("--repo <owner/name>").requiredOption("--pr <n>")
+  .requiredOption("--verdict <agree|disagree|mixed>")
+  .requiredOption("--summary <text|@file>")
+  .option("--comments <@file>", "JSON array of {path,line,body} new findings")
+  .option("--poll <seconds>", "5")
+  .option("--timeout <seconds>", "1800")
+  .action(async (o) => {
+    const enrichment = { overallVerdict: o.verdict, summary: readMaybeFile(o.summary), newFindings: o.comments ? JSON.parse(readMaybeFile(o.comments)) : undefined };
+    const repo = repoOf(o), pr = Number(o.pr), ttlMs = Number(o.timeout) * 1000;
+    const deadline = Date.now() + ttlMs;
+    for (;;) {
+      const res = await enrichReview({ gh: gh(), config: cfg(), ttlMs, nowMs: Date.now() }, { repo, pr, ...enrichment });
+      if (res.status === "enriched") { printJson(res); return; }
+      if (res.status === "promote") {
+        const event = o.verdict === "agree" ? "approve" : o.verdict === "disagree" ? "request-changes" : "comment";
+        printJson(await completeReview({ gh: gh(), config: cfg() }, { repo, pr, event, summary: enrichment.summary, comments: enrichment.newFindings }));
+        return;
+      }
+      if (Date.now() >= deadline) { printLine("Timed out waiting for the primary review."); process.exitCode = 1; return; }
+      await new Promise((r) => setTimeout(r, Number(o.poll) * 1000));
+    }
   });
 
 program.command("serve").description("Run the MCP server over stdio").action(async () => {

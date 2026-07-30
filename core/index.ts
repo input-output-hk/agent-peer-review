@@ -10,3 +10,4 @@ export { createReview } from "./operations/create.js";
 export { listReviews } from "./operations/list.js";
 export { claimReview } from "./operations/claim.js";
 export { completeReview } from "./operations/complete.js";
+export { enrichReview } from "./operations/enrich.js";
