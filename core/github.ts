@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { Octokit } from "@octokit/rest";
-import type { PullRequest, IssueComment, LabelSpec } from "./model.js";
+import type { PullRequest, IssueComment, LabelSpec, Review, ReviewComment } from "./model.js";
 
 export interface GitHubGateway {
   getAuthenticatedLogin(): Promise<string>;
@@ -17,6 +17,8 @@ export interface GitHubGateway {
     commitId: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
     body: string; comments?: Array<{ path: string; line: number; body: string }>;
   }): Promise<{ url: string }>;
+  getReviews(repo: string, pr: number): Promise<Review[]>;
+  listReviewComments(repo: string, pr: number): Promise<ReviewComment[]>;
 }
 
 export function resolveToken(): string {
@@ -98,5 +100,15 @@ export class OctokitGateway implements GitHubGateway {
       comments: review.comments?.map((c) => ({ path: c.path, line: c.line, body: c.body })),
     });
     return { url: data.html_url ?? `https://github.com/${repo}/pull/${pr}` };
+  }
+  async getReviews(repo: string, pr: number): Promise<Review[]> {
+    const [owner, name] = split(repo);
+    const items = await this.kit.paginate(this.kit.pulls.listReviews, { owner, repo: name, pull_number: pr, per_page: 100 });
+    return items.map((r) => ({ id: r.id, author: r.user?.login ?? "unknown", state: r.state ?? "", body: r.body ?? "", commitId: r.commit_id ?? "", submittedAt: r.submitted_at ?? "" }));
+  }
+  async listReviewComments(repo: string, pr: number): Promise<ReviewComment[]> {
+    const [owner, name] = split(repo);
+    const items = await this.kit.paginate(this.kit.pulls.listReviewComments, { owner, repo: name, pull_number: pr, per_page: 100 });
+    return items.map((c) => ({ id: c.id, path: c.path, line: c.line ?? null, body: c.body ?? "", author: c.user?.login ?? "unknown" }));
   }
 }

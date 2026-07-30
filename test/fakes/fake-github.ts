@@ -1,5 +1,5 @@
 import type { GitHubGateway } from "../../core/github.js";
-import type { PullRequest, IssueComment, LabelSpec } from "../../core/model.js";
+import type { PullRequest, IssueComment, LabelSpec, Review, ReviewComment } from "../../core/model.js";
 
 export class FakeGitHubGateway implements GitHubGateway {
   login = "me";
@@ -7,8 +7,11 @@ export class FakeGitHubGateway implements GitHubGateway {
   comments = new Map<string, IssueComment[]>();
   requested = new Map<string, Set<string>>();
   labels = new Map<string, LabelSpec[]>();
-  reviews: Array<{ repo: string; pr: number; commitId: string; event: string; body: string; comments?: Array<{ path: string; line: number; body: string }> }> = [];
+  reviews: Array<{ repo: string; pr: number; id: number; author: string; state: string; event: string; body: string; commitId: string; comments?: Array<{ path: string; line: number; body: string }>; submittedAt: string }> = [];
+  reviewComments: Array<{ repo: string; pr: number; id: number; path: string; line: number | null; body: string; author: string }> = [];
   private commentId = 1;
+  private reviewSeq = 1;
+  private reviewCommentSeq = 1;
   private key(repo: string, pr: number) { return `${repo}#${pr}`; }
 
   seedPr(pr: PullRequest, repo = "o/r") { this.prs.set(this.key(repo, pr.number), { ...pr }); }
@@ -52,8 +55,19 @@ export class FakeGitHubGateway implements GitHubGateway {
     for (const [k, list] of this.comments) this.comments.set(k, list.filter((c) => c.id !== commentId));
   }
   async submitReview(repo: string, pr: number, review: { commitId: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: Array<{ path: string; line: number; body: string }> }): Promise<{ url: string }> {
-    this.reviews.push({ repo, pr, commitId: review.commitId, event: review.event, body: review.body, comments: review.comments });
+    const id = this.reviewSeq++;
+    const stateMap = { APPROVE: "APPROVED", REQUEST_CHANGES: "CHANGES_REQUESTED", COMMENT: "COMMENTED" } as const;
+    this.reviews.push({ repo, pr, id, author: this.login, state: stateMap[review.event], event: review.event, body: review.body, commitId: review.commitId, comments: review.comments, submittedAt: `t${id}` });
+    for (const c of review.comments ?? []) this.reviewComments.push({ repo, pr, id: this.reviewCommentSeq++, path: c.path, line: c.line, body: c.body, author: this.login });
     this.requested.get(this.key(repo, pr))?.delete(this.login); // native: submitting clears the request
-    return { url: `https://github.com/${repo}/pull/${pr}#pullrequestreview-1` };
+    return { url: `https://github.com/${repo}/pull/${pr}#pullrequestreview-${id}` };
+  }
+  async getReviews(repo: string, pr: number): Promise<Review[]> {
+    return this.reviews.filter((r) => r.repo === repo && r.pr === pr)
+      .map((r) => ({ id: r.id, author: r.author, state: r.state, body: r.body, commitId: r.commitId, submittedAt: r.submittedAt }));
+  }
+  async listReviewComments(repo: string, pr: number): Promise<ReviewComment[]> {
+    return this.reviewComments.filter((c) => c.repo === repo && c.pr === pr)
+      .map((c) => ({ id: c.id, path: c.path, line: c.line, body: c.body, author: c.author }));
   }
 }
