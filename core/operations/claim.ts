@@ -31,7 +31,9 @@ export async function claimReview(
   const skills = parseSkills(pr.labels);
   return {
     repo: opts.repo, pr: pr.number, url: pr.url, title: pr.title, author: pr.author,
-    headSha: pinnedSha, baseSha: pr.baseSha, reviewer: login, skills,
+    headSha: pinnedSha, baseSha: pr.baseSha, reviewer: login,
+    role: "anchor", // TODO(Task 3): compute real role
+    skills,
     instructions: composeInstructions(skills, config), claim: { machine, claimedAt: now },
   };
 }

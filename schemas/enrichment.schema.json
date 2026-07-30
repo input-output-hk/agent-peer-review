@@ -1,0 +1,52 @@
+{
+  "$ref": "#/definitions/enrichment",
+  "definitions": {
+    "enrichment": {
+      "type": "object",
+      "properties": {
+        "overallVerdict": {
+          "type": "string",
+          "enum": [
+            "agree",
+            "disagree",
+            "mixed"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "newFindings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "line": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "body": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "line",
+              "body"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "overallVerdict",
+        "summary"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

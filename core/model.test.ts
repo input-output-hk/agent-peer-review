@@ -34,3 +34,15 @@ describe("model", () => {
     expect(() => LabelSpecSchema.parse({ name: "needs-review", color: "xyz", description: "Needs another look" })).toThrow();
   });
 });
+
+import { EnrichmentSchema } from "./model.js";
+describe("enrichment", () => {
+  it("accepts a valid enrichment", () => {
+    const e = EnrichmentSchema.parse({ overallVerdict: "mixed", summary: "s" });
+    expect(e.newFindings).toBeUndefined();
+  });
+  it("rejects an unknown verdict and an empty summary", () => {
+    expect(() => EnrichmentSchema.parse({ overallVerdict: "nope", summary: "s" })).toThrow();
+    expect(() => EnrichmentSchema.parse({ overallVerdict: "agree", summary: "" })).toThrow();
+  });
+});
