@@ -79,7 +79,7 @@ program.command("complete")
   });
 
 program.command("enrich")
-  .requiredOption("--repo <owner/name>").requiredOption("--pr <n>")
+  .option("--repo <owner/name>").requiredOption("--pr <n>")
   .requiredOption("--verdict <agree|disagree|mixed>")
   .requiredOption("--summary <text|@file>")
   .option("--comments <@file>", "JSON array of {path,line,body} new findings")

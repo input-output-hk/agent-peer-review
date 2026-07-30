@@ -27,7 +27,7 @@ export async function claimReview(
     a.marker.claimedAt.localeCompare(b.marker.claimedAt) || a.comment.id - b.comment.id)[0]?.marker;
   const role: Role = earliest && earliest.reviewer === login ? "anchor" : "enricher";
 
-  const skills = parseSkills(pr.labels);
+  const skills = parseSkills(pr.labels).filter((n) => n !== "second-opinion");
   const instructions = composeInstructions(skills, config);
   if (role === "enricher" && hasSkill("second-opinion", config)) {
     instructions.skills.push({ name: "second-opinion", content: loadSkill("second-opinion", config) });

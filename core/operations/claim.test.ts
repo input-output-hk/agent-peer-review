@@ -59,4 +59,19 @@ describe("claimReview", () => {
     expect(again.role).toBe("anchor");
     expect(again.headSha).toBe("cafe1234");
   });
+
+  it("filters a manually-applied second-opinion label so only the enricher auto-inject serves it, exactly once", async () => {
+    const dir = skillsDir();
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 7, title: "t", author: "a", headSha: "feed1234", baseSha: "b", url: "u", state: "open", labels: ["agent", "second-opinion"] });
+    gh.login = "alice";
+    const a = await claimReview({ gh, config: cfg(dir), machine: "m1", now: "2026-07-30T00:00:00Z" }, { repo: "o/r", pr: 7 });
+    expect(a.role).toBe("anchor");
+    expect(a.skills).not.toContain("second-opinion");
+    expect(a.instructions.skills.map((s) => s.name)).not.toContain("second-opinion");
+    gh.login = "bob";
+    const b = await claimReview({ gh, config: cfg(dir), machine: "m2", now: "2026-07-30T00:01:00Z" }, { repo: "o/r", pr: 7 });
+    expect(b.role).toBe("enricher");
+    expect(b.instructions.skills.filter((s) => s.name === "second-opinion")).toHaveLength(1);
+  });
 });

@@ -46,4 +46,20 @@ describe("enrichReview", () => {
       { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
     expect(res.status).toBe("promote");
   });
+  it("promotes only the earliest surviving enricher when a 3-reviewer panel's anchor is stale", async () => {
+    const gh = new FakeGitHubGateway(); panelPr(gh);
+    gh.seedRequest("o/r", 9, "carol");
+    await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "alice", machine: "m1", sha: "headsha", claimedAt: "2026-07-30T00:00:00Z" }));
+    gh.login = "bob";
+    await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "bob", machine: "m2", sha: "headsha", claimedAt: "2026-07-30T00:01:00Z" }));
+    gh.login = "carol";
+    await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "carol", machine: "m3", sha: "headsha", claimedAt: "2026-07-30T00:02:00Z" }));
+    const nowMs = Date.parse("2026-07-30T01:00:00Z"); // 1h past alice's (the anchor's) claim; TTL is 30m
+    gh.login = "bob";
+    const bobRes = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs }, { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
+    gh.login = "carol";
+    const carolRes = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs }, { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
+    expect(bobRes.status).toBe("promote"); // earliest surviving (non-anchor) marker
+    expect(carolRes.status).toBe("waiting"); // defers to bob
+  });
 });

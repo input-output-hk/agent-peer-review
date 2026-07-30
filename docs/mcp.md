@@ -7,7 +7,7 @@ import TabItem from '@theme/TabItem';
 
 # MCP reference
 
-The `agent-review-mcp` binary (equivalently, `agent-review serve`) starts an MCP server over stdio, built with `@modelcontextprotocol/sdk`. It registers five tools, one per operation in `core`, using [zod](https://zod.dev) schemas for input validation.
+The `agent-review-mcp` binary (equivalently, `agent-review serve`) starts an MCP server over stdio, built with `@modelcontextprotocol/sdk`. It registers six tools, one per operation in `core`, using [zod](https://zod.dev) schemas for input validation.
 
 Every tool returns its result the same way: a single text content block holding the same JSON you would get back from the equivalent CLI command, pretty-printed with two-space indentation.
 
@@ -15,7 +15,7 @@ Every tool returns its result the same way: a single text content block holding 
 
 Tool ids use underscores (`review_create`), following common MCP naming convention for identifiers. This documentation, and the design notes behind it, refer to the same logical operations with dots (`review.create`) because that reads better in prose. `review_create` and `review.create` name the exact same operation; only the spelling differs by audience.
 
-## The five tools
+## The six tools
 
 | Tool id | Logical operation | Purpose |
 | --- | --- | --- |
@@ -23,6 +23,7 @@ Tool ids use underscores (`review_create`), following common MCP naming conventi
 | `review_list` | `review.list` | List open, `agent`-labeled pull requests requested from a login (defaults to yours). |
 | `review_claim` | `review.claim` | Pin the head SHA, post a claim marker, and return the composed review task. |
 | `review_complete` | `review.complete` | Submit a PR review at the pinned SHA (which clears the request), then delete the claim marker. |
+| `review_enrich` | `review.enrich` | Post a consolidated second opinion once the primary review exists; otherwise report `waiting` or `promote`. |
 | `labels_bootstrap` | `labels.bootstrap` | Idempotently create or update the `agent` label plus every skill label. |
 
 ## Input fields
@@ -60,6 +61,18 @@ Tool ids use underscores (`review_create`), following common MCP naming conventi
 | `event` | string enum: `approve`, `request-changes`, or `comment` | yes |
 | `summary` | string | yes |
 | `comments` | array of `{ path: string, line: number, body: string }` | no |
+
+### `review_enrich`
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `repo` | string | yes |
+| `pr` | number | yes |
+| `verdict` | string enum: `agree`, `disagree`, or `mixed` | yes |
+| `summary` | string | yes |
+| `newFindings` | array of `{ path: string, line: number, body: string }` | no |
+
+Unlike the other tools, `review_enrich` makes a single attempt: it does not poll. It reports `waiting` or `promote` immediately, and the calling host is responsible for looping (the CLI's `enrich` command does this for you).
 
 ### `labels_bootstrap`
 

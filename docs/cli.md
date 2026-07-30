@@ -4,14 +4,14 @@ sidebar_position: 6
 
 # CLI reference
 
-`agent-review` exposes nine commands: five that drive the review flow (`request`, `list`, `claim`, `complete`, and `labels bootstrap`), and four small utilities (`config`, `whoami`, `skills list`, and `serve`). Every command and flag on this page is read straight from `cli/index.ts`.
+`agent-review` exposes ten commands: six that drive the review flow (`request`, `list`, `claim`, `complete`, `enrich`, and `labels bootstrap`), and four small utilities (`config`, `whoami`, `skills list`, and `serve`). Every command and flag on this page is read straight from `cli/index.ts`.
 
 ## Global options
 
 | Option | Applies to | Meaning |
 | --- | --- | --- |
 | `-c, --config <path>` | every command | An explicit config file path. Takes priority over every other tier in the resolution order described in [Quick start](./quick-start.md#configure-optional). |
-| `--repo <owner/name>` | `request`, `list`, `claim`, `complete`, `labels bootstrap` | The repository to act on. Optional if `defaultRepo` is set in your config; the command exits with an error if neither is provided. |
+| `--repo <owner/name>` | `request`, `list`, `claim`, `complete`, `enrich`, `labels bootstrap` | The repository to act on. Optional if `defaultRepo` is set in your config; the command exits with an error if neither is provided. |
 
 ## `config`
 
@@ -42,7 +42,7 @@ agent-review skills list
 ```
 
 ```json
-["security","architecture","performance","testing","api","rust","react-native","did","oid4vc","cryptography","documentation"]
+["security","architecture","performance","testing","api","rust","react-native","did","oid4vc","cryptography","documentation","second-opinion"]
 ```
 
 ## `labels bootstrap`
@@ -105,6 +105,22 @@ Submits a native GitHub PR review at the pinned SHA and deletes the claim marker
 ```bash
 agent-review complete --repo input-output-hk/some-repo --pr 42 \
   --event request-changes --summary @summary.md --comments @comments.json
+```
+
+## `enrich`
+
+Used by an enricher in a panel review. Waits for the panel's primary review to exist, then submits one consolidated `COMMENT` review at the primary's commit and deletes the claim marker; if the anchor's claim has gone stale past `--timeout`, promotes to primary by calling `complete` instead. See [Panel review (multiple reviewers)](./lifecycle.md#panel-review-multiple-reviewers) for the full flow.
+
+- `--repo <owner/name>`
+- `--pr <n>` (required)
+- `--verdict <agree|disagree|mixed>` (required)
+- `--summary <text|@file>` (required): literal text, or a path prefixed with `@` to read the summary from a file.
+- `--comments <@file>` (optional): a JSON array of `{path, line, body}` new findings, typically read from a file the same way.
+- `--poll <seconds>` (optional): seconds between polls. Defaults to `5`.
+- `--timeout <seconds>` (optional): seconds before giving up. Defaults to `1800`.
+
+```bash
+agent-review enrich --repo input-output-hk/some-repo --pr 42 --verdict mixed --summary @summary.md --comments @comments.json
 ```
 
 ## `serve`

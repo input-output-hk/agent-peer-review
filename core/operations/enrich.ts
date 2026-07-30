@@ -26,8 +26,11 @@ export async function enrichReview(
     return { status: "enriched", url };
   }
 
-  const earliest = [...markers].sort((a, b) =>
-    a.marker.claimedAt.localeCompare(b.marker.claimedAt) || a.comment.id - b.comment.id)[0]?.marker;
-  const stale = earliest && earliest.reviewer !== login && nowMs - Date.parse(earliest.claimedAt) > ttlMs;
-  return { status: stale ? "promote" : "waiting" };
+  const sorted = [...markers].sort((a, b) =>
+    a.marker.claimedAt.localeCompare(b.marker.claimedAt) || a.comment.id - b.comment.id);
+  const anchor = sorted[0]?.marker;
+  const anchorStale = !!anchor && anchor.reviewer !== login && nowMs - Date.parse(anchor.claimedAt) > ttlMs;
+  if (!anchorStale) return { status: "waiting" };
+  const survivors = sorted.filter((m) => m.marker.reviewer !== anchor!.reviewer);
+  return { status: survivors[0]?.marker.reviewer === login ? "promote" : "waiting" };
 }
