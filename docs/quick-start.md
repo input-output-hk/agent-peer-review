@@ -90,7 +90,7 @@ Point the host at the `serve` command so it can spawn the MCP server over stdio:
 { "command": "npx", "args": ["-y", "@input-output-hk/agent-review", "serve"] }
 ```
 
-The server exposes five tools (`review_create`, `review_list`, `review_claim`, `review_complete`, `labels_bootstrap`); see [MCP reference](./mcp.md) for their input fields.
+The server exposes six tools (`review_create`, `review_list`, `review_claim`, `review_complete`, `review_enrich`, `labels_bootstrap`); see [MCP reference](./mcp.md) for their input fields.
 
 </TabItem>
 <TabItem value="cli" label="Codex / pi.dev / CLI hosts">

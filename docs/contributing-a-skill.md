@@ -8,7 +8,7 @@ A skill is one focused markdown checklist, loaded by name when its label is pres
 
 ## 1. Write the skill file
 
-Add `skills/<name>.md`. Every existing specialty follows the same small shape: a `# <Name> Review` heading, then a short, focused checklist as prose or bullets. None of the eleven built-in specialties carry frontmatter; they are plain markdown, composed as-is into the reviewer's instructions.
+Add `skills/<name>.md`. Every existing specialty follows the same small shape: a `# <Name> Review` heading, then a short, focused checklist as prose or bullets. None of the twelve built-in specialties carry frontmatter; they are plain markdown, composed as-is into the reviewer's instructions.
 
 ```markdown
 # GraphQL Review
