@@ -1,0 +1,158 @@
+/**
+ * Input Output (IO) brand theme for the Agent Peer Review docs.
+ *
+ * Palette: Infrared #E52321 (primary) and Dawn #EC641D (secondary accent),
+ * on black/white backgrounds, in both Docusaurus light and dark mode.
+ * Typeface: Barlow, loaded in docusaurus.config.ts via `stylesheets` so this
+ * file only needs to reference the family name.
+ */
+
+:root {
+  /* IO brand backgrounds: explicit white/black rather than Infima's default,
+     which leaves light mode's page background as `transparent` and relies on
+     the browser's own canvas defaulting to white. */
+  --ifm-background-color: #ffffff;
+
+  /* Infrared primary scale (light mode) */
+  --ifm-color-primary: #e52321;
+  --ifm-color-primary-dark: #cf1f1d;
+  --ifm-color-primary-darker: #c31d1b;
+  --ifm-color-primary-darkest: #a11816;
+  --ifm-color-primary-light: #e83a38;
+  --ifm-color-primary-lighter: #ea4644;
+  --ifm-color-primary-lightest: #ef6a68;
+
+  /* Dawn secondary accent, used for link hover and a few decorative borders */
+  --ifm-color-secondary-accent: #ec641d;
+
+  --ifm-font-family-base: 'Barlow', system-ui, -apple-system, sans-serif;
+  --ifm-font-family-heading: 'Barlow', system-ui, -apple-system, sans-serif;
+  --ifm-font-size-base: 16px;
+  --ifm-code-font-size: 0.9em;
+
+  --ifm-heading-font-weight: 700;
+  --ifm-link-hover-color: var(--ifm-color-secondary-accent);
+
+  --ifm-code-border-radius: 6px;
+  --ifm-pre-border-radius: 10px;
+
+  --ifm-blockquote-border-left-color: var(--ifm-color-secondary-accent);
+
+  --feature-card-shadow: 0 6px 16px rgba(20, 20, 20, 0.08);
+}
+
+/* Infrared primary scale (dark mode). Kept light enough to stay readable on
+   the black background set above. */
+[data-theme='dark'] {
+  /* IO brand background: true black, not Infima's default warm dark gray. */
+  --ifm-background-color: #000000;
+
+  --ifm-color-primary: #ec4b49;
+  --ifm-color-primary-dark: #e83230;
+  --ifm-color-primary-darker: #e62623;
+  --ifm-color-primary-darkest: #c11e1c;
+  --ifm-color-primary-light: #ef6a68;
+  --ifm-color-primary-lighter: #f17c7a;
+  --ifm-color-primary-lightest: #f6a3a1;
+
+  --ifm-color-secondary-accent: #f0813f;
+
+  --feature-card-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Typography polish                                                       */
+/* ---------------------------------------------------------------------- */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--ifm-font-family-heading);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  margin-top: 2.5rem;
+  font-weight: 600;
+}
+
+h3 {
+  font-weight: 600;
+}
+
+/* Brand hairline under the navbar */
+.navbar {
+  border-bottom: 3px solid var(--ifm-color-primary);
+}
+
+/* Dawn accent on hover for primary buttons and blockquotes, per IO brand use
+   of Dawn as the secondary accent. */
+.button--primary:hover {
+  background-color: var(--ifm-color-secondary-accent);
+  border-color: var(--ifm-color-secondary-accent);
+}
+
+blockquote {
+  border-left-width: 4px;
+  border-left-color: var(--ifm-color-secondary-accent);
+}
+
+/* Rounded, lightly bordered code blocks. Docusaurus wraps <pre> in a CSS
+   module container named `codeBlockContainer_*`, so a substring selector
+   survives class-name hashing across upgrades. */
+[class*='codeBlockContainer'] {
+  border: 1px solid var(--ifm-color-emphasis-300);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Landing page: hero + feature grid                                      */
+/* ---------------------------------------------------------------------- */
+
+.hero-banner {
+  padding: 0.5rem 0 1rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+}
+
+.hero-tagline {
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--ifm-color-emphasis-800);
+  margin-bottom: 0.5rem;
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1.25rem;
+  margin: 1.75rem 0 2.25rem;
+}
+
+.feature-card {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-top: 3px solid var(--ifm-color-primary);
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  background: var(--ifm-background-surface-color);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.feature-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--feature-card-shadow);
+}
+
+.feature-card h3 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  color: var(--ifm-color-primary);
+  font-size: 1.05rem;
+}
+
+.feature-card p:last-child {
+  margin-bottom: 0;
+}

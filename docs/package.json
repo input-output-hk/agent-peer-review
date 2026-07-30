@@ -1,7 +1,12 @@
 {
   "name": "agent-review-docs",
   "private": true,
-  "scripts": { "start": "docusaurus start", "build": "docusaurus build", "serve": "docusaurus serve" },
+  "scripts": {
+    "embed": "node scripts/embed-sources.mjs",
+    "start": "npm run embed && docusaurus start",
+    "build": "npm run embed && docusaurus build",
+    "serve": "docusaurus serve"
+  },
   "dependencies": {
     "@docusaurus/core": "^3.5.0",
     "@docusaurus/preset-classic": "^3.5.0",
