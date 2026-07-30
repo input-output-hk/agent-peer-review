@@ -1,0 +1,62 @@
+{
+  "$ref": "#/definitions/review-result",
+  "definitions": {
+    "review-result": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^[^/]+\\/[^/]+$"
+        },
+        "pr": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "event": {
+          "type": "string",
+          "enum": [
+            "approve",
+            "request-changes",
+            "comment"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "line": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "body": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "line",
+              "body"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "repo",
+        "pr",
+        "event",
+        "summary"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
