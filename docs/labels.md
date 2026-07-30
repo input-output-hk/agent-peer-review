@@ -9,9 +9,9 @@ Labels in Agent Peer Review carry exactly two independent pieces of information,
 | Purpose | Label(s) | Color | Set by |
 | --- | --- | --- | --- |
 | Trigger (required) | `agent` | `0e8a16` | requester, via `review.create` |
-| Skill (zero or more, optional) | bare names: `security`, `architecture`, `performance`, `testing`, `api`, `rust`, `react-native`, `did`, `oid4vc`, `cryptography`, `documentation` | `5319e7` | requester, via `review.create` |
+| Skill (zero or more, optional) | bare names: `security`, `architecture`, `performance`, `testing`, `api`, `rust`, `react-native`, `did`, `oid4vc`, `cryptography`, `documentation`, `second-opinion` | `5319e7` | requester, via `review.create` |
 
-There are no `review`, `reviewer:*`, `skill:*`, or status labels of any kind. A basic request is `agent` plus a requested reviewer; add bare skill labels only when you want a specific specialty applied.
+There are no `review`, `reviewer:*`, `skill:*`, or status labels of any kind. A basic request is `agent` plus a requested reviewer; add bare skill labels only when you want a specific specialty applied. `second-opinion` is the one exception: `review.claim` attaches it automatically to an enricher's task during a multi-reviewer panel, so you do not request it yourself.
 
 ## Why routing is not a label
 
@@ -36,6 +36,6 @@ Skill matching is a simple membership check against the built-in `SKILL_NAMES` l
 
 This is a deliberate trade-off: it means older agent versions keep working unmodified when a repository grows new labels for unrelated purposes, at the cost of failing silently on a typo instead of loudly.
 
-:::caution[Known limitation: first-claim-wins, not fan-out]
-The claim marker is a single lock per pull request, not one per reviewer. Requesting `--reviewers alice,bob` asks GitHub to request a review from both natively, but the first of the two agents to run `review.claim` on that PR reviews it; the other sees "already claimed by ...". Independent, parallel reviews from multiple reviewers on the same pull request are not supported in v0.1.
+:::tip[Panel review: concurrent, not first-claim-wins]
+Requesting more than one reviewer, for example `--reviewers alice,bob`, now runs a concurrent panel. Each reviewer claims independently; the earliest claimant is the anchor and posts the primary review; every other claimant is an enricher that adds one consolidated second opinion once the primary lands. See [Panel review (multiple reviewers)](./lifecycle.md#panel-review-multiple-reviewers) for the full flow.
 :::

@@ -56,6 +56,14 @@ const SCHEMAS = [
     purpose: "The input to `review.complete`: the review event, the summary, and any inline comments.",
   },
   {
+    heading: "Enrichment",
+    file: "enrichment.schema.json",
+    example: null,
+    purpose:
+      "The input to `review.enrich`: an enricher's overall verdict, summary, and any new findings the " +
+      "primary review missed.",
+  },
+  {
     heading: "Label Spec",
     file: "label-spec.schema.json",
     example: null,
@@ -74,7 +82,7 @@ function buildSchemasPage() {
     "",
     HEADER,
     "",
-    "Every payload the CLI and the MCP server accept or return is validated against a schema. The five " +
+    "Every payload the CLI and the MCP server accept or return is validated against a schema. The six " +
       "schemas below are generated from the single zod source of truth in `core/model.ts` by " +
       "`scripts/gen-schemas.ts`, and continuous integration fails the build if the checked-in files " +
       "under `schemas/` ever drift from that source. What you read here is exactly what the package " +

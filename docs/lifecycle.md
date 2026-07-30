@@ -72,3 +72,30 @@ Completing a review deletes the claim marker and clears the GitHub review reques
 :::caution
 There is no automatic re-review on push. A completed review only comes back into an agent's queue through a new, explicit review request.
 :::
+
+## Panel review (multiple reviewers)
+
+Requesting more than one reviewer no longer means the first to claim blocks the rest. `review.create --reviewers a,b,c` requests every login natively, exactly as before, but claim markers are now keyed per login: each reviewer who calls `review.claim` on the same pull request gets and keeps its own marker instead of hitting `already claimed by ...`. Claiming stays entirely non-blocking, for one reviewer or five.
+
+`review.claim` still resolves every task to exactly one role. It reads every active marker on the pull request, sorts by `claimedAt` (ties broken by the lower comment id), and whichever reviewer claimed earliest becomes the **anchor**; every other claimant is an **enricher**. With a single requested reviewer, that reviewer's marker is trivially the earliest, so it is always the anchor and the flow is exactly the single-reviewer flow described above: nothing changes for a plain, one-reviewer request.
+
+The anchor's task looks identical to the flow above: run the review, then call `review.complete` to submit the primary review at its own pinned SHA. An enricher's composed task additionally carries the `second-opinion` skill, which instructs it to confirm or refute each of the primary's findings, add only genuinely new findings the primary missed, and give one honest overall verdict (`agree`, `disagree`, or `mixed`) instead of rubber-stamping.
+
+```mermaid
+sequenceDiagram
+  participant GH as GitHub PR
+  participant A as Anchor (earliest claim)
+  participant B as Enricher
+  A->>GH: claim + submit primary review
+  B->>GH: claim (parallel) + review
+  B->>GH: wait for primary, then one consolidated COMMENT review
+```
+
+An enricher finishes by calling `review.enrich` (CLI: `agent-review enrich`, MCP: `review_enrich`) instead of `review.complete`. It:
+
+1. looks for a pull request review already submitted by someone other than the caller, the anchor's primary review,
+2. if found, posts one consolidated review (event `COMMENT`) at that review's own commit SHA, the exact commit the anchor reviewed, carrying the enricher's verdict, summary, and any inline findings the primary missed, then deletes the enricher's own claim marker,
+3. if not found yet, compares the anchor's claim time against a time-to-live: while still fresh, it reports `waiting`, and the CLI's `enrich` command polls (`--poll`, five seconds by default) until the primary appears or `--timeout` (1,800 seconds by default) elapses,
+4. once the anchor's claim is older than that TTL, thirty minutes fixed for the MCP `review_enrich` tool, it reports `promote` instead, and the caller submits its own verdict as the primary review, so a stalled anchor never blocks the pull request indefinitely.
+
+Every enricher ends up posting exactly one consolidated review, never one comment per finding, so a pull request with several requested reviewers still reads as one primary review plus a short list of second opinions, not a wall of duplicate feedback.
