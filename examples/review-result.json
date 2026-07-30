@@ -1,0 +1,1 @@
+{ "repo": "input-output-hk/some-repo", "pr": 42, "event": "request-changes", "summary": "Two blocking issues; see inline comments.", "comments": [{ "path": "src/crypto.rs", "line": 88, "body": "Nonce is reused across messages." }] }
