@@ -16,7 +16,7 @@ export async function gatherRepoContext(
     seen.add(path);
     let content: string | null = null;
     try { content = await gh.getFileContent(repo, ref, path); } catch { return; }
-    if (content == null) return;
+    if (content == null || content.length === 0) return;
     if (total + content.length > SIZE_CAP) return;
     total += content.length;
     out.push({ path, content });

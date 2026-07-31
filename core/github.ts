@@ -123,7 +123,7 @@ export class OctokitGateway implements GitHubGateway {
     const [owner, name] = split(repo);
     try {
       const { data } = await this.kit.repos.getContent({ owner, repo: name, path, ref });
-      if (!Array.isArray(data) && data.type === "file" && typeof data.content === "string") {
+      if (!Array.isArray(data) && data.type === "file" && typeof data.content === "string" && data.encoding === "base64") {
         return Buffer.from(data.content, "base64").toString("utf8");
       }
       return null;

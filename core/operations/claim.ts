@@ -36,8 +36,12 @@ export async function claimReview(
   }
 
   let languages: string[] = [];
-  try { languages = detectLanguages(await gh.listPullFiles(opts.repo, opts.pr)); } catch { languages = []; }
-  const instructionsWithLangs = { ...instructions, languages: composeLanguages(languages, config) };
+  let languageSkills: Array<{ name: string; content: string }> = [];
+  try {
+    languages = detectLanguages(await gh.listPullFiles(opts.repo, opts.pr));
+    languageSkills = composeLanguages(languages, config);
+  } catch { languages = []; languageSkills = []; }
+  const instructionsWithLangs = { ...instructions, languages: languageSkills };
 
   let repoContext: Array<{ path: string; content: string }> = [];
   try { repoContext = await gatherRepoContext(gh, opts.repo, pinnedSha); } catch { repoContext = []; }

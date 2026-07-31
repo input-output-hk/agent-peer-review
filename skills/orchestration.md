@@ -27,7 +27,7 @@ The task from `claim` carries more than `instructions.review` and `instructions.
 - **Languages** (`instructions.languages[]`): skill content for every language auto-detected from the pull request's changed files, matched by file extension. No label is needed; the detected names also appear in the top-level `languages` field.
 - **Repo context** (`repoContext[]`): `{ path, content }` pairs read from the reviewed repository itself at the pinned SHA, typically `AGENT.md`, `AGENTS.md`, `CLAUDE.md`, and other markdown found under `.claude/` and `.codex/`.
 
-Both are best-effort and size-bounded, so treat them as a head start rather than the full picture. After checking out the pinned `headSha` (step 3 above), also read `AGENT.md`, `AGENTS.md`, `CLAUDE.md`, `.claude/**`, and `.codex/**` directly from your local checkout. Where the reviewed repo's own conventions in those files conflict with generic skill or language guidance, follow the repo-specific convention.
+Both are best-effort. The repo context is size-bounded (a capped set of files); the language set is the fixed list of detected languages. Treat them as a head start rather than the full picture. After checking out the pinned `headSha` (step 3 above), also read `AGENT.md`, `AGENTS.md`, `CLAUDE.md`, `.claude/**`, and `.codex/**` directly from your local checkout. Where the reviewed repo's own conventions in those files conflict with generic skill or language guidance, follow the repo-specific convention.
 
 ## Panel review (multiple reviewers)
 

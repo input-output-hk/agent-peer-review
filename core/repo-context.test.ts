@@ -27,4 +27,13 @@ describe("gatherRepoContext", () => {
     const paths = ctx.map((c) => c.path);
     expect(paths).toContain(".claude/skills/foo/SKILL.md");
   });
+  it("skips a file with empty content (e.g. a >1MB file GitHub returns as empty)", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedFile("o/r", "sha", "AGENT.md", "");
+    gh.seedFile("o/r", "sha", "CLAUDE.md", "hi");
+    const ctx = await gatherRepoContext(gh, "o/r", "sha");
+    const paths = ctx.map((c) => c.path);
+    expect(paths).toContain("CLAUDE.md");
+    expect(paths).not.toContain("AGENT.md");
+  });
 });
