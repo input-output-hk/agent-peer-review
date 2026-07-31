@@ -1,0 +1,3 @@
+# C / C++ Review
+
+Check: out-of-bounds access, use-after-free, double-free, and leaks on every allocation and error path; undefined behavior from signed integer overflow, uninitialized reads, and unsafe casts or `memcpy`/`memmove` usage; null-pointer dereferences on error-return paths; and, in C++, ownership expressed via RAII and `unique_ptr`/`shared_ptr` rather than raw owning pointers or manual `new`/`delete`. Expect a clean build under `-Wall -Wextra`, ASan/UBSan runs on tests, and `clang-tidy` free of `bugprone-*`/`cppcoreguidelines-*` findings. Flag unchecked buffer sizes and narrowing or signed/unsigned conversions.
