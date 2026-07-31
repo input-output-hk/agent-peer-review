@@ -20,7 +20,7 @@ export function registerTools(
   const cfg = deps.config ?? (() => loadConfig());
 
   pi.registerTool({ name: "review_create", label: "Request a review", description: "Add the agent label + skill labels and request reviewer(s).",
-    parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), skills: Type.Optional(Type.Array(Type.String())), reviewers: Type.Array(Type.String()), note: Type.Optional(Type.String()) }),
+    parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), skills: Type.Optional(Type.Array(Type.String())), reviewers: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), note: Type.Optional(Type.String()) }),
     async execute(_id, p) { return ok(await createReview(gh(), { repo: p.repo, pr: p.pr, skills: p.skills ?? [], reviewers: p.reviewers, note: p.note })); } });
 
   pi.registerTool({ name: "review_list", label: "List review requests", description: "Open PRs labeled agent requested from a login (defaults to yours).",
@@ -33,7 +33,7 @@ export function registerTools(
 
   pi.registerTool({ name: "review_complete", label: "Complete a review", description: "Submit a PR review at the pinned SHA and swap labels.",
     parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), event: Type.Union([Type.Literal("approve"), Type.Literal("request-changes"), Type.Literal("comment")]), summary: Type.String(), comments: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Number(), body: Type.String() }))) }),
-    async execute(_id, p) { return ok(await completeReview({ gh: gh(), config: cfg() }, p as any)); } });
+    async execute(_id, p) { return ok(await completeReview({ gh: gh(), config: cfg() }, p)); } });
 
   pi.registerTool({ name: "review_enrich", label: "Enrich a review", description: "Post a consolidated second opinion once the primary exists; else waiting/promote.",
     parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), verdict: Type.Union([Type.Literal("agree"), Type.Literal("disagree"), Type.Literal("mixed")]), summary: Type.String(), newFindings: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Number(), body: Type.String() }))) }),

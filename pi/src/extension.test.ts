@@ -61,4 +61,44 @@ describe("pi extension", () => {
     expect(task.reviewer).toBe("me");
     expect(task.role).toBe("anchor");
   });
+  it("review_complete maps the event and reviews at the pinned SHA", async () => {
+    const pi = fakePi();
+    const marker = serializeMarker({ v: 1, reviewer: "me", machine: "m1", sha: "feed1234", claimedAt: "t0" });
+    const calls: any = {};
+    const gh = {
+      getPullRequest: async () => ({
+        number: 7, title: "t", author: "a", headSha: "feed1234", baseSha: "base1",
+        url: "https://example.com/o/r/pull/7", state: "open" as const, labels: ["agent"],
+      }),
+      listComments: async () => [{ id: 9, author: "me", body: marker }],
+      submitReview: async (_r: string, _p: number, opts: any) => { calls.submit = opts; return { url: "https://example.com/review/1" }; },
+      deleteComment: async (_r: string, id: number) => { calls.deleted = id; },
+    } as any;
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false }) as any });
+    const complete = pi.tools.find((t) => t.name === "review_complete");
+    const res = await complete.execute("id3", { repo: "o/r", pr: 7, event: "approve", summary: "looks good" }, undefined, undefined, undefined);
+    expect(res.content[0].type).toBe("text");
+    expect(JSON.parse(res.content[0].text).url).toBe("https://example.com/review/1");
+    expect(calls.submit.event).toBe("APPROVE");      // event enum mapped
+    expect(calls.submit.commitId).toBe("feed1234");  // reviewed at the pinned SHA
+    expect(calls.deleted).toBe(9);                   // claim marker cleared
+  });
+  it("review_enrich remaps the verdict and posts a COMMENT once a primary exists", async () => {
+    const pi = fakePi();
+    const marker = serializeMarker({ v: 1, reviewer: "me", machine: "m1", sha: "cafe1234", claimedAt: "t0" });
+    const calls: any = {};
+    const gh = {
+      listComments: async () => [{ id: 5, author: "me", body: marker }],
+      getReviews: async () => [{ id: 1, author: "alice", commitId: "cafe1234", submittedAt: "2026-01-01T00:00:00Z" }],
+      submitReview: async (_r: string, _p: number, opts: any) => { calls.submit = opts; return { url: "https://example.com/review/2" }; },
+      deleteComment: async () => {},
+    } as any;
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false }) as any });
+    const enrich = pi.tools.find((t) => t.name === "review_enrich");
+    const res = await enrich.execute("id4", { repo: "o/r", pr: 7, verdict: "agree", summary: "concur" }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).status).toBe("enriched");
+    expect(calls.submit.event).toBe("COMMENT");     // enricher posts a COMMENT review
+    expect(calls.submit.commitId).toBe("cafe1234"); // at the primary review's commit
+    expect(calls.submit.body).toContain("agree");   // p.verdict -> overallVerdict in the body
+  });
 });
