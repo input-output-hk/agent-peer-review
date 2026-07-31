@@ -36,4 +36,29 @@ describe("gatherRepoContext", () => {
     expect(paths).toContain("CLAUDE.md");
     expect(paths).not.toContain("AGENT.md");
   });
+  it("labels every gathered file as untrusted", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedFile("o/r", "sha", "CLAUDE.md", "root claude");
+    const ctx = await gatherRepoContext(gh, "o/r", "sha");
+    expect(ctx.length).toBeGreaterThan(0);
+    expect(ctx.every((c) => c.untrusted === true)).toBe(true);
+  });
+  it("measures the size cap in UTF-8 bytes, not UTF-16 code units", async () => {
+    const gh = new FakeGitHubGateway();
+    const multibyte = "€".repeat(30000); // 30000 chars, 90000 UTF-8 bytes (> 64 KiB cap)
+    gh.seedFile("o/r", "sha", "AGENT.md", multibyte);
+    gh.seedFile("o/r", "sha", "CLAUDE.md", "small");
+    const ctx = await gatherRepoContext(gh, "o/r", "sha");
+    const paths = ctx.map((c) => c.path);
+    expect(paths).not.toContain("AGENT.md"); // byte length exceeds the cap even though char length is under it
+    expect(paths).toContain("CLAUDE.md"); // a later small file still fits
+  });
+  it("stops at the file-count cap", async () => {
+    const gh = new FakeGitHubGateway();
+    const files = Array.from({ length: 12 }, (_, i) => `.claude/n${i}.md`);
+    gh.seedDir("o/r", "sha", ".claude", files);
+    for (const f of files) gh.seedFile("o/r", "sha", f, "x");
+    const ctx = await gatherRepoContext(gh, "o/r", "sha");
+    expect(ctx.length).toBe(10); // FILE_CAP
+  });
 });

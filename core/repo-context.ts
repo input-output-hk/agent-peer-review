@@ -7,8 +7,8 @@ const SIZE_CAP = 65536;
 
 export async function gatherRepoContext(
   gh: GitHubGateway, repo: string, ref: string,
-): Promise<Array<{ path: string; content: string }>> {
-  const out: Array<{ path: string; content: string }> = [];
+): Promise<Array<{ path: string; content: string; untrusted: true }>> {
+  const out: Array<{ path: string; content: string; untrusted: true }> = [];
   const seen = new Set<string>();
   let total = 0;
   const add = async (path: string) => {
@@ -17,9 +17,10 @@ export async function gatherRepoContext(
     let content: string | null = null;
     try { content = await gh.getFileContent(repo, ref, path); } catch { return; }
     if (content == null || content.length === 0) return;
-    if (total + content.length > SIZE_CAP) return;
-    total += content.length;
-    out.push({ path, content });
+    const bytes = Buffer.byteLength(content, "utf8"); // cap by UTF-8 bytes, not UTF-16 code units
+    if (total + bytes > SIZE_CAP) return;
+    total += bytes;
+    out.push({ path, content, untrusted: true });
   };
   for (const p of EXACT) { if (out.length >= FILE_CAP) break; await add(p); }
   for (const dir of DIRS) {

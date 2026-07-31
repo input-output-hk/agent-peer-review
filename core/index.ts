@@ -7,6 +7,7 @@ export * from "./languages.js";
 export * from "./repo-context.js";
 export * from "./claim-marker.js";
 export * from "./paths.js";
+export * from "./guard.js";
 export { bootstrap } from "./operations/bootstrap.js";
 export { createReview } from "./operations/create.js";
 export { listReviews } from "./operations/list.js";
