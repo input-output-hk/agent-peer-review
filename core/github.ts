@@ -19,6 +19,9 @@ export interface GitHubGateway {
   }): Promise<{ url: string }>;
   getReviews(repo: string, pr: number): Promise<Review[]>;
   listReviewComments(repo: string, pr: number): Promise<ReviewComment[]>;
+  listPullFiles(repo: string, pr: number): Promise<string[]>;
+  getFileContent(repo: string, ref: string, path: string): Promise<string | null>;
+  listDir(repo: string, ref: string, path: string): Promise<string[]>;
 }
 
 export function resolveToken(): string {
@@ -110,5 +113,27 @@ export class OctokitGateway implements GitHubGateway {
     const [owner, name] = split(repo);
     const items = await this.kit.paginate(this.kit.pulls.listReviewComments, { owner, repo: name, pull_number: pr, per_page: 100 });
     return items.map((c) => ({ id: c.id, path: c.path, line: c.line ?? null, body: c.body ?? "", author: c.user?.login ?? "unknown" }));
+  }
+  async listPullFiles(repo: string, pr: number): Promise<string[]> {
+    const [owner, name] = split(repo);
+    const items = await this.kit.paginate(this.kit.pulls.listFiles, { owner, repo: name, pull_number: pr, per_page: 100 });
+    return items.map((f) => f.filename);
+  }
+  async getFileContent(repo: string, ref: string, path: string): Promise<string | null> {
+    const [owner, name] = split(repo);
+    try {
+      const { data } = await this.kit.repos.getContent({ owner, repo: name, path, ref });
+      if (!Array.isArray(data) && data.type === "file" && typeof data.content === "string") {
+        return Buffer.from(data.content, "base64").toString("utf8");
+      }
+      return null;
+    } catch (e: any) { if (e.status === 404) return null; throw e; }
+  }
+  async listDir(repo: string, ref: string, path: string): Promise<string[]> {
+    const [owner, name] = split(repo);
+    try {
+      const { data } = await this.kit.repos.getContent({ owner, repo: name, path, ref });
+      return Array.isArray(data) ? data.map((d) => d.path) : [];
+    } catch (e: any) { if (e.status === 404) return []; throw e; }
   }
 }

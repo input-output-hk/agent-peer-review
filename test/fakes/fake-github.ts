@@ -9,6 +9,9 @@ export class FakeGitHubGateway implements GitHubGateway {
   labels = new Map<string, LabelSpec[]>();
   reviews: Array<{ repo: string; pr: number; id: number; author: string; state: string; event: string; body: string; commitId: string; comments?: Array<{ path: string; line: number; body: string }>; submittedAt: string }> = [];
   reviewComments: Array<{ repo: string; pr: number; id: number; path: string; line: number | null; body: string; author: string }> = [];
+  pullFiles = new Map<string, string[]>();
+  fileContents = new Map<string, string>();
+  dirs = new Map<string, string[]>();
   private commentId = 1;
   private reviewSeq = 1;
   private reviewCommentSeq = 1;
@@ -19,6 +22,9 @@ export class FakeGitHubGateway implements GitHubGateway {
     const s = this.requested.get(this.key(repo, pr)) ?? new Set();
     s.add(login); this.requested.set(this.key(repo, pr), s);
   }
+  seedPullFiles(repo: string, pr: number, paths: string[]) { this.pullFiles.set(`${repo}#${pr}`, paths); }
+  seedFile(repo: string, ref: string, path: string, content: string) { this.fileContents.set(`${repo}@${ref}:${path}`, content); }
+  seedDir(repo: string, ref: string, path: string, paths: string[]) { this.dirs.set(`${repo}@${ref}:${path}`, paths); }
 
   async getAuthenticatedLogin(): Promise<string> { return this.login; }
   async getPullRequest(repo: string, pr: number): Promise<PullRequest> {
@@ -70,4 +76,7 @@ export class FakeGitHubGateway implements GitHubGateway {
     return this.reviewComments.filter((c) => c.repo === repo && c.pr === pr)
       .map((c) => ({ id: c.id, path: c.path, line: c.line, body: c.body, author: c.author }));
   }
+  async listPullFiles(repo: string, pr: number): Promise<string[]> { return this.pullFiles.get(`${repo}#${pr}`) ?? []; }
+  async getFileContent(repo: string, ref: string, path: string): Promise<string | null> { return this.fileContents.get(`${repo}@${ref}:${path}`) ?? null; }
+  async listDir(repo: string, ref: string, path: string): Promise<string[]> { return this.dirs.get(`${repo}@${ref}:${path}`) ?? []; }
 }

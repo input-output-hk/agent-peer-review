@@ -19,4 +19,19 @@ describe("FakeGitHubGateway", () => {
     expect(reviews[0]).toMatchObject({ author: "me", state: "CHANGES_REQUESTED", commitId: "sha1234" });
     expect(await gh.listReviewComments("o/r", 1)).toHaveLength(1);
   });
+
+  it("seeds and reads back pull files, a file's content, and a dir listing; missing keys degrade to []/null", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPullFiles("o/r", 5, ["a.ts", "b.sol"]);
+    gh.seedFile("o/r", "deadbeef", "CLAUDE.md", "root claude");
+    gh.seedDir("o/r", "deadbeef", ".claude", [".claude/CLAUDE.md", ".claude/notes.md"]);
+
+    expect(await gh.listPullFiles("o/r", 5)).toEqual(["a.ts", "b.sol"]);
+    expect(await gh.getFileContent("o/r", "deadbeef", "CLAUDE.md")).toBe("root claude");
+    expect(await gh.listDir("o/r", "deadbeef", ".claude")).toEqual([".claude/CLAUDE.md", ".claude/notes.md"]);
+
+    expect(await gh.listPullFiles("o/r", 999)).toEqual([]);
+    expect(await gh.getFileContent("o/r", "deadbeef", "nope.md")).toBeNull();
+    expect(await gh.listDir("o/r", "deadbeef", "nope")).toEqual([]);
+  });
 });
