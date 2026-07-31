@@ -4,6 +4,12 @@
   "description": "Minimal asynchronous PR-review workflow over GitHub for Claude, Codex, and pi.dev agents.",
   "license": "Apache-2.0",
   "type": "module",
+  "main": "./dist/core/index.js",
+  "types": "./dist/core/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/core/index.d.ts", "default": "./dist/core/index.js" },
+    "./package.json": "./package.json"
+  },
   "engines": { "node": ">=20" },
   "workspaces": ["pi", "."],
   "bin": {
