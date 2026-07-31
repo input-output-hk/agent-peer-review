@@ -1,5 +1,6 @@
 node_modules/
 dist/
+pi/dist/
 docs/build/
 docs/.docusaurus/
 docs/schemas.mdx

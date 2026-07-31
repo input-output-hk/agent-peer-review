@@ -5,6 +5,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "engines": { "node": ">=20" },
+  "workspaces": ["pi", "."],
   "bin": {
     "agent-review": "dist/cli/index.js",
     "agent-review-mcp": "dist/mcp/index.js"
