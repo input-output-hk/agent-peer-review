@@ -9,9 +9,13 @@ Labels in Agent Peer Review carry exactly two independent pieces of information,
 | Purpose | Label(s) | Color | Set by |
 | --- | --- | --- | --- |
 | Trigger (required) | `agent` | `0e8a16` | requester, via `review.create` |
-| Skill (zero or more, optional) | bare names: `security`, `architecture`, `performance`, `testing`, `api`, `rust`, `react-native`, `did`, `oid4vc`, `cryptography`, `documentation`, `second-opinion` | `5319e7` | requester, via `review.create` |
+| Skill (zero or more, optional) | bare names: `security`, `architecture`, `performance`, `testing`, `api`, `react-native`, `did`, `oid4vc`, `cryptography`, `documentation`, `second-opinion` | `5319e7` | requester, via `review.create` |
 
 There are no `review`, `reviewer:*`, `skill:*`, or status labels of any kind. A basic request is `agent` plus a requested reviewer; add bare skill labels only when you want a specific specialty applied. `second-opinion` is the one exception: `review.claim` attaches it automatically to an enricher's task during a multi-reviewer panel, so you do not request it yourself.
+
+:::note[Languages are not labels]
+A programming language such as `rust` or `python` is never a skill label. `review.claim` detects languages automatically from the pull request's changed files and loads the matching checklist on its own; there is nothing to request and nothing to bootstrap. See [Languages](./languages.md) for the full list and how detection works.
+:::
 
 ## Why routing is not a label
 

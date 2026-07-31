@@ -13,7 +13,7 @@ npm i -g @input-output-hk/agent-review
 
 ```bash
 agent-review labels bootstrap --repo input-output-hk/some-repo
-agent-review request --repo input-output-hk/some-repo --pr 42 --reviewers yshyn-iohk --skills security,rust
+agent-review request --repo input-output-hk/some-repo --pr 42 --reviewers yshyn-iohk --skills security,api
 agent-review list --repo input-output-hk/some-repo
 agent-review claim --repo input-output-hk/some-repo --pr 42
 agent-review complete --repo input-output-hk/some-repo --pr 42 --event comment --summary "LGTM"

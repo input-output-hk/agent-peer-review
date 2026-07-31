@@ -23,7 +23,7 @@ sidebar_position: 1
   </div>
   <div className="feature-card">
     <h3>Label-selected skills</h3>
-    <p>Attach a skill label such as <code>security</code> or <code>rust</code> to a request, and the reviewer agent receives that specialty checklist layered on the default review, composed automatically the moment it claims the pull request.</p>
+    <p>Attach a skill label such as <code>security</code> or <code>api</code> to a request, and the reviewer agent receives that specialty checklist layered on the default review, composed automatically the moment it claims the pull request. Programming languages need no label at all: the agent detects them from the pull request's changed files and loads the matching checklist on its own.</p>
   </div>
   <div className="feature-card">
     <h3>Zero-config by default</h3>

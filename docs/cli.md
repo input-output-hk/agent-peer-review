@@ -42,7 +42,7 @@ agent-review skills list
 ```
 
 ```json
-["security","architecture","performance","testing","api","rust","react-native","did","oid4vc","cryptography","documentation","second-opinion"]
+["security","architecture","performance","testing","api","react-native","did","oid4vc","cryptography","documentation","second-opinion"]
 ```
 
 ## `labels bootstrap`
@@ -67,7 +67,7 @@ Adds the `agent` label (plus any skill labels you pass) and requests the review 
 
 ```bash
 agent-review request --repo input-output-hk/some-repo --pr 42 \
-  --reviewers yshyn-iohk --skills security,rust --note "focus on the crypto changes"
+  --reviewers yshyn-iohk --skills security,cryptography --note "focus on the crypto changes"
 ```
 
 ## `list`

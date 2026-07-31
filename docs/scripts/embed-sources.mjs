@@ -118,7 +118,21 @@ function readSkillNames() {
   return names;
 }
 
+// Language names are parsed the same way, out of core/languages.ts, so the catalog can never list a
+// language the detector does not actually recognize (or miss one it does). LANGUAGE_NAMES itself is
+// derived at runtime (`Object.keys(LANGUAGE_EXTENSIONS)`), so this reads the keys of the
+// LANGUAGE_EXTENSIONS object literal directly, mirroring readSkillNames above.
+function readLanguageNames() {
+  const src = readFileSync(path.join(repoRoot, "core", "languages.ts"), "utf8");
+  const objectLiteral = /export const LANGUAGE_EXTENSIONS[^{]*\{([^}]*)\}/.exec(src);
+  if (!objectLiteral) throw new Error("embed-sources: could not find LANGUAGE_EXTENSIONS in core/languages.ts");
+  const names = [...objectLiteral[1].matchAll(/"?([a-zA-Z][\w-]*)"?\s*:\s*\[/g)].map((m) => m[1]);
+  if (names.length === 0) throw new Error("embed-sources: LANGUAGE_EXTENSIONS parsed to an empty list");
+  return names;
+}
+
 const SKILL_ORDER = ["review", "orchestration", ...readSkillNames()];
+const LANGUAGE_ORDER = readLanguageNames();
 
 function frontmatterDescription(raw) {
   if (!raw.startsWith("---")) return null;
@@ -138,10 +152,11 @@ function buildSkillsPage() {
     HEADER,
     "",
     "A review runs the default checklist in `review` when a pull request carries no skill label. Adding " +
-      "one or more bare skill labels layers specialty guidance on top of that default. The `claim` " +
-      "operation composes the matched skill files on the server side and hands the full text to the " +
-      "calling agent, so a Claude host, a Codex host, and a pi.dev host all receive identical " +
-      "instructions. Any label that is not a recognized skill name is ignored.",
+      "one or more bare skill labels layers specialty guidance on top of that default, and every language " +
+      "`claim` detects from the pull request's changed files layers in the same way, with no label " +
+      "involved. The `claim` operation composes the matched skill and language files on the server side " +
+      "and hands the full text to the calling agent, so a Claude host, a Codex host, and a pi.dev host " +
+      "all receive identical instructions. Any label that is not a recognized skill name is ignored.",
     "",
   ];
 
@@ -149,6 +164,23 @@ function buildSkillsPage() {
     const raw = readFileSync(path.join(skillsDir, `${name}.md`), "utf8");
     const description = frontmatterDescription(raw);
     lines.push(`## ${name}`, "");
+    if (description) lines.push(`*${description}*`, "");
+    lines.push("~~~~markdown", raw.trimEnd(), "~~~~", "");
+  }
+
+  lines.push(
+    "## Language skills",
+    "",
+    "`claim` also detects a language directly from the pull request's changed files, matched by file " +
+      "extension, and embeds the matching checklist below with no label involved. See " +
+      "[Languages](./languages.md) for the full extension map and how detection works.",
+    "",
+  );
+
+  for (const name of LANGUAGE_ORDER) {
+    const raw = readFileSync(path.join(skillsDir, "lang", `${name}.md`), "utf8");
+    const description = frontmatterDescription(raw);
+    lines.push(`### ${name}`, "");
     if (description) lines.push(`*${description}*`, "");
     lines.push("~~~~markdown", raw.trimEnd(), "~~~~", "");
   }

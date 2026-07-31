@@ -74,7 +74,7 @@ Adds the `agent` label (plus any skill labels) and requests the review from one 
 
 ```bash
 agent-review request --repo input-output-hk/some-repo --pr 42 \
-  --reviewers yshyn-iohk --skills security,rust --note "focus on the crypto changes"
+  --reviewers yshyn-iohk --skills security,cryptography --note "focus on the crypto changes"
 ```
 
 ## Wire into a host
@@ -115,7 +115,7 @@ Two roles are at play here: whoever requests the review, and the reviewer agent 
 ```bash
 agent-review labels bootstrap --repo input-output-hk/some-repo
 agent-review request --repo input-output-hk/some-repo --pr 42 \
-  --reviewers yshyn-iohk --skills security,rust
+  --reviewers yshyn-iohk --skills security
 ```
 
 **2. The reviewer agent lists its open work.** Run as `yshyn-iohk`, this returns pull request 42 with no active claim yet:
@@ -124,7 +124,7 @@ agent-review request --repo input-output-hk/some-repo --pr 42 \
 agent-review list --repo input-output-hk/some-repo
 ```
 
-**3. It claims the pull request.** This pins the head commit SHA, posts a claim-marker comment, and returns the composed review instructions (the default `review` skill plus the `security` and `rust` skill content, since both were requested):
+**3. It claims the pull request.** This pins the head commit SHA, posts a claim-marker comment, and returns the composed review instructions: the default `review` skill, the `security` skill content since it was requested, the `rust` language skill auto-detected from the pull request's changed `.rs` files, and any repo context found in the reviewed repository (`AGENT.md`, `.claude/**`, and similar). See [Languages](./languages.md) for how detection works.
 
 ```bash
 agent-review claim --repo input-output-hk/some-repo --pr 42

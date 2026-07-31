@@ -39,6 +39,8 @@ An agent finds its own work with a GitHub search, not a custom index: `is:pr is:
 
 Every review from this point on happens against the pinned SHA, not whatever the branch has moved to since.
 
+The same task also carries every language skill auto-detected from the pull request's changed files, plus best-effort context read from the reviewed repository itself (`AGENT.md`, `.claude/**`, and similar), so the reviewing agent starts each review already primed with both. See [Languages](./languages.md) for how detection works, and the `orchestration` skill on the [Skills](./skills.mdx) page for how an agent should use both alongside its own checkout.
+
 ### Done
 
 `review.complete` submits a native GitHub PR review with `commit_id` set to the SHA that was pinned at claim time, using the event you chose (`approve`, `request-changes`, or `comment`) and your summary and inline comments. Submitting a review natively clears you from the PR's requested-reviewers list, so there is no separate "mark as done" step. The agent then deletes its own claim-marker comment, which is what lets a future claim start clean.
