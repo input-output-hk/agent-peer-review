@@ -1,9 +1,22 @@
 name: Publish
+
+# Publishes both workspace packages to GitHub Packages (https://npm.pkg.github.com):
+#   @input-output-hk/agent-review      (core: CLI + MCP)
+#   @input-output-hk/agent-review-pi   (pi.dev extension + skill)
+# Trigger by publishing a GitHub release (tag must be v<version>), or run manually.
 on:
-  release: { types: [published] }
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
 permissions:
   contents: read
   packages: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -14,12 +27,48 @@ jobs:
           node-version: 20
           registry-url: https://npm.pkg.github.com
           scope: "@input-output-hk"
+
       - run: npm ci
-      - run: npm run build
-      - run: npm publish
+
+      # On a release, the tag must match the root package version (v<version>),
+      # so a mistyped tag can never publish the wrong version.
+      - name: Verify release tag matches package version
+        if: github.event_name == 'release'
+        run: |
+          want="v$(node -p "require('./package.json').version")"
+          got="${{ github.event.release.tag_name }}"
+          if [ "$got" != "$want" ]; then
+            echo "::error::release tag '$got' does not match package version '$want'"
+            exit 1
+          fi
+
+      # Build both before publishing either, so a build failure never leaves a
+      # half-published pair.
+      - name: Build
+        run: |
+          npm run build
+          npm run -w pi build
+
+      # Each publish is skipped if that exact version is already on the registry,
+      # so a partial-failure re-run is safe.
+      - name: Publish @input-output-hk/agent-review
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: npm run -w pi build
-      - run: npm publish -w pi
+        run: |
+          v=$(node -p "require('./package.json').version")
+          if npm view "@input-output-hk/agent-review@$v" version >/dev/null 2>&1; then
+            echo "@input-output-hk/agent-review@$v already published, skipping."
+          else
+            npm publish
+          fi
+
+      - name: Publish @input-output-hk/agent-review-pi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v=$(node -p "require('./pi/package.json').version")
+          if npm view "@input-output-hk/agent-review-pi@$v" version >/dev/null 2>&1; then
+            echo "@input-output-hk/agent-review-pi@$v already published, skipping."
+          else
+            npm publish -w pi
+          fi
