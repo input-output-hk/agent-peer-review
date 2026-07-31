@@ -23,3 +23,17 @@ export function composeInstructions(
     .map((n) => ({ name: n, content: loadSkill(n, config) }));
   return { review, skills };
 }
+
+const langPath = (name: string, config: Config): string => path.join(skillsRoot(config), "lang", `${name}.md`);
+
+export function hasLanguageSkill(name: string, config: Config): boolean {
+  return existsSync(langPath(name, config));
+}
+
+export function loadLanguageSkill(name: string, config: Config): string {
+  return readFileSync(langPath(name, config), "utf8");
+}
+
+export function composeLanguages(names: string[], config: Config): Array<{ name: string; content: string }> {
+  return names.filter((n) => hasLanguageSkill(n, config)).map((n) => ({ name: n, content: loadLanguageSkill(n, config) }));
+}

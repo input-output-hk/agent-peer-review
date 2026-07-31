@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
-  ConfigSchema, ReviewRequestSchema, ClaimMarkerSchema, ReviewResultSchema, LabelSpecSchema,
+  ConfigSchema, ReviewRequestSchema, ClaimMarkerSchema, ReviewResultSchema, LabelSpecSchema, EnrichmentSchema,
 } from "../core/model.js";
 
 const out = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "schemas");
@@ -15,6 +15,7 @@ const entries: Array<[string, unknown]> = [
   ["claim-marker", ClaimMarkerSchema],
   ["review-result", ReviewResultSchema],
   ["label-spec", LabelSpecSchema],
+  ["enrichment", EnrichmentSchema],
 ];
 
 for (const [name, schema] of entries) {

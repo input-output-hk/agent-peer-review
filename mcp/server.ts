@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { hostname } from "node:os";
-import { loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, bootstrap } from "../core/index.js";
+import { loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, enrichReview, bootstrap } from "../core/index.js";
 
 const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] });
 
@@ -30,6 +30,13 @@ export function buildServer(): McpServer {
       inputSchema: { repo: z.string(), pr: z.number(), event: z.enum(["approve", "request-changes", "comment"]), summary: z.string(),
         comments: z.array(z.object({ path: z.string(), line: z.number(), body: z.string() })).optional() } },
     async (a) => ok(await completeReview({ gh: gh(), config: cfg() }, a)));
+
+  server.registerTool("review_enrich",
+    { title: "Enrich a review", description: "Post a consolidated second opinion once the primary review exists; else returns waiting/promote.",
+      inputSchema: { repo: z.string(), pr: z.number(), verdict: z.enum(["agree", "disagree", "mixed"]), summary: z.string(),
+        newFindings: z.array(z.object({ path: z.string(), line: z.number(), body: z.string() })).optional() } },
+    async (a) => ok(await enrichReview({ gh: gh(), config: cfg(), ttlMs: 30 * 60_000, nowMs: Date.now() },
+      { repo: a.repo, pr: a.pr, overallVerdict: a.verdict, summary: a.summary, newFindings: a.newFindings })));
 
   server.registerTool("labels_bootstrap",
     { title: "Bootstrap labels", description: "Idempotently create/update the agent + skill labels.",

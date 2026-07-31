@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { Octokit } from "@octokit/rest";
-import type { PullRequest, IssueComment, LabelSpec } from "./model.js";
+import type { PullRequest, IssueComment, LabelSpec, Review, ReviewComment } from "./model.js";
 
 export interface GitHubGateway {
   getAuthenticatedLogin(): Promise<string>;
@@ -17,6 +17,11 @@ export interface GitHubGateway {
     commitId: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
     body: string; comments?: Array<{ path: string; line: number; body: string }>;
   }): Promise<{ url: string }>;
+  getReviews(repo: string, pr: number): Promise<Review[]>;
+  listReviewComments(repo: string, pr: number): Promise<ReviewComment[]>;
+  listPullFiles(repo: string, pr: number): Promise<string[]>;
+  getFileContent(repo: string, ref: string, path: string): Promise<string | null>;
+  listDir(repo: string, ref: string, path: string): Promise<string[]>;
 }
 
 export function resolveToken(): string {
@@ -98,5 +103,37 @@ export class OctokitGateway implements GitHubGateway {
       comments: review.comments?.map((c) => ({ path: c.path, line: c.line, body: c.body })),
     });
     return { url: data.html_url ?? `https://github.com/${repo}/pull/${pr}` };
+  }
+  async getReviews(repo: string, pr: number): Promise<Review[]> {
+    const [owner, name] = split(repo);
+    const items = await this.kit.paginate(this.kit.pulls.listReviews, { owner, repo: name, pull_number: pr, per_page: 100 });
+    return items.map((r) => ({ id: r.id, author: r.user?.login ?? "unknown", state: r.state ?? "", body: r.body ?? "", commitId: r.commit_id ?? "", submittedAt: r.submitted_at ?? "" }));
+  }
+  async listReviewComments(repo: string, pr: number): Promise<ReviewComment[]> {
+    const [owner, name] = split(repo);
+    const items = await this.kit.paginate(this.kit.pulls.listReviewComments, { owner, repo: name, pull_number: pr, per_page: 100 });
+    return items.map((c) => ({ id: c.id, path: c.path, line: c.line ?? null, body: c.body ?? "", author: c.user?.login ?? "unknown" }));
+  }
+  async listPullFiles(repo: string, pr: number): Promise<string[]> {
+    const [owner, name] = split(repo);
+    const items = await this.kit.paginate(this.kit.pulls.listFiles, { owner, repo: name, pull_number: pr, per_page: 100 });
+    return items.map((f) => f.filename);
+  }
+  async getFileContent(repo: string, ref: string, path: string): Promise<string | null> {
+    const [owner, name] = split(repo);
+    try {
+      const { data } = await this.kit.repos.getContent({ owner, repo: name, path, ref });
+      if (!Array.isArray(data) && data.type === "file" && typeof data.content === "string" && data.encoding === "base64") {
+        return Buffer.from(data.content, "base64").toString("utf8");
+      }
+      return null;
+    } catch (e: any) { if (e.status === 404) return null; throw e; }
+  }
+  async listDir(repo: string, ref: string, path: string): Promise<string[]> {
+    const [owner, name] = split(repo);
+    try {
+      const { data } = await this.kit.repos.getContent({ owner, repo: name, path, ref });
+      return Array.isArray(data) ? data.map((d) => d.path) : [];
+    } catch (e: any) { if (e.status === 404) return []; throw e; }
   }
 }

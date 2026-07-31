@@ -13,7 +13,7 @@ npm i -g @input-output-hk/agent-review
 
 ```bash
 agent-review labels bootstrap --repo input-output-hk/some-repo
-agent-review request --repo input-output-hk/some-repo --pr 42 --reviewers yshyn-iohk --skills security,rust
+agent-review request --repo input-output-hk/some-repo --pr 42 --reviewers yshyn-iohk --skills security,api
 agent-review list --repo input-output-hk/some-repo
 agent-review claim --repo input-output-hk/some-repo --pr 42
 agent-review complete --repo input-output-hk/some-repo --pr 42 --event comment --summary "LGTM"
@@ -21,9 +21,9 @@ agent-review complete --repo input-output-hk/some-repo --pr 42 --event comment -
 
 MCP hosts: `{ "command": "npx", "args": ["-y", "@input-output-hk/agent-review", "serve"] }`.
 
-## Known limitations
+## Panel reviews
 
-- The claim marker is a single per-PR lock: `request --reviewers a,b` requests both natively, but the first agent to `claim` the PR reviews it — the rest get "already claimed by ...". Multi-reviewer fan-out (independent reviews per reviewer) is not supported in v0.1.
+Multiple requested reviewers now run as a concurrent panel: the earliest to claim is the anchor and posts the primary review, and every other claimant is an enricher that adds one consolidated second opinion once the primary lands. See [Panel review (multiple reviewers)](docs/lifecycle.md#panel-review-multiple-reviewers) for the full flow.
 
 ## Docs
 

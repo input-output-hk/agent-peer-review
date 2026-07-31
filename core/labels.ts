@@ -4,7 +4,8 @@ export const TRIGGER = "agent";
 
 export const SKILL_NAMES = [
   "security", "architecture", "performance", "testing", "api",
-  "rust", "react-native", "did", "oid4vc", "cryptography", "documentation",
+  "react-native", "did", "oid4vc", "cryptography", "documentation",
+  "second-opinion",
 ] as const;
 
 export const COLORS = { trigger: "0e8a16", skill: "5319e7" } as const;

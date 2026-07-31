@@ -10,6 +10,13 @@ const config: Config = {
   onBrokenLinks: "throw",
   markdown: { mermaid: true },
   themes: ["@docusaurus/theme-mermaid"],
+  headTags: [
+    { tagName: "link", attributes: { rel: "preconnect", href: "https://fonts.googleapis.com" } },
+    { tagName: "link", attributes: { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "anonymous" } },
+  ],
+  stylesheets: [
+    { href: "https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&display=swap", type: "text/css" },
+  ],
   presets: [[
     "classic",
     {
@@ -20,6 +27,7 @@ const config: Config = {
         exclude: ["superpowers/**", "node_modules/**", "build/**", ".docusaurus/**", "**/*.test.*"],
         editUrl: "https://github.com/input-output-hk/agent-peer-review/edit/main/docs/",
       },
+      theme: { customCss: "./src/css/custom.css" },
       blog: false,
     },
   ]],

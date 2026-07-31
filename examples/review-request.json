@@ -1,1 +1,1 @@
-{ "repo": "input-output-hk/some-repo", "pr": 42, "skills": ["security", "rust"], "reviewers": ["yshyn-iohk"], "note": "focus on the crypto changes" }
+{ "repo": "input-output-hk/some-repo", "pr": 42, "skills": ["security", "cryptography"], "reviewers": ["yshyn-iohk"], "note": "focus on the crypto changes" }

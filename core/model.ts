@@ -44,6 +44,18 @@ export const LabelSpecSchema = z.object({
 });
 export type LabelSpec = z.infer<typeof LabelSpecSchema>;
 
+export const EnrichmentSchema = z.object({
+  overallVerdict: z.enum(["agree", "disagree", "mixed"]),
+  summary: z.string().min(1),
+  newFindings: z.array(z.object({ path: z.string(), line: z.number().int().positive(), body: z.string() })).optional(),
+});
+export type Enrichment = z.infer<typeof EnrichmentSchema>;
+
+export type Role = "anchor" | "enricher";
+
+export interface Review { id: number; author: string; state: string; body: string; commitId: string; submittedAt: string; }
+export interface ReviewComment { id: number; path: string; line: number | null; body: string; author: string; }
+
 // Plain domain types (not validated as input).
 export interface PullRequest {
   number: number;
@@ -81,7 +93,14 @@ export interface ReviewTask {
   headSha: string;
   baseSha: string;
   reviewer: string; // acting agent's GitHub login
+  role: Role;
   skills: string[];
-  instructions: { review: string; skills: Array<{ name: string; content: string }> };
+  languages: string[];
+  instructions: {
+    review: string;
+    skills: Array<{ name: string; content: string }>;
+    languages: Array<{ name: string; content: string }>;
+  };
+  repoContext: Array<{ path: string; content: string }>;
   claim: { machine: string; claimedAt: string };
 }

@@ -1,0 +1,3 @@
+# Swift Review
+
+Check: force-unwrapped (`!`) and implicitly-unwrapped optionals used outside IBOutlets, preferring `if let`/`guard let`, `??`, or `try?`; `struct`/`enum` value semantics vs `class` reference semantics, and unintended sharing when a class instance has multiple owners; retain cycles from strong closure captures or delegate properties missing `[weak self]`/`[unowned self]`; actor isolation and `Sendable` conformance at concurrency boundaries, unjustified `@unchecked Sendable`, blocking calls inside `async` functions, and data races strict concurrency checking would catch; and swallowed errors, preferring `do`/`catch` or `Result` over bare `try!`. Prefer SwiftLint-clean code; flag disabled `force_unwrapping`/`force_cast` rules used without justification.

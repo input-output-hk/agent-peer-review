@@ -1,8 +1,10 @@
 import type { GitHubGateway } from "../github.js";
-import type { Config, ReviewTask } from "../model.js";
+import type { Config, ReviewTask, Role } from "../model.js";
 import { parseSkills } from "../labels.js";
 import { serializeMarker, parseMarkers } from "../claim-marker.js";
-import { composeInstructions } from "../skills.js";
+import { composeInstructions, composeLanguages, hasSkill, loadSkill } from "../skills.js";
+import { detectLanguages } from "../languages.js";
+import { gatherRepoContext } from "../repo-context.js";
 
 export async function claimReview(
   deps: { gh: GitHubGateway; config: Config; machine: string; now: string },
@@ -13,25 +15,43 @@ export async function claimReview(
   const pr = await gh.getPullRequest(opts.repo, opts.pr);
   if (pr.state !== "open") throw new Error(`PR ${opts.repo}#${opts.pr} is ${pr.state}, not open`);
 
-  const active = parseMarkers(await gh.listComments(opts.repo, opts.pr)).at(-1)?.marker;
+  let markers = parseMarkers(await gh.listComments(opts.repo, opts.pr));
+  const own = markers.filter((m) => m.marker.reviewer === login).at(-1);
   let pinnedSha: string;
-  if (active) {
-    if (active.reviewer !== login) throw new Error(`PR ${opts.repo}#${opts.pr} already claimed by ${active.reviewer} (${active.machine})`);
-    pinnedSha = active.sha; // resume our own claim on the originally pinned SHA
+  if (own) {
+    pinnedSha = own.marker.sha; // resume our own claim
   } else {
     pinnedSha = pr.headSha;
     await gh.createComment(opts.repo, opts.pr, serializeMarker({ v: 1, reviewer: login, machine, sha: pinnedSha, claimedAt: now }));
-    // Re-read to resolve a same-login race: earliest marker (by claimedAt, then comment id) wins.
-    const after = parseMarkers(await gh.listComments(opts.repo, opts.pr));
-    const winner = after.sort((a, b) =>
-      a.marker.claimedAt.localeCompare(b.marker.claimedAt) || a.comment.id - b.comment.id)[0]?.marker;
-    if (winner && winner.machine !== machine) pinnedSha = winner.sha;
+    markers = parseMarkers(await gh.listComments(opts.repo, opts.pr));
+  }
+  const earliest = [...markers].sort((a, b) =>
+    a.marker.claimedAt.localeCompare(b.marker.claimedAt) || a.comment.id - b.comment.id)[0]?.marker;
+  const role: Role = earliest && earliest.reviewer === login ? "anchor" : "enricher";
+
+  const skills = parseSkills(pr.labels).filter((n) => n !== "second-opinion");
+  const instructions = composeInstructions(skills, config);
+  if (role === "enricher" && hasSkill("second-opinion", config)) {
+    instructions.skills.push({ name: "second-opinion", content: loadSkill("second-opinion", config) });
   }
 
-  const skills = parseSkills(pr.labels);
+  let languages: string[] = [];
+  let languageSkills: Array<{ name: string; content: string }> = [];
+  try {
+    languages = detectLanguages(await gh.listPullFiles(opts.repo, opts.pr));
+    languageSkills = composeLanguages(languages, config);
+  } catch { languages = []; languageSkills = []; }
+  const instructionsWithLangs = { ...instructions, languages: languageSkills };
+
+  let repoContext: Array<{ path: string; content: string }> = [];
+  try { repoContext = await gatherRepoContext(gh, opts.repo, pinnedSha); } catch { repoContext = []; }
+
   return {
     repo: opts.repo, pr: pr.number, url: pr.url, title: pr.title, author: pr.author,
-    headSha: pinnedSha, baseSha: pr.baseSha, reviewer: login, skills,
-    instructions: composeInstructions(skills, config), claim: { machine, claimedAt: now },
+    headSha: pinnedSha, baseSha: pr.baseSha, reviewer: login, role, skills,
+    languages,
+    instructions: instructionsWithLangs,
+    repoContext,
+    claim: { machine, claimedAt: now },
   };
 }
