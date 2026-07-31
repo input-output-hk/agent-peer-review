@@ -14,6 +14,17 @@ jobs:
       - run: npm run check:schemas
       - run: npm test
       - run: npm run build
+  pi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: npm run -w pi typecheck
+      - run: npm run -w pi test
+      - run: npm run -w pi build
   docs:
     runs-on: ubuntu-latest
     steps:

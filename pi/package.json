@@ -1,0 +1,25 @@
+{
+  "name": "@input-output-hk/agent-review-pi",
+  "version": "0.1.0",
+  "description": "pi.dev integration for the agent peer-review workflow (extension + skill).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "files": ["dist", "skills"],
+  "keywords": ["pi-package"],
+  "publishConfig": { "registry": "https://npm.pkg.github.com" },
+  "pi": { "extensions": ["./dist/extension.js"], "skills": ["./skills"] },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": { "@input-output-hk/agent-review": "^0.1.0" },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": ">=0.83.0", "typebox": "^1.3.9" },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.83.0",
+    "typebox": "^1.3.9",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
