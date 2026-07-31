@@ -3,6 +3,8 @@ export * from "./config.js";
 export * from "./github.js";
 export * from "./labels.js";
 export * from "./skills.js";
+export * from "./languages.js";
+export * from "./repo-context.js";
 export * from "./claim-marker.js";
 export * from "./paths.js";
 export { bootstrap } from "./operations/bootstrap.js";

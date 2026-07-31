@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
 import { claimReview } from "./claim.js";
 import { serializeMarker } from "../claim-marker.js";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -11,6 +11,9 @@ function skillsDir(): string {
   writeFileSync(path.join(d, "review.md"), "# default review");
   writeFileSync(path.join(d, "security.md"), "# security");
   writeFileSync(path.join(d, "second-opinion.md"), "# second opinion");
+  mkdirSync(path.join(d, "lang"));
+  writeFileSync(path.join(d, "lang", "typescript.md"), "# typescript");
+  writeFileSync(path.join(d, "lang", "solidity.md"), "# solidity");
   return d;
 }
 const cfg = (dir: string) => ({ githubLogin: null, skillsDir: dir, runChecks: false });
@@ -20,11 +23,16 @@ describe("claimReview", () => {
   it("pins the head SHA, posts a marker, returns composed skills", async () => {
     const gh = new FakeGitHubGateway();
     gh.seedPr({ number: 5, title: "t", author: "a", headSha: "deadbeef", baseSha: "b", url: "u", state: "open", labels: ["agent", "security"] });
+    gh.seedPullFiles("o/r", 5, ["a.ts", "b.sol"]);
+    gh.seedFile("o/r", "deadbeef", "CLAUDE.md", "x");
     const task = await claimReview(deps(gh, skillsDir()), { repo: "o/r", pr: 5 });
     expect(task.headSha).toBe("deadbeef");
     expect(task.reviewer).toBe("me"); // auto-detected
     expect(task.instructions.skills.map((s) => s.name)).toEqual(["security"]);
     expect((await gh.listComments("o/r", 5)).length).toBe(1); // marker posted
+    expect(task.languages).toEqual(["solidity", "typescript"]); // detected from changed files
+    expect(task.instructions.languages.map((l) => l.name)).toEqual(["solidity", "typescript"]);
+    expect(task.repoContext.map((f) => f.path)).toContain("CLAUDE.md"); // gathered at pinned SHA
   });
 
   it("resumes when the same login already holds the claim", async () => {

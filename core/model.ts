@@ -95,6 +95,12 @@ export interface ReviewTask {
   reviewer: string; // acting agent's GitHub login
   role: Role;
   skills: string[];
-  instructions: { review: string; skills: Array<{ name: string; content: string }> };
+  languages: string[];
+  instructions: {
+    review: string;
+    skills: Array<{ name: string; content: string }>;
+    languages: Array<{ name: string; content: string }>;
+  };
+  repoContext: Array<{ path: string; content: string }>;
   claim: { machine: string; claimedAt: string };
 }

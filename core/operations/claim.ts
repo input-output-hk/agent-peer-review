@@ -2,7 +2,9 @@ import type { GitHubGateway } from "../github.js";
 import type { Config, ReviewTask, Role } from "../model.js";
 import { parseSkills } from "../labels.js";
 import { serializeMarker, parseMarkers } from "../claim-marker.js";
-import { composeInstructions, hasSkill, loadSkill } from "../skills.js";
+import { composeInstructions, composeLanguages, hasSkill, loadSkill } from "../skills.js";
+import { detectLanguages } from "../languages.js";
+import { gatherRepoContext } from "../repo-context.js";
 
 export async function claimReview(
   deps: { gh: GitHubGateway; config: Config; machine: string; now: string },
@@ -32,9 +34,20 @@ export async function claimReview(
   if (role === "enricher" && hasSkill("second-opinion", config)) {
     instructions.skills.push({ name: "second-opinion", content: loadSkill("second-opinion", config) });
   }
+
+  let languages: string[] = [];
+  try { languages = detectLanguages(await gh.listPullFiles(opts.repo, opts.pr)); } catch { languages = []; }
+  const instructionsWithLangs = { ...instructions, languages: composeLanguages(languages, config) };
+
+  let repoContext: Array<{ path: string; content: string }> = [];
+  try { repoContext = await gatherRepoContext(gh, opts.repo, pinnedSha); } catch { repoContext = []; }
+
   return {
     repo: opts.repo, pr: pr.number, url: pr.url, title: pr.title, author: pr.author,
     headSha: pinnedSha, baseSha: pr.baseSha, reviewer: login, role, skills,
-    instructions, claim: { machine, claimedAt: now },
+    languages,
+    instructions: instructionsWithLangs,
+    repoContext,
+    claim: { machine, claimedAt: now },
   };
 }
