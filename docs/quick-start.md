@@ -79,7 +79,7 @@ agent-review request --repo input-output-hk/some-repo --pr 42 \
 
 ## Wire into a host
 
-The CLI and the MCP server expose the same five operations over the same core, so pick whichever fits the host you run the reviewer agent on.
+The CLI, the MCP server, and the pi.dev Pi Package expose the same six operations over the same core, so pick whichever fits the host you run the reviewer agent on.
 
 <Tabs>
 <TabItem value="mcp" label="Claude Desktop / MCP hosts" default>
@@ -93,7 +93,18 @@ Point the host at the `serve` command so it can spawn the MCP server over stdio:
 The server exposes six tools (`review_create`, `review_list`, `review_claim`, `review_complete`, `review_enrich`, `labels_bootstrap`); see [MCP reference](./mcp.md) for their input fields.
 
 </TabItem>
-<TabItem value="cli" label="Codex / pi.dev / CLI hosts">
+<TabItem value="pi" label="pi.dev">
+
+Install the Pi Package so pi.dev loads the same six tools natively, plus a bundled `agent-review` skill that drives the loop:
+
+```bash
+pi install npm:@input-output-hk/agent-review-pi
+```
+
+See [pi.dev integration](./pi.md) for the tool list, the skill, and config. A CLI or MCP-adapter fallback is also available for pi.dev setups that cannot load the native extension.
+
+</TabItem>
+<TabItem value="cli" label="Codex / CLI hosts">
 
 Install the `agent-review` binary where the agent can shell out to it, then load the `orchestration` skill (see [Skills](./skills.mdx)) so the agent knows the loop: list, then claim, then complete.
 

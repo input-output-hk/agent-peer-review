@@ -1,3 +1,4 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { hostname } from "node:os";
 import {
@@ -5,23 +6,11 @@ import {
   type GitHubGateway, type Config,
 } from "@input-output-hk/agent-review";
 
-// Shim, not the real @earendil-works/pi-coding-agent `ExtensionAPI`: that interface's
-// `registerTool` requires `execute` to resolve `AgentToolResult<TDetails>`, which has a
-// mandatory `details` field. This package's tools return the plain `{ content: [...] }`
-// shape (identical to mcp/server.ts's `ok()`), so the real type rejects every registration
-// here with "Property 'details' is missing". This minimal structural type is enough for
-// what registerTools actually does with `pi` and lets the package type-check cleanly.
-interface ExtensionAPI {
-  registerTool(def: {
-    name: string;
-    label: string;
-    description: string;
-    parameters: unknown;
-    execute: (...a: any[]) => Promise<{ content: Array<{ type: "text"; text: string }> }>;
-  }): void;
-}
-
-const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] });
+// Same shape as mcp/server.ts's ok(), plus `details`: the real ExtensionAPI's
+// `registerTool` requires `execute` to resolve `AgentToolResult<TDetails>`, and
+// `AgentToolResult.details` is a required field. `{}` is a valid (empty) details
+// payload; the model-facing content is unchanged.
+const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: {} });
 
 export function registerTools(
   pi: ExtensionAPI,
