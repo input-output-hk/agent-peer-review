@@ -18,4 +18,13 @@ describe("gatherRepoContext", () => {
   it("returns [] when nothing exists (best-effort, no throw)", async () => {
     expect(await gatherRepoContext(new FakeGitHubGateway(), "o/r", "sha")).toEqual([]);
   });
+  it("recurses one level into .claude/skills subdirs for SKILL.md", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedDir("o/r", "sha", ".claude/skills", [".claude/skills/foo"]);
+    gh.seedDir("o/r", "sha", ".claude/skills/foo", [".claude/skills/foo/SKILL.md"]);
+    gh.seedFile("o/r", "sha", ".claude/skills/foo/SKILL.md", "skill body");
+    const ctx = await gatherRepoContext(gh, "o/r", "sha");
+    const paths = ctx.map((c) => c.path);
+    expect(paths).toContain(".claude/skills/foo/SKILL.md");
+  });
 });

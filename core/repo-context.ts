@@ -28,7 +28,15 @@ export async function gatherRepoContext(
     try { entries = await gh.listDir(repo, ref, dir); } catch { entries = []; }
     for (const e of entries) {
       if (out.length >= FILE_CAP) break;
-      if (e.toLowerCase().endsWith(".md")) await add(e);
+      if (e.toLowerCase().endsWith(".md")) { await add(e); continue; }
+      if (dir === ".claude/skills") { // one-level recurse for <name>/SKILL.md
+        let sub: string[] = [];
+        try { sub = await gh.listDir(repo, ref, e); } catch { sub = []; }
+        for (const s of sub) {
+          if (out.length >= FILE_CAP) break;
+          if (s.toLowerCase().endsWith(".md")) await add(s);
+        }
+      }
     }
   }
   return out;
