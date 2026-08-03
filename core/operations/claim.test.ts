@@ -33,6 +33,8 @@ describe("claimReview", () => {
     expect(task.languages).toEqual(["solidity", "typescript"]); // detected from changed files
     expect(task.instructions.languages.map((l) => l.name)).toEqual(["solidity", "typescript"]);
     expect(task.repoContext.map((f) => f.path)).toContain("CLAUDE.md"); // gathered at pinned SHA
+    expect(task.repoContext.every((f) => f.untrusted === true)).toBe(true); // repo files flagged untrusted
+    expect(task.contentPolicy).toMatch(/untrusted/i); // standing injection-resistance policy served
   });
 
   it("resumes when the same login already holds the claim", async () => {

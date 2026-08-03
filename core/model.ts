@@ -101,6 +101,7 @@ export interface ReviewTask {
     skills: Array<{ name: string; content: string }>;
     languages: Array<{ name: string; content: string }>;
   };
-  repoContext: Array<{ path: string; content: string }>;
+  contentPolicy: string;
+  repoContext: Array<{ path: string; content: string; untrusted: true }>;
   claim: { machine: string; claimedAt: string };
 }
