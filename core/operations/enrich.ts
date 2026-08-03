@@ -1,7 +1,7 @@
 import type { GitHubGateway } from "../github.js";
 import type { Config, Enrichment } from "../model.js";
 import { EnrichmentSchema } from "../model.js";
-import { parseMarkers } from "../claim-marker.js";
+import { parseMarkers, sortMarkers, isPrimaryReview } from "../claim-marker.js";
 
 export async function enrichReview(
   deps: { gh: GitHubGateway; config: Config; ttlMs: number; nowMs: number },
@@ -11,26 +11,40 @@ export async function enrichReview(
   const enrichment = EnrichmentSchema.parse({ overallVerdict: input.overallVerdict, summary: input.summary, newFindings: input.newFindings });
   const login = config.githubLogin ?? (await gh.getAuthenticatedLogin());
 
-  const markers = parseMarkers(await gh.listComments(input.repo, input.pr));
-  const mine = markers.filter((m) => m.marker.reviewer === login).at(-1);
+  const sorted = sortMarkers(parseMarkers(await gh.listComments(input.repo, input.pr)));
+  const mine = sorted.filter((m) => m.marker.reviewer === login)[0];
   if (!mine) throw new Error(`No active claim by ${login} on ${input.repo}#${input.pr}; claim first.`);
 
+  // This round's primary is another author's tagged review AT THIS ENRICHER'S pinned commit.
+  // Scoping to the commit (as completeReview does) ignores a PRIOR round's tagged primary at an
+  // older commit, so the enricher never posts its second opinion against a stale review. Human
+  // reviews and second opinions carry no end tag and are ignored.
   const reviews = await gh.getReviews(input.repo, input.pr);
-  const primary = reviews.filter((r) => r.author !== login)
-    .sort((a, b) => a.submittedAt.localeCompare(b.submittedAt) || a.id - b.id)[0];
+  const primary = reviews.filter((r) => r.author !== login && isPrimaryReview(r.body) && r.commitId === mine.marker.sha)
+    .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt) || b.id - a.id)[0];
 
   if (primary) {
     const body = `**Second opinion (${enrichment.overallVerdict}):**\n\n${enrichment.summary}`;
     const { url } = await gh.submitReview(input.repo, input.pr, { commitId: primary.commitId, event: "COMMENT", body, comments: enrichment.newFindings });
-    await gh.deleteComment(input.repo, mine.comment.id);
+    // Delete every one of our own markers, not just the one we used: a claim race can leave a
+    // duplicate behind, and none of them should survive once we have posted our second opinion.
+    for (const m of sorted.filter((x) => x.marker.reviewer === login)) { try { await gh.deleteComment(input.repo, m.comment.id); } catch {} }
     return { status: "enriched", url };
   }
 
-  const sorted = [...markers].sort((a, b) =>
-    a.marker.claimedAt.localeCompare(b.marker.claimedAt) || a.comment.id - b.comment.id);
   const anchor = sorted[0]?.marker;
   const anchorStale = !!anchor && anchor.reviewer !== login && nowMs - Date.parse(anchor.claimedAt) > ttlMs;
   if (!anchorStale) return { status: "waiting" };
   const survivors = sorted.filter((m) => m.marker.reviewer !== anchor!.reviewer);
-  return { status: survivors[0]?.marker.reviewer === login ? "promote" : "waiting" };
+  if (survivors[0]?.marker.reviewer !== login) return { status: "waiting" };
+
+  // I am the earliest surviving reviewer, so I promote myself. Delete the stale anchor's
+  // marker(s) first so the panel cannot deadlock if I also stall: the next-earliest survivor
+  // then becomes the anchor and this same rule elects it in turn. In normal operation this keeps
+  // the panel to a single primary (completeReview's guard degrades a late second completer to a
+  // COMMENT); a truly simultaneous double-complete can still race, as completeReview notes.
+  for (const m of sorted.filter((x) => x.marker.reviewer === anchor!.reviewer)) {
+    try { await gh.deleteComment(input.repo, m.comment.id); } catch {}
+  }
+  return { status: "promote" };
 }
