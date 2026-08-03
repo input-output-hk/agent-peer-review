@@ -14,3 +14,5 @@ export { listReviews } from "./operations/list.js";
 export { claimReview } from "./operations/claim.js";
 export { completeReview } from "./operations/complete.js";
 export { enrichReview } from "./operations/enrich.js";
+export { runEnrichLoop } from "./operations/enrich-loop.js";
+export type { EnrichLoopDeps } from "./operations/enrich-loop.js";

@@ -1,14 +1,19 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { hostname } from "node:os";
-import { loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, enrichReview, bootstrap } from "../core/index.js";
+import {
+  loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, enrichReview, bootstrap,
+  type GitHubGateway, type Config,
+} from "../core/index.js";
 
 const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] });
 
-export function buildServer(): McpServer {
-  const server = new McpServer({ name: "agent-review", version: "0.1.0" });
-  const gh = () => new OctokitGateway();
-  const cfg = () => loadConfig(process.env.AGENT_REVIEW_CONFIG);
+export function registerReviewTools(
+  server: Pick<McpServer, "registerTool">,
+  deps: { gh?: () => GitHubGateway; config?: () => Config } = {},
+): void {
+  const gh = deps.gh ?? (() => new OctokitGateway());
+  const cfg = deps.config ?? (() => loadConfig(process.env.AGENT_REVIEW_CONFIG));
 
   server.registerTool("review_create",
     { title: "Request a review", description: "Add the agent label + skill labels and request the reviewer(s) natively.",
@@ -42,6 +47,10 @@ export function buildServer(): McpServer {
     { title: "Bootstrap labels", description: "Idempotently create/update the agent + skill labels.",
       inputSchema: { repo: z.string() } },
     async (a) => ok(await bootstrap(gh(), { repo: a.repo })));
+}
 
+export function buildServer(): McpServer {
+  const server = new McpServer({ name: "agent-review", version: "0.1.0" });
+  registerReviewTools(server);
   return server;
 }

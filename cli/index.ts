@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { hostname } from "node:os";
-import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import {
   loadConfig, OctokitGateway, bootstrap, SKILL_NAMES,
-  createReview, listReviews, claimReview, completeReview, enrichReview,
+  createReview, listReviews, claimReview, completeReview, runEnrichLoop,
 } from "../core/index.js";
 import { printJson, printLine } from "./render.js";
+import { csv, readMaybeFile, repoOf } from "./util.js";
 
 const program = new Command();
 program.name("agent-review").description("Minimal async PR review over GitHub").version("0.1.0");
@@ -14,11 +14,6 @@ program.option("-c, --config <path>", "explicit config file path");
 
 const gh = () => new OctokitGateway();
 const cfg = () => loadConfig(program.opts().config);
-const repoOf = (o: { repo?: string }): string => {
-  const r = o.repo ?? cfg().defaultRepo;
-  if (!r) throw new Error("--repo is required (or set defaultRepo in your config)");
-  return r;
-};
 
 program.command("config").description("Show the resolved machine config").action(() => printJson(cfg()));
 
@@ -37,11 +32,8 @@ program.command("labels")
   .description("Bootstrap the label profile (agent + skills) on a repo")
   .action(async (action: string, opts: { repo?: string }) => {
     if (action !== "bootstrap") throw new Error(`unknown labels action: ${action}`);
-    printJson(await bootstrap(gh(), { repo: repoOf(opts) }));
+    printJson(await bootstrap(gh(), { repo: repoOf(opts, cfg().defaultRepo) }));
   });
-
-const csv = (v?: string): string[] => (v ? v.split(",").map((s) => s.trim()).filter(Boolean) : []);
-const readMaybeFile = (v: string): string => (v.startsWith("@") ? readFileSync(v.slice(1), "utf8") : v);
 
 program.command("request")
   .option("--repo <owner/name>").requiredOption("--pr <n>", "PR number")
@@ -49,7 +41,7 @@ program.command("request")
   .option("--skills <csv>", "comma-separated skills", "")
   .option("--note <text>")
   .action(async (o) => {
-    printJson(await createReview(gh(), { repo: repoOf(o), pr: Number(o.pr), skills: csv(o.skills), reviewers: csv(o.reviewers), note: o.note }));
+    printJson(await createReview(gh(), { repo: repoOf(o, cfg().defaultRepo), pr: Number(o.pr), skills: csv(o.skills), reviewers: csv(o.reviewers), note: o.note }));
   });
 
 program.command("list")
@@ -57,13 +49,13 @@ program.command("list")
   .option("--reviewer <login>", "filter by requested login (defaults to your own)")
   .action(async (o) => {
     const login = o.reviewer ?? cfg().githubLogin ?? undefined;
-    printJson(await listReviews(gh(), { repo: repoOf(o), login }));
+    printJson(await listReviews(gh(), { repo: repoOf(o, cfg().defaultRepo), login }));
   });
 
 program.command("claim")
   .option("--repo <owner/name>").requiredOption("--pr <n>")
   .action(async (o) => {
-    printJson(await claimReview({ gh: gh(), config: cfg(), machine: hostname(), now: new Date().toISOString() }, { repo: repoOf(o), pr: Number(o.pr) }));
+    printJson(await claimReview({ gh: gh(), config: cfg(), machine: hostname(), now: new Date().toISOString() }, { repo: repoOf(o, cfg().defaultRepo), pr: Number(o.pr) }));
   });
 
 program.command("complete")
@@ -73,7 +65,7 @@ program.command("complete")
   .option("--comments <@file>", "JSON array of {path,line,body}")
   .action(async (o) => {
     printJson(await completeReview({ gh: gh(), config: cfg() }, {
-      repo: repoOf(o), pr: Number(o.pr), event: o.event, summary: readMaybeFile(o.summary),
+      repo: repoOf(o, cfg().defaultRepo), pr: Number(o.pr), event: o.event, summary: readMaybeFile(o.summary),
       comments: o.comments ? JSON.parse(readMaybeFile(o.comments)) : undefined,
     }));
   });
@@ -87,20 +79,14 @@ program.command("enrich")
   .option("--timeout <seconds>", "seconds before giving up", "1800")
   .action(async (o) => {
     const enrichment = { overallVerdict: o.verdict, summary: readMaybeFile(o.summary), newFindings: o.comments ? JSON.parse(readMaybeFile(o.comments)) : undefined };
-    const repo = repoOf(o), pr = Number(o.pr), ttlMs = Number(o.timeout) * 1000;
-    const deadline = Date.now() + ttlMs;
-    const ghi = gh(), config = cfg();
-    for (;;) {
-      const res = await enrichReview({ gh: ghi, config, ttlMs, nowMs: Date.now() }, { repo, pr, ...enrichment });
-      if (res.status === "enriched") { printJson(res); return; }
-      if (res.status === "promote") {
-        const event = o.verdict === "agree" ? "approve" : o.verdict === "disagree" ? "request-changes" : "comment";
-        printJson(await completeReview({ gh: ghi, config }, { repo, pr, event, summary: enrichment.summary, comments: enrichment.newFindings }));
-        return;
-      }
-      if (Date.now() >= deadline) { printLine("Timed out waiting for the primary review."); process.exitCode = 1; return; }
-      await new Promise((r) => setTimeout(r, Number(o.poll) * 1000));
-    }
+    const repo = repoOf(o, cfg().defaultRepo), pr = Number(o.pr), ttlMs = Number(o.timeout) * 1000;
+    const res = await runEnrichLoop(
+      { gh: gh(), config: cfg(), ttlMs, now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) },
+      { repo, pr, ...enrichment },
+      { pollMs: Number(o.poll) * 1000, deadlineMs: Date.now() + ttlMs },
+    );
+    if (res.outcome === "timeout") { printLine("Timed out waiting for the primary review."); process.exitCode = 1; return; }
+    printJson(res.result ?? { outcome: res.outcome });
   });
 
 program.command("serve").description("Run the MCP server over stdio").action(async () => {
