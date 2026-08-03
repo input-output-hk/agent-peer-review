@@ -2,6 +2,9 @@ name: CI
 on:
   push: { branches: [main] }
   pull_request:
+# Least-privilege GITHUB_TOKEN: CI only reads the repo (checkout + npm). No job writes.
+permissions:
+  contents: read
 jobs:
   build:
     runs-on: ubuntu-latest
