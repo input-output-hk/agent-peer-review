@@ -5,6 +5,7 @@ import { serializeMarker, parseMarkers } from "../claim-marker.js";
 import { composeInstructions, composeLanguages, hasSkill, loadSkill } from "../skills.js";
 import { detectLanguages } from "../languages.js";
 import { gatherRepoContext } from "../repo-context.js";
+import { UNTRUSTED_CONTENT_POLICY } from "../guard.js";
 
 export async function claimReview(
   deps: { gh: GitHubGateway; config: Config; machine: string; now: string },
@@ -43,7 +44,7 @@ export async function claimReview(
   } catch { languages = []; languageSkills = []; }
   const instructionsWithLangs = { ...instructions, languages: languageSkills };
 
-  let repoContext: Array<{ path: string; content: string }> = [];
+  let repoContext: Array<{ path: string; content: string; untrusted: true }> = [];
   try { repoContext = await gatherRepoContext(gh, opts.repo, pinnedSha); } catch { repoContext = []; }
 
   return {
@@ -51,6 +52,7 @@ export async function claimReview(
     headSha: pinnedSha, baseSha: pr.baseSha, reviewer: login, role, skills,
     languages,
     instructions: instructionsWithLangs,
+    contentPolicy: UNTRUSTED_CONTENT_POLICY,
     repoContext,
     claim: { machine, claimedAt: now },
   };
