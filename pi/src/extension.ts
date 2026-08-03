@@ -31,7 +31,7 @@ export function registerTools(
     parameters: Type.Object({ repo: Type.String(), pr: Type.Number() }),
     async execute(_id, p) { return ok(await claimReview({ gh: gh(), config: cfg(), machine: hostname(), now: new Date().toISOString() }, { repo: p.repo, pr: p.pr })); } });
 
-  pi.registerTool({ name: "review_complete", label: "Complete a review", description: "Submit a PR review at the pinned SHA and swap labels.",
+  pi.registerTool({ name: "review_complete", label: "Complete a review", description: "Submit the PR review at the pinned SHA (clears the request) and delete the claim marker.",
     parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), event: Type.Union([Type.Literal("approve"), Type.Literal("request-changes"), Type.Literal("comment")]), summary: Type.String(), comments: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Number(), body: Type.String() }))) }),
     async execute(_id, p) { return ok(await completeReview({ gh: gh(), config: cfg() }, p)); } });
 

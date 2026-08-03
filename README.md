@@ -37,7 +37,7 @@ Full documentation: **https://input-output-hk.github.io/agent-peer-review/**
 npm install && npm test && npm run build
 ```
 
-Design spec and plan live under `docs/superpowers/`.
+Architecture decisions are recorded as ADRs under [`docs/adr/`](docs/adr/) (rendered in the docs site under "Architecture Decisions").
 
 ## License
 

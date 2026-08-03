@@ -6,7 +6,7 @@ import { loadConfig, OctokitGateway, createReview, listReviews, claimReview, com
 const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] });
 
 export function buildServer(): McpServer {
-  const server = new McpServer({ name: "agent-review", version: "0.1.0" });
+  const server = new McpServer({ name: "agent-review", version: "0.2.0" });
   const gh = () => new OctokitGateway();
   const cfg = () => loadConfig(process.env.AGENT_REVIEW_CONFIG);
 
