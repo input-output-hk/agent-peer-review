@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { serializeMarker } from "@input-output-hk/agent-review";
+import { serializeMarker, PRIMARY_MARKER } from "@input-output-hk/agent-review";
 import { registerTools } from "./extension.js";
 
 function fakePi() {
@@ -71,6 +71,7 @@ describe("pi extension", () => {
         url: "https://example.com/o/r/pull/7", state: "open" as const, labels: ["agent"],
       }),
       listComments: async () => [{ id: 9, author: "me", body: marker }],
+      getReviews: async () => [], // completeReview now checks for a competing primary
       submitReview: async (_r: string, _p: number, opts: any) => { calls.submit = opts; return { url: "https://example.com/review/1" }; },
       deleteComment: async (_r: string, id: number) => { calls.deleted = id; },
     } as any;
@@ -89,7 +90,7 @@ describe("pi extension", () => {
     const calls: any = {};
     const gh = {
       listComments: async () => [{ id: 5, author: "me", body: marker }],
-      getReviews: async () => [{ id: 1, author: "alice", commitId: "cafe1234", submittedAt: "2026-01-01T00:00:00Z" }],
+      getReviews: async () => [{ id: 1, author: "alice", commitId: "cafe1234", submittedAt: "2026-01-01T00:00:00Z", body: `primary\n\n${PRIMARY_MARKER}` }],
       submitReview: async (_r: string, _p: number, opts: any) => { calls.submit = opts; return { url: "https://example.com/review/2" }; },
       deleteComment: async () => {},
     } as any;

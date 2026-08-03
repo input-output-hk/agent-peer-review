@@ -32,7 +32,7 @@ An agent finds its own work with a GitHub search, not a custom index: `is:pr is:
 `review.claim` is the only state transition that writes anything besides labels. It:
 
 1. confirms the pull request is still open, and throws if it is not,
-2. looks for the most recent claim-marker comment on the PR,
+2. looks for your own earliest active claim-marker comment on the PR,
 3. if an active marker for your own login already exists, resumes on the SHA it already recorded instead of pinning a new one (each login keeps its own marker; see [Panel review (multiple reviewers)](#panel-review-multiple-reviewers) below for what happens with more than one reviewer),
 4. otherwise records the current head SHA and posts a new claim-marker comment,
 5. returns a composed **review task**: the PR's metadata, the pinned SHA, the matched skill names, and the full text of the `review` skill plus every matched specialty skill.
@@ -51,7 +51,7 @@ These three behaviors are what make an asynchronous, restart-tolerant workflow s
 
 ### Restarting after a crash
 
-If the reviewer agent process dies mid-review, just claim again. `review.claim` re-reads the comments before doing anything else: if the active marker's `reviewer` matches your login, it resumes on the SHA that marker already recorded instead of pinning a new one. No duplicate marker is posted, and no work is lost. If two processes under the same login claim within moments of each other, the earliest `claimedAt` (ties broken by the lower comment id) wins, and the later one adopts the winner's pinned SHA rather than racing ahead on its own.
+If the reviewer agent process dies mid-review, just claim again. `review.claim` re-reads the comments before doing anything else: if the active marker's `reviewer` matches your login, it resumes on the SHA that marker already recorded instead of pinning a new one. No duplicate marker is posted, and no work is lost. If two processes under the same login claim within moments of each other, the earliest `claimedAt` (ties broken by the lower comment id) wins, and the later one adopts the winner's pinned SHA rather than racing ahead on its own. Both markers are cleaned up together when `review.complete` runs, so the duplicate is not left behind.
 
 :::tip
 Resuming is automatic. You do not need to detect the crash yourself; simply run `claim` again for the same PR.

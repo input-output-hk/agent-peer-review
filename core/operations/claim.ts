@@ -1,7 +1,7 @@
 import type { GitHubGateway } from "../github.js";
 import type { Config, ReviewTask, Role } from "../model.js";
 import { parseSkills } from "../labels.js";
-import { serializeMarker, parseMarkers } from "../claim-marker.js";
+import { serializeMarker, parseMarkers, sortMarkers } from "../claim-marker.js";
 import { composeInstructions, composeLanguages, hasSkill, loadSkill } from "../skills.js";
 import { detectLanguages } from "../languages.js";
 import { gatherRepoContext } from "../repo-context.js";
@@ -17,7 +17,7 @@ export async function claimReview(
   if (pr.state !== "open") throw new Error(`PR ${opts.repo}#${opts.pr} is ${pr.state}, not open`);
 
   let markers = parseMarkers(await gh.listComments(opts.repo, opts.pr));
-  const own = markers.filter((m) => m.marker.reviewer === login).at(-1);
+  const own = sortMarkers(markers).filter((m) => m.marker.reviewer === login)[0];
   let pinnedSha: string;
   if (own) {
     pinnedSha = own.marker.sha; // resume our own claim
@@ -26,8 +26,7 @@ export async function claimReview(
     await gh.createComment(opts.repo, opts.pr, serializeMarker({ v: 1, reviewer: login, machine, sha: pinnedSha, claimedAt: now }));
     markers = parseMarkers(await gh.listComments(opts.repo, opts.pr));
   }
-  const earliest = [...markers].sort((a, b) =>
-    a.marker.claimedAt.localeCompare(b.marker.claimedAt) || a.comment.id - b.comment.id)[0]?.marker;
+  const earliest = sortMarkers(markers)[0]?.marker;
   const role: Role = earliest && earliest.reviewer === login ? "anchor" : "enricher";
 
   const skills = parseSkills(pr.labels).filter((n) => n !== "second-opinion");
