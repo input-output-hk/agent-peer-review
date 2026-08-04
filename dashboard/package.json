@@ -1,0 +1,27 @@
+{
+  "name": "@input-output-hk/agent-review-dashboard",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "bin": { "agent-review-dashboard": "dist/cli.js" },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:test": "tsc -p tsconfig.test.json",
+    "pretest": "npm run typecheck:test",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@input-output-hk/agent-review": "^0.2.0",
+    "better-sqlite3": "12.9.0",
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^3.2.6"
+  }
+}
