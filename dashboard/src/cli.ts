@@ -2,7 +2,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { Command } from "commander";
-import { OctokitGateway, agentHome, ensureAgentHome } from "@input-output-hk/agent-review";
+import { OctokitGateway, agentHome } from "@input-output-hk/agent-review";
 import { openDb, type DB } from "./db/open.js";
 import { sync, type SyncCounts } from "./sync.js";
 import type { SyncGateway } from "./sync-gateway.js";
@@ -18,6 +18,13 @@ export function defaultDbPath(): string {
   return path.join(agentHome(), "dashboard.db");
 }
 
+// better-sqlite3 does not create missing parent directories, so this must run before openDb for
+// both the agentHome()-based default and an explicit --db: either way, the resolved path's parent
+// is what needs to exist.
+export function ensureDbParent(dbPath: string): void {
+  mkdirSync(path.dirname(dbPath), { recursive: true });
+}
+
 export function buildProgram(): Command {
   const program = new Command();
   program.name("agent-review-dashboard").description("Local dashboard for agent PR-review activity");
@@ -27,15 +34,8 @@ export function buildProgram(): Command {
     .requiredOption("-r, --repo <owner/name...>", "one or more repositories to sync")
     .option("-d, --db <path>", "SQLite database file", defaultDbPath())
     .option("-l, --login <login>", "agent login (defaults to the authenticated user)")
-    .action(async (o: { repo: string[]; db: string; login?: string }, command: Command) => {
-      // better-sqlite3 does not create missing parent directories, so ensure one exists before
-      // opening the database: the shared home for the default path, or the specific parent
-      // directory the caller pointed --db at.
-      if (command.getOptionValueSource("db") === "default") {
-        ensureAgentHome();
-      } else {
-        mkdirSync(path.dirname(o.db), { recursive: true });
-      }
+    .action(async (o: { repo: string[]; db: string; login?: string }) => {
+      ensureDbParent(o.db);
       const db = openDb(o.db);
       const counts = await runSync({ gateway: new OctokitGateway(), db }, { repos: o.repo, login: o.login });
       process.stdout.write(`Synced ${counts.pulls} PR(s) across ${counts.repos} repo(s): ${counts.reviews} review(s), ${counts.notes} note(s), ${counts.claims} claim(s).\n`);

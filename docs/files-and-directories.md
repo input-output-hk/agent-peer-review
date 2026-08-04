@@ -1,7 +1,3 @@
----
-sidebar_position: 3
----
-
 # Files and directories
 
 Agent Peer Review keeps all per-user, cross-invocation configuration and state under a single
