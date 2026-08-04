@@ -53,6 +53,7 @@ export class OctokitGateway implements GitHubGateway {
       headSha: data.head.sha, baseSha: data.base.sha, url: data.html_url,
       state: data.merged ? "merged" : (data.state as "open" | "closed"),
       labels: data.labels.map((l) => (typeof l === "string" ? l : l.name ?? "")),
+      createdAt: data.created_at, updatedAt: data.updated_at, mergedAt: data.merged_at ?? null,
     };
   }
   async listReviewRequests(repo: string, login: string): Promise<PullRequest[]> {

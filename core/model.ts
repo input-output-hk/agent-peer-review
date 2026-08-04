@@ -78,6 +78,9 @@ export interface PullRequest {
   url: string;
   state: "open" | "closed" | "merged";
   labels: string[];
+  createdAt: string;
+  updatedAt: string;
+  mergedAt: string | null;
 }
 
 export interface IssueComment {

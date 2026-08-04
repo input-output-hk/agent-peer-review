@@ -1,6 +1,11 @@
 import type { GitHubGateway } from "../../core/github.js";
 import type { PullRequest, IssueComment, LabelSpec, Review, ReviewComment } from "../../core/model.js";
 
+// seedPr's timestamp fields default to these fixed ISO strings so the many existing callers that
+// predate PullRequest.createdAt/updatedAt/mergedAt keep compiling without passing them.
+const DEFAULT_PR_TIMESTAMPS = { createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", mergedAt: null } as const;
+type SeedPr = Omit<PullRequest, "createdAt" | "updatedAt" | "mergedAt"> & Partial<Pick<PullRequest, "createdAt" | "updatedAt" | "mergedAt">>;
+
 export class FakeGitHubGateway implements GitHubGateway {
   login = "me";
   prs = new Map<string, PullRequest>();
@@ -17,7 +22,7 @@ export class FakeGitHubGateway implements GitHubGateway {
   private reviewCommentSeq = 1;
   private key(repo: string, pr: number) { return `${repo}#${pr}`; }
 
-  seedPr(pr: PullRequest, repo = "o/r") { this.prs.set(this.key(repo, pr.number), { ...pr }); }
+  seedPr(pr: SeedPr, repo = "o/r") { this.prs.set(this.key(repo, pr.number), { ...DEFAULT_PR_TIMESTAMPS, ...pr }); }
   seedRequest(repo: string, pr: number, login: string) {
     const s = this.requested.get(this.key(repo, pr)) ?? new Set();
     s.add(login); this.requested.set(this.key(repo, pr), s);

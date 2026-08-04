@@ -49,4 +49,23 @@ describe("FakeGitHubGateway", () => {
     const reviewRequests = await gh.listReviewRequests("o/r", "me");
     expect(reviewRequests.map((p) => p.number)).toEqual([40]);
   });
+
+  it("getPullRequest returns seeded created/updated/merged timestamps", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({
+      number: 50, title: "t", author: "a", headSha: "s50", baseSha: "b", url: "u", state: "merged", labels: [],
+      createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-02T00:00:00Z", mergedAt: "2026-01-03T00:00:00Z",
+    });
+    const pr = await gh.getPullRequest("o/r", 50);
+    expect(pr).toMatchObject({ createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-02T00:00:00Z", mergedAt: "2026-01-03T00:00:00Z" });
+  });
+
+  it("getPullRequest defaults timestamps when seedPr omits them, so existing callers still compile", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 51, title: "t", author: "a", headSha: "s51", baseSha: "b", url: "u", state: "open", labels: [] });
+    const pr = await gh.getPullRequest("o/r", 51);
+    expect(typeof pr.createdAt).toBe("string");
+    expect(typeof pr.updatedAt).toBe("string");
+    expect(pr.mergedAt).toBeNull();
+  });
 });
