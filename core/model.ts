@@ -5,6 +5,13 @@ export const ConfigSchema = z.object({
   defaultRepo: z.string().optional(),
   skillsDir: z.string().nullable().default(null),
   runChecks: z.boolean().default(false),
+  model: z.string().optional(),
+  agent: z.string().optional(),
+  toolVersion: z.string().optional(),
+  // Opt-in switch (default off): gates ALL durable metadata capture (the review-meta footer on
+  // complete/enrich, and the claim marker's model/agent/toolVersion fields). When false, the
+  // workflow behaves exactly as before: v1 claim markers, no footer.
+  captureMetadata: z.boolean().default(false),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

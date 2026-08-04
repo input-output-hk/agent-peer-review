@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
 import { enrichReview } from "./enrich.js";
 import { serializeMarker, parseMarkers, PRIMARY_MARKER } from "../claim-marker.js";
-const cfg = { githubLogin: null as string | null, skillsDir: null, runChecks: false };
+const cfg = { githubLogin: null as string | null, skillsDir: null, runChecks: false, captureMetadata: false };
 const TTL = 30 * 60_000;
 
 function panelPr(gh: FakeGitHubGateway) {

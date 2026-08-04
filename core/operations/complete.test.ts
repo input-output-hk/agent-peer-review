@@ -3,7 +3,7 @@ import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
 import { completeReview } from "./complete.js";
 import { serializeMarker, PRIMARY_MARKER } from "../claim-marker.js";
 
-const cfg = { githubLogin: null, skillsDir: null, runChecks: false };
+const cfg = { githubLogin: null, skillsDir: null, runChecks: false, captureMetadata: false };
 
 describe("completeReview", () => {
   it("submits at the pinned SHA, clears the request, deletes the marker", async () => {
