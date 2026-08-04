@@ -34,4 +34,19 @@ describe("FakeGitHubGateway", () => {
     expect(await gh.getFileContent("o/r", "deadbeef", "nope.md")).toBeNull();
     expect(await gh.listDir("o/r", "deadbeef", "nope")).toEqual([]);
   });
+
+  it("findAgentPulls returns agent-labeled and login-reviewed PRs across all states, deduped; listReviewRequests stays open+requested only", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 40, title: "open labeled", author: "a", headSha: "s40", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedRequest("o/r", 40, "me");
+    gh.seedPr({ number: 41, title: "merged labeled", author: "a", headSha: "s41", baseSha: "b", url: "u", state: "merged", labels: ["agent"] });
+    gh.seedPr({ number: 42, title: "merged reviewed, unlabeled", author: "a", headSha: "s42", baseSha: "b", url: "u", state: "merged", labels: [] });
+    await gh.submitReview("o/r", 42, { commitId: "s42", event: "COMMENT", body: "reviewed by me" });
+
+    const agentPulls = await gh.findAgentPulls("o/r", "me");
+    expect(agentPulls.map((p) => p.number).sort()).toEqual([40, 41, 42]);
+
+    const reviewRequests = await gh.listReviewRequests("o/r", "me");
+    expect(reviewRequests.map((p) => p.number)).toEqual([40]);
+  });
 });

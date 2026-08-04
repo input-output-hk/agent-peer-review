@@ -36,6 +36,13 @@ export class FakeGitHubGateway implements GitHubGateway {
     return [...this.prs.values()].filter((p) =>
       p.state === "open" && p.labels.includes("agent") && (this.requested.get(this.key(repo, p.number))?.has(login) ?? false));
   }
+  async findAgentPulls(repo: string, login: string): Promise<PullRequest[]> {
+    const prefix = `${repo}#`;
+    const reviewedNumbers = new Set(this.reviews.filter((r) => r.repo === repo && r.author === login).map((r) => r.pr));
+    return [...this.prs.entries()]
+      .filter(([key, p]) => key.startsWith(prefix) && (p.labels.includes("agent") || reviewedNumbers.has(p.number)))
+      .map(([, p]) => ({ ...p, labels: [...p.labels] }));
+  }
   async requestReviewers(repo: string, pr: number, reviewers: string[]): Promise<void> {
     for (const r of reviewers) this.seedRequest(repo, pr, r);
   }
