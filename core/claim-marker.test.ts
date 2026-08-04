@@ -25,4 +25,18 @@ describe("claim marker", () => {
     expect(isPrimaryReview(`I mention ${PRIMARY_MARKER} mid-body`)).toBe(false); // quoted, not a primary
     expect(isPrimaryReview("no tag at all")).toBe(false);
   });
+  it("parses a v2 marker with model/agent metadata", () => {
+    const m = {
+      v: 2 as const,
+      reviewer: "me",
+      machine: "mbp",
+      sha: "abc1234",
+      claimedAt: "t",
+      model: "claude-opus-4-8",
+      agent: "claude-code",
+      toolVersion: "1.0.0",
+    };
+    const parsed = parseMarkers([{ id: 1, body: serializeMarker(m), author: "me" }]);
+    expect(parsed[0].marker).toEqual(m);
+  });
 });

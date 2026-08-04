@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
 import { claimReview } from "./claim.js";
-import { serializeMarker } from "../claim-marker.js";
+import { serializeMarker, parseMarkers } from "../claim-marker.js";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -83,5 +83,25 @@ describe("claimReview", () => {
     const b = await claimReview({ gh, config: cfg(dir), machine: "m2", now: "2026-07-30T00:01:00Z" }, { repo: "o/r", pr: 7 });
     expect(b.role).toBe("enricher");
     expect(b.instructions.skills.filter((s) => s.name === "second-opinion")).toHaveLength(1);
+  });
+
+  it("posts a v1 marker with no metadata when captureMetadata is off (default)", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 8, title: "t", author: "a", headSha: "sha00008", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    await claimReview(deps(gh, skillsDir()), { repo: "o/r", pr: 8 });
+    const marker = parseMarkers(await gh.listComments("o/r", 8))[0].marker;
+    expect(marker).toEqual({ v: 1, reviewer: "me", machine: "mbp-01", sha: "sha00008", claimedAt: "t1" });
+  });
+
+  it("posts a v2 marker carrying model/agent/toolVersion when captureMetadata is on", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 9, title: "t", author: "a", headSha: "sha00009", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    const config = { ...cfg(skillsDir()), captureMetadata: true, model: "claude-opus-4-8", agent: "claude-code", toolVersion: "1.0.0" };
+    await claimReview({ gh, config, machine: "mbp-01", now: "t1" }, { repo: "o/r", pr: 9 });
+    const marker = parseMarkers(await gh.listComments("o/r", 9))[0].marker;
+    expect(marker).toEqual({
+      v: 2, reviewer: "me", machine: "mbp-01", sha: "sha00009", claimedAt: "t1",
+      model: "claude-opus-4-8", agent: "claude-code", toolVersion: "1.0.0",
+    });
   });
 });

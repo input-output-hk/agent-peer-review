@@ -6,7 +6,10 @@
       "properties": {
         "v": {
           "type": "number",
-          "const": 1
+          "enum": [
+            1,
+            2
+          ]
         },
         "reviewer": {
           "type": "string",
@@ -23,6 +26,15 @@
         "claimedAt": {
           "type": "string",
           "minLength": 1
+        },
+        "model": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "toolVersion": {
+          "type": "string"
         }
       },
       "required": [
