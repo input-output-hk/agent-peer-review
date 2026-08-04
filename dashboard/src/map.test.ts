@@ -56,6 +56,16 @@ describe("deriveReviewFields", () => {
   });
 });
 
+describe("stripMarkers", () => {
+  it("strips multiple meta footers", () => {
+    const f1 = serializeMeta({ v: 1, role: "primary", verdict: "approve" });
+    const f2 = serializeMeta({ v: 1, role: "second-opinion", verdict: "agree" });
+    const s = stripMarkers(`Text.\n\n${f1}\n\n${f2}`);
+    expect(s).toBe("Text.");
+    expect(s).not.toContain("agent-review:meta");
+  });
+});
+
 describe("participantsOf", () => {
   it("returns the author plus distinct review authors", () => {
     const pull = { number: 1, title: "t", author: "alice", headSha: "h", baseSha: "b", url: "u", state: "open" as const, labels: [], createdAt: "c", updatedAt: "u", mergedAt: null };

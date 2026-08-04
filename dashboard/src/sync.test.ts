@@ -113,4 +113,15 @@ describe("sync", () => {
     const row: any = db.prepare("SELECT repos_json FROM sync_run").get();
     expect(JSON.parse(row.repos_json)).toEqual(["o/r", "o/r"]); // sync_run records the original argument as-is
   });
+
+  it("records a failed sync_run and rethrows when a repo gateway call fails mid-sync", async () => {
+    const gw = new FakeSyncGateway();
+    gw.seedPull("o/r", { pull: pull() });
+    gw.getReviews = async () => { throw new Error("boom"); };
+    const db = openDb(":memory:");
+
+    await expect(sync(gw, db, ["o/r"])).rejects.toThrow("boom");
+
+    expect(db.prepare("SELECT COUNT(*) n FROM sync_run WHERE ok=0").get()).toEqual({ n: 1 });
+  });
 });

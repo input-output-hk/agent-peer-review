@@ -10,7 +10,8 @@ export function verdictFromState(state: string): string | null {
   return STATE_VERDICT[state] ?? null;
 }
 
-const META_BLOCK = /<!--\s*agent-review:meta[\s\S]*?-->/g; // lazy to first "-->": linear, ReDoS-safe
+// Bounded (no unbounded backtracking): the meta JSON is flat, so [^{}]* is safe and ReDoS-proof.
+const META_BLOCK = /<!--\s*agent-review:meta\s+\{[^{}]*\}\s*-->/gs;
 
 /** Remove the hidden meta footer(s) and the primary marker, leaving human-readable summary text. */
 export function stripMarkers(body: string): string {

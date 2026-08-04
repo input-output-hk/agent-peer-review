@@ -43,9 +43,9 @@ node dashboard/dist/cli.js sync --repo input-output-hk/agent-peer-review --db ./
 ## Authentication
 
 The CLI reads `GITHUB_TOKEN` from the environment. A fine-grained personal access token scoped to
-read-only access on Contents, Pull requests, and Issues is sufficient; no write scopes are needed
-because Phase 1 only reads from GitHub. If `GITHUB_TOKEN` is not set, it falls back to `gh auth
-token` (the GitHub CLI's cached credential).
+read-only access on Pull requests and Issues is sufficient; no write scopes are needed because
+Phase 1 only reads from GitHub. If `GITHUB_TOKEN` is not set, it falls back to `gh auth token` (the
+GitHub CLI's cached credential).
 
 ## Known limitations
 
