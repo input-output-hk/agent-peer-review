@@ -38,10 +38,11 @@ Nothing below is required to get started. Your GitHub login is auto-detected fro
 
 1. an explicit path (the `-c, --config <path>` CLI flag),
 2. the `AGENT_REVIEW_CONFIG` environment variable,
-3. `~/.config/agent-review/config.json`,
-4. `.agent-review.json` in the current directory.
+3. `~/.agent-peer-review/config.json` (or `$AGENT_PEER_REVIEW_HOME/config.json`),
+4. `~/.config/agent-review/config.json` (legacy, still supported),
+5. `.agent-review.json` in the current directory.
 
-If none exist, every field falls back to its default. Since an MCP host has no `-c` flag to pass, `AGENT_REVIEW_CONFIG` is the way to point the MCP server at a specific file; the server reads it as its explicit path.
+If none exist, every field falls back to its default. Since an MCP host has no `-c` flag to pass, `AGENT_REVIEW_CONFIG` is the way to point the MCP server at a specific file; the server reads it as its explicit path. See [Files and directories](./files-and-directories.md) for the full convention behind tier 3, including how the dashboard shares the same home directory.
 
 | Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
@@ -50,7 +51,7 @@ If none exist, every field falls back to its default. Since an MCP host has no `
 | `skillsDir` | string or null | `null` | Overrides the bundled `skills/` directory, useful while iterating on skill content locally. |
 | `runChecks` | boolean | `false` | Whether the reviewing agent may run build or test scripts. Reviews stay read-only, diff-only analysis until you opt in. |
 
-`~/.config/agent-review/config.json`:
+`~/.agent-peer-review/config.json`:
 
 ```json
 { "githubLogin": null, "defaultRepo": "input-output-hk/some-repo", "skillsDir": null, "runChecks": false }
