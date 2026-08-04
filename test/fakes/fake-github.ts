@@ -1,6 +1,11 @@
 import type { GitHubGateway } from "../../core/github.js";
 import type { PullRequest, IssueComment, LabelSpec, Review, ReviewComment } from "../../core/model.js";
 
+// seedPr's timestamp fields default to these fixed ISO strings so the many existing callers that
+// predate PullRequest.createdAt/updatedAt/mergedAt keep compiling without passing them.
+const DEFAULT_PR_TIMESTAMPS = { createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", mergedAt: null } as const;
+type SeedPr = Omit<PullRequest, "createdAt" | "updatedAt" | "mergedAt"> & Partial<Pick<PullRequest, "createdAt" | "updatedAt" | "mergedAt">>;
+
 export class FakeGitHubGateway implements GitHubGateway {
   login = "me";
   prs = new Map<string, PullRequest>();
@@ -17,7 +22,7 @@ export class FakeGitHubGateway implements GitHubGateway {
   private reviewCommentSeq = 1;
   private key(repo: string, pr: number) { return `${repo}#${pr}`; }
 
-  seedPr(pr: PullRequest, repo = "o/r") { this.prs.set(this.key(repo, pr.number), { ...pr }); }
+  seedPr(pr: SeedPr, repo = "o/r") { this.prs.set(this.key(repo, pr.number), { ...DEFAULT_PR_TIMESTAMPS, ...pr }); }
   seedRequest(repo: string, pr: number, login: string) {
     const s = this.requested.get(this.key(repo, pr)) ?? new Set();
     s.add(login); this.requested.set(this.key(repo, pr), s);
@@ -35,6 +40,13 @@ export class FakeGitHubGateway implements GitHubGateway {
   async listReviewRequests(repo: string, login: string): Promise<PullRequest[]> {
     return [...this.prs.values()].filter((p) =>
       p.state === "open" && p.labels.includes("agent") && (this.requested.get(this.key(repo, p.number))?.has(login) ?? false));
+  }
+  async findAgentPulls(repo: string, login: string): Promise<PullRequest[]> {
+    const prefix = `${repo}#`;
+    const reviewedNumbers = new Set(this.reviews.filter((r) => r.repo === repo && r.author === login).map((r) => r.pr));
+    return [...this.prs.entries()]
+      .filter(([key, p]) => key.startsWith(prefix) && (p.labels.includes("agent") || reviewedNumbers.has(p.number)))
+      .map(([, p]) => ({ ...p, labels: [...p.labels] }));
   }
   async requestReviewers(repo: string, pr: number, reviewers: string[]): Promise<void> {
     for (const r of reviewers) this.seedRequest(repo, pr, r);

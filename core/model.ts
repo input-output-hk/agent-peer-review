@@ -5,6 +5,13 @@ export const ConfigSchema = z.object({
   defaultRepo: z.string().optional(),
   skillsDir: z.string().nullable().default(null),
   runChecks: z.boolean().default(false),
+  model: z.string().optional(),
+  agent: z.string().optional(),
+  toolVersion: z.string().optional(),
+  // Opt-in switch (default off): gates ALL durable metadata capture (the review-meta footer on
+  // complete/enrich, and the claim marker's model/agent/toolVersion fields). When false, the
+  // workflow behaves exactly as before: v1 claim markers, no footer.
+  captureMetadata: z.boolean().default(false),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 
@@ -18,11 +25,16 @@ export const ReviewRequestSchema = z.object({
 export type ReviewRequest = z.infer<typeof ReviewRequestSchema>;
 
 export const ClaimMarkerSchema = z.object({
-  v: z.literal(1),
+  v: z.union([z.literal(1), z.literal(2)]),
   reviewer: z.string().min(1),
   machine: z.string().min(1),
   sha: z.string().min(7),
   claimedAt: z.string().min(1),
+  // v2 only: written when Config.captureMetadata is true (see core/operations/claim.ts). Absent
+  // on v1 markers and omitted from the wire footer when unset.
+  model: z.string().optional(),
+  agent: z.string().optional(),
+  toolVersion: z.string().optional(),
 });
 export type ClaimMarker = z.infer<typeof ClaimMarkerSchema>;
 
@@ -66,6 +78,9 @@ export interface PullRequest {
   url: string;
   state: "open" | "closed" | "merged";
   labels: string[];
+  createdAt: string;
+  updatedAt: string;
+  mergedAt: string | null;
 }
 
 export interface IssueComment {

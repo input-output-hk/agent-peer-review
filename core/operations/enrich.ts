@@ -2,6 +2,7 @@ import type { GitHubGateway } from "../github.js";
 import type { Config, Enrichment } from "../model.js";
 import { EnrichmentSchema } from "../model.js";
 import { parseMarkers, sortMarkers, isPrimaryReview } from "../claim-marker.js";
+import { serializeMeta, type ReviewMeta } from "../review-meta.js";
 
 export async function enrichReview(
   deps: { gh: GitHubGateway; config: Config; ttlMs: number; nowMs: number },
@@ -24,7 +25,23 @@ export async function enrichReview(
     .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt) || b.id - a.id)[0];
 
   if (primary) {
-    const body = `**Second opinion (${enrichment.overallVerdict}):**\n\n${enrichment.summary}`;
+    let body = `**Second opinion (${enrichment.overallVerdict}):**\n\n${enrichment.summary}`;
+    // Opt-in (Config.captureMetadata, default false): off, the body is unchanged from before this
+    // feature existed. On, a durable meta footer is appended last (second opinions carry no
+    // primary marker, so there is nothing the footer needs to precede).
+    if (config.captureMetadata) {
+      const meta: ReviewMeta = {
+        v: 1,
+        model: mine.marker.model ?? config.model,
+        agent: mine.marker.agent ?? config.agent,
+        toolVersion: mine.marker.toolVersion ?? config.toolVersion,
+        role: "second-opinion",
+        verdict: enrichment.overallVerdict,
+        claimedAt: mine.marker.claimedAt,
+        machine: mine.marker.machine,
+      };
+      body += `\n\n${serializeMeta(meta)}`;
+    }
     const { url } = await gh.submitReview(input.repo, input.pr, { commitId: primary.commitId, event: "COMMENT", body, comments: enrichment.newFindings });
     // Delete every one of our own markers, not just the one we used: a claim race can leave a
     // duplicate behind, and none of them should survive once we have posted our second opinion.

@@ -24,6 +24,19 @@
         "runChecks": {
           "type": "boolean",
           "default": false
+        },
+        "model": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "toolVersion": {
+          "type": "string"
+        },
+        "captureMetadata": {
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false

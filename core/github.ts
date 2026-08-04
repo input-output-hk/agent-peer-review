@@ -6,6 +6,7 @@ export interface GitHubGateway {
   getAuthenticatedLogin(): Promise<string>;
   getPullRequest(repo: string, pr: number): Promise<PullRequest>;
   listReviewRequests(repo: string, login: string): Promise<PullRequest[]>;
+  findAgentPulls(repo: string, login: string): Promise<PullRequest[]>;
   requestReviewers(repo: string, pr: number, reviewers: string[]): Promise<void>;
   addLabels(repo: string, pr: number, labels: string[]): Promise<void>;
   listLabels(repo: string): Promise<LabelSpec[]>;
@@ -52,12 +53,26 @@ export class OctokitGateway implements GitHubGateway {
       headSha: data.head.sha, baseSha: data.base.sha, url: data.html_url,
       state: data.merged ? "merged" : (data.state as "open" | "closed"),
       labels: data.labels.map((l) => (typeof l === "string" ? l : l.name ?? "")),
+      createdAt: data.created_at, updatedAt: data.updated_at, mergedAt: data.merged_at ?? null,
     };
   }
   async listReviewRequests(repo: string, login: string): Promise<PullRequest[]> {
     const q = `repo:${repo} is:pr is:open label:agent review-requested:${login}`;
     const items = await this.kit.paginate(this.kit.search.issuesAndPullRequests, { q, per_page: 100 });
     return Promise.all(items.map((i) => this.getPullRequest(repo, i.number)));
+  }
+  // Discovery across all PR states (open/closed/merged), for the dashboard sync (Phase 1) to
+  // enumerate every agent-reviewed PR, not just the currently-open ones listReviewRequests sees.
+  // Note: the Search API has a ~30/min secondary rate limit and caps results at 1000 per query;
+  // windowing and backoff for large repos is the sync layer's concern (Phase 1), not this method's.
+  async findAgentPulls(repo: string, login: string): Promise<PullRequest[]> {
+    const queries = [`repo:${repo} is:pr label:agent`, `repo:${repo} is:pr reviewed-by:${login}`];
+    const nums = new Set<number>();
+    for (const q of queries) {
+      const items = await this.kit.paginate(this.kit.search.issuesAndPullRequests, { q, per_page: 100 });
+      for (const i of items) nums.add(i.number);
+    }
+    return Promise.all([...nums].map((n) => this.getPullRequest(repo, n)));
   }
   async requestReviewers(repo: string, pr: number, reviewers: string[]): Promise<void> {
     const [owner, name] = split(repo);

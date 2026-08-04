@@ -14,12 +14,20 @@ describe("model", () => {
     const ok = ReviewResultSchema.parse({ repo: "o/r", pr: 1, event: "approve", summary: "looks good" });
     expect(ok.event).toBe("approve");
   });
-  it("requires claim marker version 1", () => {
-    expect(() => ClaimMarkerSchema.parse({ v: 2, reviewer: "y", machine: "m", sha: "abcdefg", claimedAt: "t" })).toThrow();
+  it("rejects a claim marker version outside 1 or 2", () => {
+    expect(() => ClaimMarkerSchema.parse({ v: 3, reviewer: "y", machine: "m", sha: "abcdefg", claimedAt: "t" })).toThrow();
   });
-  it("accepts a valid claim marker", () => {
+  it("accepts a valid v1 claim marker", () => {
     const ok = ClaimMarkerSchema.parse({ v: 1, reviewer: "y", machine: "m", sha: "abcdefg", claimedAt: "t" });
     expect(ok.v).toBe(1);
+  });
+  it("accepts a valid v2 claim marker with metadata", () => {
+    const ok = ClaimMarkerSchema.parse({
+      v: 2, reviewer: "y", machine: "m", sha: "abcdefg", claimedAt: "t",
+      model: "claude-opus-4-8", agent: "claude-code", toolVersion: "1.0.0",
+    });
+    expect(ok.v).toBe(2);
+    expect(ok.model).toBe("claude-opus-4-8");
   });
   it("config defaults are all optional", () => {
     const c = ConfigSchema.parse({});

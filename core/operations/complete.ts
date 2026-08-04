@@ -2,6 +2,7 @@ import type { GitHubGateway } from "../github.js";
 import type { Config, ReviewResult } from "../model.js";
 import { ReviewResultSchema } from "../model.js";
 import { parseMarkers, sortMarkers, PRIMARY_MARKER, isPrimaryReview } from "../claim-marker.js";
+import { serializeMeta, type ReviewMeta } from "../review-meta.js";
 
 const EVENT_MAP = { approve: "APPROVE", "request-changes": "REQUEST_CHANGES", comment: "COMMENT" } as const;
 
@@ -37,7 +38,24 @@ export async function completeReview(
   if (drifted) {
     body += `\n\n> Note: reviewed at pinned commit ${mine.marker.sha.slice(0, 7)}; PR head is now ${pr.headSha.slice(0, 7)}.`;
   }
-  if (!competing) body += `\n\n${PRIMARY_MARKER}`; // tag this as the round's primary review
+  // Opt-in (Config.captureMetadata, default false): off, the body is unchanged from before this
+  // feature existed. On, a durable meta footer is appended before the primary marker so a later
+  // dashboard sync can read model/agent/role/verdict straight off the review body.
+  if (config.captureMetadata) {
+    const meta: ReviewMeta = {
+      v: 1,
+      model: mine.marker.model ?? config.model,
+      agent: mine.marker.agent ?? config.agent,
+      toolVersion: mine.marker.toolVersion ?? config.toolVersion,
+      role: competing ? "second-opinion" : "primary",
+      verdict: req.event,
+      claimedAt: mine.marker.claimedAt,
+      machine: mine.marker.machine,
+      drifted,
+    };
+    body += `\n\n${serializeMeta(meta)}`;
+  }
+  if (!competing) body += `\n\n${PRIMARY_MARKER}`; // tag this as the round's primary review; must stay last
 
   const { url } = await gh.submitReview(req.repo, req.pr, { commitId: mine.marker.sha, event, body, comments: req.comments });
   // Delete every one of our own markers, not just the one we used: a claim race can leave a

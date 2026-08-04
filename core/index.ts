@@ -6,6 +6,7 @@ export * from "./skills.js";
 export * from "./languages.js";
 export * from "./repo-context.js";
 export * from "./claim-marker.js";
+export * from "./review-meta.js";
 export * from "./paths.js";
 export * from "./guard.js";
 export { bootstrap } from "./operations/bootstrap.js";

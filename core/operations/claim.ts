@@ -1,5 +1,5 @@
 import type { GitHubGateway } from "../github.js";
-import type { Config, ReviewTask, Role } from "../model.js";
+import type { ClaimMarker, Config, ReviewTask, Role } from "../model.js";
 import { parseSkills } from "../labels.js";
 import { serializeMarker, parseMarkers, sortMarkers } from "../claim-marker.js";
 import { composeInstructions, composeLanguages, hasSkill, loadSkill } from "../skills.js";
@@ -23,7 +23,13 @@ export async function claimReview(
     pinnedSha = own.marker.sha; // resume our own claim
   } else {
     pinnedSha = pr.headSha;
-    await gh.createComment(opts.repo, opts.pr, serializeMarker({ v: 1, reviewer: login, machine, sha: pinnedSha, claimedAt: now }));
+    // Metadata capture is opt-in (Config.captureMetadata, default false): off, this writes a v1
+    // marker exactly as before; on, it writes a v2 marker carrying model/agent/toolVersion from
+    // config (JSON.stringify in serializeMarker drops any that are unset).
+    const marker: ClaimMarker = config.captureMetadata
+      ? { v: 2, reviewer: login, machine, sha: pinnedSha, claimedAt: now, model: config.model, agent: config.agent, toolVersion: config.toolVersion }
+      : { v: 1, reviewer: login, machine, sha: pinnedSha, claimedAt: now };
+    await gh.createComment(opts.repo, opts.pr, serializeMarker(marker));
     markers = parseMarkers(await gh.listComments(opts.repo, opts.pr));
   }
   const earliest = sortMarkers(markers)[0]?.marker;
