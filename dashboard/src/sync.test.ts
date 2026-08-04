@@ -60,5 +60,57 @@ describe("sync", () => {
     const db = openDb(":memory:");
     const res = await sync(gw, db, ["o/r"]); // must not throw; resolves login internally
     expect(res.counts.pulls).toBe(1);
+    expect(gw.authCalls).toBe(1);
+    expect(gw.findAgentPullsLogins).toEqual(["someone-else"]); // the `??` fallback reached findAgentPulls
+  });
+
+  it("passes an explicit login straight through without calling getAuthenticatedLogin", async () => {
+    const gw = new FakeSyncGateway();
+    gw.login = "someone-else";
+    gw.seedPull("o/r", { pull: pull({ labels: ["agent"] }) });
+    const db = openDb(":memory:");
+    const res = await sync(gw, db, ["o/r"], { login: "explicit-login" });
+    expect(res.counts.pulls).toBe(1);
+    expect(gw.authCalls).toBe(0);
+    expect(gw.findAgentPullsLogins).toEqual(["explicit-login"]);
+  });
+
+  it("dedups repeated claim markers for the same reviewer, keeping the latest", async () => {
+    const gw = new FakeSyncGateway();
+    const earlier = serializeMarker({ v: 2, reviewer: "agent-bot", machine: "mac-1", sha: "head123", claimedAt: "2026-01-02T00:00:00Z", model: "claude-opus-4-8", agent: "claude-code", toolVersion: "1" });
+    const later = serializeMarker({ v: 2, reviewer: "agent-bot", machine: "mac-2", sha: "head123", claimedAt: "2026-01-02T00:30:00Z", model: "claude-opus-4-8", agent: "claude-code", toolVersion: "2" });
+    gw.seedPull("o/r", {
+      pull: pull(),
+      comments: [
+        { id: 300, author: "agent-bot", body: earlier },
+        { id: 301, author: "agent-bot", body: later },
+      ] as any,
+    });
+    const db = openDb(":memory:");
+
+    // Two markers naming the same reviewer would otherwise collide on claim's
+    // UNIQUE(pr_id, reviewer_login) and abort the whole sync; this must resolve cleanly.
+    const res = await sync(gw, db, ["o/r"]);
+
+    const pr: any = db.prepare("SELECT id FROM pull_request WHERE number=7").get();
+    expect(db.prepare("SELECT COUNT(*) n FROM claim WHERE pr_id=?").get(pr.id)).toEqual({ n: 1 });
+    const claim: any = db.prepare("SELECT reviewer_login, machine, claimed_at FROM claim WHERE pr_id=?").get(pr.id);
+    expect(claim).toEqual({ reviewer_login: "agent-bot", machine: "mac-2", claimed_at: "2026-01-02T00:30:00Z" }); // latest wins
+    expect(res.counts.claims).toBe(1);
+    expect(db.prepare("SELECT COUNT(*) n FROM sync_run WHERE ok=1").get()).toEqual({ n: 1 });
+  });
+
+  it("dedups repeated repo entries so each repo is only synced once", async () => {
+    const gw = new FakeSyncGateway();
+    gw.seedPull("o/r", { pull: pull() });
+    const db = openDb(":memory:");
+
+    const res = await sync(gw, db, ["o/r", "o/r"]);
+
+    expect(res.counts.repos).toBe(1);
+    expect(gw.findAgentPullsLogins).toHaveLength(1); // findAgentPulls called once, not twice
+    expect(db.prepare("SELECT COUNT(*) n FROM repo").get()).toEqual({ n: 1 });
+    const row: any = db.prepare("SELECT repos_json FROM sync_run").get();
+    expect(JSON.parse(row.repos_json)).toEqual(["o/r", "o/r"]); // sync_run records the original argument as-is
   });
 });

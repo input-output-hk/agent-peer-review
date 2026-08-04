@@ -15,8 +15,9 @@ export async function sync(
   const login = opts.login ?? (await gateway.getAuthenticatedLogin());
   const startedAt = new Date().toISOString();
   const counts: SyncCounts = { repos: 0, pulls: 0, reviews: 0, notes: 0, claims: 0 };
+  const uniqueRepos = [...new Set(repos)];
 
-  for (const repo of repos) {
+  for (const repo of uniqueRepos) {
     const [owner, name] = repo.split("/");
     const repoId = upsertRepo(db, owner, name);
     counts.repos++;
@@ -39,10 +40,19 @@ export async function sync(
         };
       });
       const noteRows: NoteRow[] = notes.map((n) => ({ githubCommentId: n.id, path: n.path, line: n.line, body: n.body, authorLogin: n.author }));
-      const claimRows: ClaimRow[] = claims.map(({ marker }) => ({
-        reviewerLogin: marker.reviewer, machine: marker.machine, sha: marker.sha, claimedAt: marker.claimedAt,
-        model: marker.model ?? null, agent: marker.agent ?? null, toolVersion: marker.toolVersion ?? null,
-      }));
+      // The claim table is UNIQUE(pr_id, reviewer_login): a raced/retried claim can leave two
+      // markers naming the same reviewer, which would otherwise throw inside replaceChildren's
+      // transaction and abort the whole sync (no repos synced, no sync_run recorded). `claims` is
+      // ascending by claimedAt (sortMarkers), so building a Map keyed by reviewer and overwriting
+      // on repeats keeps the LATEST claim per reviewer.
+      const claimByReviewer = new Map<string, ClaimRow>();
+      for (const { marker } of claims) {
+        claimByReviewer.set(marker.reviewer, {
+          reviewerLogin: marker.reviewer, machine: marker.machine, sha: marker.sha, claimedAt: marker.claimedAt,
+          model: marker.model ?? null, agent: marker.agent ?? null, toolVersion: marker.toolVersion ?? null,
+        });
+      }
+      const claimRows: ClaimRow[] = [...claimByReviewer.values()];
 
       const prId = upsertPull(db, repoId, pull);
       replaceChildren(db, prId, { reviews: reviewRows, notes: noteRows, claims: claimRows, participants: participantsOf(pull, reviews) });

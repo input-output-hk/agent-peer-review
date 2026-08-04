@@ -6,6 +6,10 @@ interface Seeded { pull: PullRequest; reviews: Review[]; notes: ReviewComment[];
 /** In-memory SyncGateway for dashboard sync tests. Unlike the core fake, timestamps are caller-supplied ISO strings. */
 export class FakeSyncGateway implements SyncGateway {
   login = "agent-bot";
+  /** Number of times getAuthenticatedLogin() was called. Lets tests assert an explicit opts.login skips the auth call. */
+  authCalls = 0;
+  /** The `login` argument passed to each findAgentPulls() call, in call order. Lets tests assert which login sync() actually resolved and forwarded. */
+  findAgentPullsLogins: string[] = [];
   private repos = new Map<string, Seeded[]>();
 
   seedPull(repo: string, s: { pull: PullRequest; reviews?: Review[]; notes?: ReviewComment[]; comments?: IssueComment[] }): void {
@@ -23,8 +27,11 @@ export class FakeSyncGateway implements SyncGateway {
     if (c.comments) found.comments = c.comments;
   }
 
-  async getAuthenticatedLogin(): Promise<string> { return this.login; }
-  async findAgentPulls(repo: string): Promise<PullRequest[]> { return (this.repos.get(repo) ?? []).map((x) => x.pull); }
+  async getAuthenticatedLogin(): Promise<string> { this.authCalls++; return this.login; }
+  async findAgentPulls(repo: string, login: string): Promise<PullRequest[]> {
+    this.findAgentPullsLogins.push(login);
+    return (this.repos.get(repo) ?? []).map((x) => x.pull);
+  }
   private find(repo: string, pr: number): Seeded | undefined { return (this.repos.get(repo) ?? []).find((x) => x.pull.number === pr); }
   async getReviews(repo: string, pr: number): Promise<Review[]> { return this.find(repo, pr)?.reviews ?? []; }
   async listReviewComments(repo: string, pr: number): Promise<ReviewComment[]> { return this.find(repo, pr)?.notes ?? []; }
