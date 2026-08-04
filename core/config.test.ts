@@ -47,4 +47,32 @@ describe("config", () => {
     vi.stubEnv("AGENT_REVIEW_CAPTURE_METADATA", "false");
     expect(loadConfig(file).captureMetadata).toBe(false);
   });
+  it("an empty-string env var does not clobber the config file value (regression)", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, JSON.stringify({ model: "claude-opus-4-8" }));
+    vi.stubEnv("AGENT_REVIEW_MODEL", "");
+    expect(loadConfig(file).model).toBe("claude-opus-4-8");
+  });
+  it("an empty-string env var does not clobber the default (undefined) value (regression)", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, "{}");
+    vi.stubEnv("AGENT_REVIEW_MODEL", "");
+    expect(loadConfig(file).model).toBeUndefined();
+  });
+  it("a non-empty env var still overrides the config file value", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, JSON.stringify({ model: "claude-opus-4-8" }));
+    vi.stubEnv("AGENT_REVIEW_MODEL", "x");
+    expect(loadConfig(file).model).toBe("x");
+  });
+  it("falls back to <agentHome>/config.json when no explicit path or AGENT_REVIEW_CONFIG is set", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "agent-home-"));
+    vi.stubEnv("AGENT_PEER_REVIEW_HOME", dir);
+    vi.stubEnv("AGENT_REVIEW_CONFIG", "");
+    writeFileSync(path.join(dir, "config.json"), JSON.stringify({ githubLogin: "from-agent-home" }));
+    expect(loadConfig().githubLogin).toBe("from-agent-home");
+  });
 });
