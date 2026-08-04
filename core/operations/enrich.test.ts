@@ -2,7 +2,11 @@ import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
 import { enrichReview } from "./enrich.js";
 import { serializeMarker, parseMarkers, PRIMARY_MARKER } from "../claim-marker.js";
+import { parseMeta } from "../review-meta.js";
 const cfg = { githubLogin: null as string | null, skillsDir: null, runChecks: false, captureMetadata: false };
+// Capture-on variant, scoped to the footer tests below: the shared `cfg` above must stay
+// captureMetadata:false so every existing test keeps exercising today's (no-footer) behavior.
+const cfgCapture = { ...cfg, captureMetadata: true, model: "claude-opus-4-8", agent: "claude-code" };
 const TTL = 30 * 60_000;
 
 function panelPr(gh: FakeGitHubGateway) {
@@ -97,5 +101,35 @@ describe("enrichReview", () => {
     gh.login = "carol";
     const carolRes = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs }, { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
     expect(carolRes.status).toBe("enriched"); // a primary now exists, so carol enriches instead of promoting
+  });
+
+  it("writes a second-opinion meta footer when enriching, with captureMetadata on", async () => {
+    const gh = new FakeGitHubGateway(); panelPr(gh);
+    gh.login = "alice";
+    await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "alice", machine: "m1", sha: "primsha", claimedAt: "2026-07-30T00:00:00Z" }));
+    await gh.submitReview("o/r", 9, { commitId: "primsha", event: "REQUEST_CHANGES", body: `primary\n\n${PRIMARY_MARKER}` });
+    gh.login = "bob";
+    await gh.createComment("o/r", 9, serializeMarker({ v: 2, reviewer: "bob", machine: "m2", sha: "primsha", claimedAt: "2026-07-30T00:01:00Z", model: "claude-opus-4-8", agent: "claude-code" }));
+    const res = await enrichReview({ gh, config: cfgCapture, ttlMs: TTL, nowMs: Date.parse("2026-07-30T00:02:00Z") },
+      { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "confirmed" });
+    expect(res.status).toBe("enriched");
+    const bobReview = gh.reviews.find((r) => r.author === "bob")!;
+    expect(parseMeta(bobReview.body)).toMatchObject({
+      role: "second-opinion", verdict: "agree", model: "claude-opus-4-8", agent: "claude-code", machine: "m2",
+    });
+  });
+
+  it("writes no meta footer when enriching with captureMetadata off (default)", async () => {
+    const gh = new FakeGitHubGateway(); panelPr(gh);
+    gh.login = "alice";
+    await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "alice", machine: "m1", sha: "primsha", claimedAt: "2026-07-30T00:00:00Z" }));
+    await gh.submitReview("o/r", 9, { commitId: "primsha", event: "REQUEST_CHANGES", body: `primary\n\n${PRIMARY_MARKER}` });
+    gh.login = "bob";
+    await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "bob", machine: "m2", sha: "primsha", claimedAt: "2026-07-30T00:01:00Z" }));
+    const res = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T00:02:00Z") },
+      { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "confirmed" });
+    expect(res.status).toBe("enriched");
+    const bobReview = gh.reviews.find((r) => r.author === "bob")!;
+    expect(parseMeta(bobReview.body)).toBeNull(); // no footer written
   });
 });

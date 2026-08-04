@@ -1,9 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
 import { completeReview } from "./complete.js";
-import { serializeMarker, PRIMARY_MARKER } from "../claim-marker.js";
+import { serializeMarker, PRIMARY_MARKER, isPrimaryReview } from "../claim-marker.js";
+import { parseMeta } from "../review-meta.js";
 
 const cfg = { githubLogin: null, skillsDir: null, runChecks: false, captureMetadata: false };
+// Capture-on variant, scoped to the footer tests below: the shared `cfg` above must stay
+// captureMetadata:false so every existing test keeps exercising today's (no-footer) behavior.
+const cfgCapture = { ...cfg, captureMetadata: true, model: "claude-opus-4-8", agent: "claude-code" };
 
 describe("completeReview", () => {
   it("submits at the pinned SHA, clears the request, deletes the marker", async () => {
@@ -110,5 +114,45 @@ describe("completeReview", () => {
     const res = await completeReview({ gh, config: cfg }, { repo: "o/r", pr: 16, event: "request-changes", summary: "changes" });
     expect(res.superseded).toBe(false); // a quoted tag is not a real primary
     expect(gh.reviews.find((r) => r.author === "me")!.event).toBe("REQUEST_CHANGES"); // verdict preserved
+  });
+
+  it("writes a durable meta footer before the primary marker, preserving isPrimaryReview", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 30, title: "t", author: "a", headSha: "pinned0", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedRequest("o/r", 30, "me");
+    await gh.createComment("o/r", 30, serializeMarker({ v: 2, reviewer: "me", machine: "mbp", sha: "pinned0", claimedAt: "t0", model: "claude-opus-4-8", agent: "claude-code" }));
+    await completeReview({ gh, config: cfgCapture }, { repo: "o/r", pr: 30, event: "approve", summary: "lgtm" });
+    const body = gh.reviews.find((r) => r.author === "me")!.body;
+    expect(isPrimaryReview(body)).toBe(true); // regression guard: the footer sits before the marker, not after
+    expect(parseMeta(body)).toMatchObject({
+      role: "primary", verdict: "approve", model: "claude-opus-4-8", agent: "claude-code", claimedAt: "t0", machine: "mbp",
+    });
+  });
+
+  it("writes a second-opinion meta footer with no primary marker when degraded by a competing primary", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 31, title: "t", author: "a", headSha: "sha0031", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedRequest("o/r", 31, "me");
+    gh.login = "alice";
+    await gh.submitReview("o/r", 31, { commitId: "sha0031", event: "REQUEST_CHANGES", body: `primary\n\n${PRIMARY_MARKER}` });
+    gh.login = "me";
+    await gh.createComment("o/r", 31, serializeMarker({ v: 2, reviewer: "me", machine: "mbp", sha: "sha0031", claimedAt: "t0", model: "claude-opus-4-8", agent: "claude-code" }));
+    const res = await completeReview({ gh, config: cfgCapture }, { repo: "o/r", pr: 31, event: "request-changes", summary: "also fix this" });
+    expect(res.superseded).toBe(true);
+    const mine = gh.reviews.find((r) => r.author === "me")!;
+    expect(isPrimaryReview(mine.body)).toBe(false); // a second opinion never carries the primary tag
+    expect(parseMeta(mine.body)).toMatchObject({ role: "second-opinion", verdict: "request-changes" });
+  });
+
+  it("writes no meta footer when captureMetadata is off (default), preserving today's behavior", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 32, title: "t", author: "a", headSha: "sha0032", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedRequest("o/r", 32, "me");
+    await gh.createComment("o/r", 32, serializeMarker({ v: 1, reviewer: "me", machine: "m", sha: "sha0032", claimedAt: "t" }));
+    const res = await completeReview({ gh, config: cfg }, { repo: "o/r", pr: 32, event: "approve", summary: "lgtm" });
+    const body = gh.reviews.find((r) => r.author === "me")!.body;
+    expect(parseMeta(body)).toBeNull(); // no footer written
+    expect(isPrimaryReview(body)).toBe(true); // marker placement unchanged
+    expect(res.superseded).toBe(false);
   });
 });
