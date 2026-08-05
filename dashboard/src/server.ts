@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
+import rateLimit from "@fastify/rate-limit";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import type { DB } from "./db/open.js";
@@ -32,11 +33,16 @@ export function isAllowedOrigin(origin: string | undefined): boolean {
 }
 
 /**
- * Build the read-only dashboard server: the DNS-rebinding guard, the JSON API routes, and static
- * SPA serving with an API-aware not-found fallback (unknown `/api/*` paths get JSON 404; every
- * other unmatched path gets the SPA shell so client-side routing works on refresh/deep link).
+ * Build the read-only dashboard server: the DNS-rebinding guard, a global rate limit, the JSON
+ * API routes, and static SPA serving with an API-aware not-found fallback (unknown `/api/*` paths
+ * get JSON 404; every other unmatched path gets the SPA shell so client-side routing works on
+ * refresh/deep link).
  */
-export function buildServer(opts: { db: DB; staticRoot?: string }): FastifyInstance {
+export function buildServer(opts: {
+  db: DB;
+  staticRoot?: string;
+  rateLimit?: { max: number; timeWindow: string | number };
+}): FastifyInstance {
   const app = Fastify({ logger: false });
 
   // DNS-rebinding guard: only requests whose Host (and Origin, if present) are localhost are served.
@@ -51,20 +57,34 @@ export function buildServer(opts: { db: DB; staticRoot?: string }): FastifyInsta
     }
   });
 
-  registerApiRoutes(app, opts.db);
+  // Global rate limit (defense-in-depth against a hammering client pegging the read-only DB).
+  // This is a localhost single-user tool, so the default ceiling is generous.
+  app.register(rateLimit, opts.rateLimit ?? { max: 600, timeWindow: "1 minute" });
 
-  // Register static AFTER the API routes: the not-found handler below is what actually decides
-  // between a JSON 404 (for /api/* misses) and the SPA shell (for everything else), and it only
-  // sees requests that neither the API routes nor `wildcard: false`'s explicit file/index routes
-  // matched.
-  const root = opts.staticRoot ?? defaultStaticRoot();
-  app.register(fastifyStatic, { root, wildcard: false });
-  app.setNotFoundHandler((req, reply) => {
-    if (req.url.startsWith("/api/")) {
-      reply.code(404).send({ error: "not found" });
-      return;
-    }
-    reply.sendFile("index.html"); // SPA history fallback
+  // `.register()` only queues the plugin; Fastify (via avvio) runs its body -- including the
+  // `onRoute` hook it uses to attach rate limiting -- later, during the boot sequence triggered by
+  // `.ready()`/`.listen()`/`.inject()`. Declaring routes synchronously right here would run before
+  // that body executes, so the rate limiter would never see them. `.after()` defers route
+  // declaration to its correct place in that same boot sequence, once the plugin above has fully
+  // registered, so every route below is covered.
+  app.after((err) => {
+    if (err) throw err;
+
+    registerApiRoutes(app, opts.db);
+
+    // Register static AFTER the API routes: the not-found handler below is what actually decides
+    // between a JSON 404 (for /api/* misses) and the SPA shell (for everything else), and it only
+    // sees requests that neither the API routes nor `wildcard: false`'s explicit file/index routes
+    // matched.
+    const root = opts.staticRoot ?? defaultStaticRoot();
+    app.register(fastifyStatic, { root, wildcard: false });
+    app.setNotFoundHandler((req, reply) => {
+      if (req.url.startsWith("/api/")) {
+        reply.code(404).send({ error: "not found" });
+        return;
+      }
+      reply.sendFile("index.html"); // SPA history fallback
+    });
   });
 
   return app;
