@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import type { DB } from "./db/open.js";
+import { registerApiRoutes } from "./routes.js";
 
 const ALLOWED_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
@@ -38,7 +39,7 @@ export function buildServer(opts: { db: DB; staticRoot?: string }): FastifyInsta
     }
   });
 
-  // registerApiRoutes(app, opts.db);      // Task 3
+  registerApiRoutes(app, opts.db);
   // registerStatic(app, opts.staticRoot); // Task 4
   return app;
 }

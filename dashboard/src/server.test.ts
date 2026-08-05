@@ -41,18 +41,18 @@ describe("buildServer guard", () => {
     const res = await app.inject({ method: "GET", url: "/api/overview", headers: { host: "127.0.0.1:4319", origin: "http://evil.example.com" } });
     expect(res.statusCode).toBe(403);
   });
-  it("lets a good Host with no Origin header through the guard (404: no route yet)", async () => {
+  it("lets a good Host with no Origin header through the guard to the route", async () => {
     app = buildServer({ db: openDb(":memory:") });
     const res = await app.inject({ method: "GET", url: "/api/overview", headers: { host: "127.0.0.1:4319" } });
-    expect(res.statusCode).toBe(404);
+    expect(res.statusCode).toBe(200);
   });
-  it("lets a good Host with a matching IPv6 loopback Origin through the guard (404: no route yet)", async () => {
+  it("lets a good Host with a matching IPv6 loopback Origin through the guard to the route", async () => {
     app = buildServer({ db: openDb(":memory:") });
     const res = await app.inject({
       method: "GET",
       url: "/api/overview",
       headers: { host: "127.0.0.1:4319", origin: "http://[::1]:4319" },
     });
-    expect(res.statusCode).toBe(404);
+    expect(res.statusCode).toBe(200);
   });
 });
