@@ -14,9 +14,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fastify/static": "^8.0.0",
     "@input-output-hk/agent-review": "^0.2.0",
     "better-sqlite3": "12.9.0",
-    "commander": "^12.0.0"
+    "commander": "^12.0.0",
+    "fastify": "^5.2.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
