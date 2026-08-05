@@ -18,16 +18,39 @@ visits, so the database always reflects the current state of GitHub for the PRs 
 ## Usage
 
 ```bash
-agent-review-dashboard sync --repo <owner/name> --db <path>
+agent-review-dashboard sync --repo <owner/name> [--db <path>]
 ```
 
 - `-r, --repo <owner/name...>`: one or more repositories to sync (repeat the flag for more than one).
-- `-d, --db <path>`: SQLite database file to write to. Defaults to `dashboard.db` in the current
-  directory. The file (and its schema) is created on first run if it does not exist.
+- `-d, --db <path>`: SQLite database file to write to. Defaults to `~/.agent-peer-review/dashboard.db`
+  (see [Files and directories](#files-and-directories) below). The file, and any missing parent
+  directory, are created on first run if they do not already exist.
 - `-l, --login <login>`: the agent login to match pull requests against. Defaults to the login of
   the authenticated `GITHUB_TOKEN` user.
 
 Example:
+
+```bash
+agent-review-dashboard sync --repo input-output-hk/agent-peer-review
+```
+
+## Files and directories
+
+The dashboard follows the same `~/.agent-peer-review/` convention as the `agent-review` CLI:
+
+- `~/.agent-peer-review/dashboard.db`: the `sync` command's default database path.
+- `~/.agent-peer-review/config.json`: the `agent-review` CLI's global config (this package does not
+  read it, but it shares the same home directory).
+
+Set the `AGENT_PEER_REVIEW_HOME` environment variable to an absolute path to move the whole directory
+elsewhere, for example in CI or when running multiple isolated instances on one machine:
+
+```bash
+AGENT_PEER_REVIEW_HOME=/tmp/agent-peer-review agent-review-dashboard sync --repo input-output-hk/agent-peer-review
+```
+
+An explicit `--db <path>` always overrides the default location, regardless of
+`AGENT_PEER_REVIEW_HOME`:
 
 ```bash
 agent-review-dashboard sync --repo input-output-hk/agent-peer-review --db ./dashboard.db
