@@ -1,8 +1,16 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import fastifyStatic from "@fastify/static";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import type { DB } from "./db/open.js";
 import { registerApiRoutes } from "./routes.js";
 
 const ALLOWED_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
+function defaultStaticRoot(): string {
+  // server.js runs from dist/, so public/ is one level up from dist.
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
+}
 
 function hostnameOf(hostHeader: string | undefined): string | null {
   if (!hostHeader) return null;
@@ -23,7 +31,11 @@ export function isAllowedOrigin(origin: string | undefined): boolean {
   return ALLOWED_HOSTS.has(host.replace(/^\[/, "").replace(/\]$/, ""));
 }
 
-/** Build the read-only dashboard server. Registers the DNS-rebinding guard; routes and static are added by later steps. */
+/**
+ * Build the read-only dashboard server: the DNS-rebinding guard, the JSON API routes, and static
+ * SPA serving with an API-aware not-found fallback (unknown `/api/*` paths get JSON 404; every
+ * other unmatched path gets the SPA shell so client-side routing works on refresh/deep link).
+ */
 export function buildServer(opts: { db: DB; staticRoot?: string }): FastifyInstance {
   const app = Fastify({ logger: false });
 
@@ -40,6 +52,20 @@ export function buildServer(opts: { db: DB; staticRoot?: string }): FastifyInsta
   });
 
   registerApiRoutes(app, opts.db);
-  // registerStatic(app, opts.staticRoot); // Task 4
+
+  // Register static AFTER the API routes: the not-found handler below is what actually decides
+  // between a JSON 404 (for /api/* misses) and the SPA shell (for everything else), and it only
+  // sees requests that neither the API routes nor `wildcard: false`'s explicit file/index routes
+  // matched.
+  const root = opts.staticRoot ?? defaultStaticRoot();
+  app.register(fastifyStatic, { root, wildcard: false });
+  app.setNotFoundHandler((req, reply) => {
+    if (req.url.startsWith("/api/")) {
+      reply.code(404).send({ error: "not found" });
+      return;
+    }
+    reply.sendFile("index.html"); // SPA history fallback
+  });
+
   return app;
 }

@@ -5,7 +5,7 @@
   "type": "module",
   "engines": { "node": ">=20" },
   "bin": { "agent-review-dashboard": "dist/cli.js" },
-  "files": ["dist"],
+  "files": ["dist", "public"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
