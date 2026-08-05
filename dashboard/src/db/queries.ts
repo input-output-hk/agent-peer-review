@@ -34,7 +34,7 @@ export function getOverview(db: DB): Overview {
     "SELECT verdict, COUNT(*) AS count FROM review WHERE verdict IS NOT NULL GROUP BY verdict ORDER BY count DESC, verdict",
   ).all() as Array<{ verdict: string; count: number }>;
   const models = db.prepare(
-    "SELECT COALESCE(model, 'unknown') AS model, COUNT(*) AS count FROM review GROUP BY model ORDER BY count DESC, model",
+    "SELECT COALESCE(model, 'unknown') AS model, COUNT(*) AS count FROM review GROUP BY COALESCE(model, 'unknown') ORDER BY count DESC, model",
   ).all() as Array<{ model: string; count: number }>;
   const activity = db.prepare(
     "SELECT substr(submitted_at, 1, 10) AS day, COUNT(*) AS count FROM review GROUP BY day ORDER BY day",
