@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { hostname } from "node:os";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import path from "node:path";
 import { Command } from "commander";
@@ -111,7 +111,13 @@ program.command("init")
     try {
       result = await runInit(
         { repos, captureMetadata, model, agent, toolVersion: opts.toolVersion },
-        { gateway: gh(), home: ensureAgentHome(), writeFile: (p, c) => writeFileSync(p, c), log: printLine },
+        {
+          gateway: gh(),
+          home: ensureAgentHome(),
+          readFile: (p) => (existsSync(p) ? readFileSync(p, "utf8") : undefined),
+          writeFile: (p, c) => writeFileSync(p, c),
+          log: printLine,
+        },
       );
     } catch (e) {
       if (isAuthError(e)) printLine("Could not authenticate to GitHub. Set GITHUB_TOKEN or run `gh auth login`.");

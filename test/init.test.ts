@@ -8,17 +8,23 @@ import { runInit } from "../cli/init.js";
 
 const makeHome = (): string => mkdtempSync(path.join(tmpdir(), "agent-home-"));
 
-// Captures what the CLI's real deps (fs.writeFileSync, console logger) would otherwise do, so
-// runInit can be tested with no TTY, no network, and no real disk writes beyond the temp home dir.
+// Captures what the CLI's real deps (fs.readFileSync/writeFileSync, console logger) would
+// otherwise do, so runInit can be tested with no TTY, no network, and no real disk writes beyond
+// the temp home dir. `reads` doubles as the "what's on disk" map: seed it directly to simulate a
+// pre-existing (possibly hand-edited) config.json, and writeFile keeps it in sync so a second
+// runInit call against the same deps sees what the first one wrote, like a real filesystem would.
 function makeDeps(gateway = new FakeGitHubGateway()) {
+  const reads = new Map<string, string>();
   const writes = new Map<string, string>();
   const lines: string[] = [];
   return {
     gateway,
     home: makeHome(),
+    reads,
     writes,
     lines,
-    writeFile: (p: string, c: string) => { writes.set(p, c); },
+    readFile: (p: string) => reads.get(p),
+    writeFile: (p: string, c: string) => { writes.set(p, c); reads.set(p, c); },
     log: (l: string) => { lines.push(l); },
   };
 }
@@ -83,5 +89,27 @@ describe("runInit", () => {
     const deps = makeDeps(gateway);
     await expect(runInit({ repos: ["o/r"] }, deps)).rejects.toThrow(/token/i);
     expect(deps.writes.size).toBe(0);
+  });
+
+  it("merges into an existing config.json instead of overwriting it, preserving keys it doesn't touch", async () => {
+    const deps = makeDeps();
+    const configPath = path.join(deps.home, "config.json");
+    deps.reads.set(configPath, JSON.stringify({ defaultRepo: "o/r", skillsDir: "/x", model: "old" }));
+
+    const result = await runInit({ repos: ["o/r2"], captureMetadata: true, model: "new" }, deps);
+
+    const written = JSON.parse(deps.writes.get(configPath)!);
+    expect(written).toEqual({ defaultRepo: "o/r", skillsDir: "/x", model: "new", captureMetadata: true });
+    expect(result.configPath).toBe(configPath);
+  });
+
+  it("rejects and does not overwrite the file when the existing config.json is not valid JSON", async () => {
+    const deps = makeDeps();
+    const configPath = path.join(deps.home, "config.json");
+    deps.reads.set(configPath, "{");
+
+    await expect(runInit({ repos: ["o/r"] }, deps)).rejects.toThrow(/not valid JSON/);
+    expect(deps.writes.has(configPath)).toBe(false);
+    expect(deps.reads.get(configPath)).toBe("{"); // untouched
   });
 });
