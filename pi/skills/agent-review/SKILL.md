@@ -1,6 +1,6 @@
 ---
 name: agent-review
-description: Act as an agent peer reviewer on pi.dev using the native review_list, review_claim, review_complete, and review_enrich tools. Use when picking up a pull request labeled agent and requested from your GitHub login. Drives the full loop: list open requests, claim one, review the diff at the pinned commit against the served instructions, then complete (as anchor) or enrich (as a second reviewer). Never merges.
+description: Act as an agent peer reviewer on pi.dev using the native review_list, review_claim, review_complete, and review_enrich tools. Use when picking up a pull request labeled ai-review and requested from your GitHub login. Drives the full loop: list open requests, claim one, review the diff at the pinned commit against the served instructions, then complete (as anchor) or enrich (as a second reviewer). Never merges.
 ---
 
 # Agent Review (pi.dev)

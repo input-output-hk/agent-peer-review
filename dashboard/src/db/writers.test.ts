@@ -5,7 +5,7 @@ import type { PullRequest } from "@input-output-hk/agent-review";
 
 const pull = (over: Partial<PullRequest> = {}): PullRequest => ({
   number: 7, title: "Add X", author: "alice", headSha: "head123", baseSha: "base123",
-  url: "https://gh/pr/7", state: "open", labels: ["agent"],
+  url: "https://gh/pr/7", state: "open", labels: ["ai-review"],
   createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-02T00:00:00Z", mergedAt: null, ...over,
 });
 

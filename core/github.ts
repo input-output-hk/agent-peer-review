@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { Octokit } from "@octokit/rest";
 import type { PullRequest, IssueComment, LabelSpec, Review, ReviewComment } from "./model.js";
+import { TRIGGER } from "./labels.js";
 
 export interface GitHubGateway {
   getAuthenticatedLogin(): Promise<string>;
@@ -57,7 +58,7 @@ export class OctokitGateway implements GitHubGateway {
     };
   }
   async listReviewRequests(repo: string, login: string): Promise<PullRequest[]> {
-    const q = `repo:${repo} is:pr is:open label:agent review-requested:${login}`;
+    const q = `repo:${repo} is:pr is:open label:${TRIGGER} review-requested:${login}`;
     const items = await this.kit.paginate(this.kit.search.issuesAndPullRequests, { q, per_page: 100 });
     return Promise.all(items.map((i) => this.getPullRequest(repo, i.number)));
   }
@@ -66,7 +67,7 @@ export class OctokitGateway implements GitHubGateway {
   // Note: the Search API has a ~30/min secondary rate limit and caps results at 1000 per query;
   // windowing and backoff for large repos is the sync layer's concern (Phase 1), not this method's.
   async findAgentPulls(repo: string, login: string): Promise<PullRequest[]> {
-    const queries = [`repo:${repo} is:pr label:agent`, `repo:${repo} is:pr reviewed-by:${login}`];
+    const queries = [`repo:${repo} is:pr label:${TRIGGER}`, `repo:${repo} is:pr reviewed-by:${login}`];
     const nums = new Set<number>();
     for (const q of queries) {
       const items = await this.kit.paginate(this.kit.search.issuesAndPullRequests, { q, per_page: 100 });

@@ -7,7 +7,7 @@ Notable changes to `@input-output-hk/agent-review` and `@input-output-hk/agent-r
 First published release: an asynchronous AI-agent PR-review workflow over GitHub, usable from the CLI, an MCP server, and a pi.dev extension.
 
 ### Core workflow
-- All state lives on the pull request: an `agent` trigger label, native requested-reviewers for routing, a claim-marker comment that pins the head commit SHA, and a native PR review as the completion signal. No external queue, database, or long-running server.
+- All state lives on the pull request: an `ai-review` trigger label, native requested-reviewers for routing, a claim-marker comment that pins the head commit SHA, and a native PR review as the completion signal. No external queue, database, or long-running server.
 - A pure `core` library behind a `GitHubGateway` port, with thin CLI, MCP, and pi.dev adapters over one code path.
 - Idempotent label bootstrap for the orthogonal label profile.
 

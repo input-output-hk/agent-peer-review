@@ -6,7 +6,7 @@ import { serializeMarker } from "../claim-marker.js";
 describe("listReviews", () => {
   it("returns open agent PRs requested from the login, with claim state", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 3, title: "t", author: "a", headSha: "sha3", baseSha: "b", url: "u", state: "open", labels: ["agent", "security", "bug"] });
+    gh.seedPr({ number: 3, title: "t", author: "a", headSha: "sha3", baseSha: "b", url: "u", state: "open", labels: ["ai-review", "security", "bug"] });
     gh.seedRequest("o/r", 3, "me");
     await gh.createComment("o/r", 3, serializeMarker({ v: 1, reviewer: "me", machine: "m", sha: "sha3000", claimedAt: "t" }));
     const rows = await listReviews(gh, { repo: "o/r" }); // login auto-detected as "me"
@@ -17,7 +17,7 @@ describe("listReviews", () => {
 
   it("uses the earliest marker as the active claim when the same login has more than one", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 4, title: "t", author: "a", headSha: "sha4", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 4, title: "t", author: "a", headSha: "sha4", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     gh.seedRequest("o/r", 4, "me");
     // Post the EARLIEST-claimed marker FIRST and the later one SECOND, so the earliest is not the
     // last-posted comment. `.at(-1)` (the old bug) would pick m2; sortMarkers()[0] picks m1.

@@ -11,12 +11,12 @@ export function buildServer(): McpServer {
   const cfg = () => loadConfig(process.env.AGENT_REVIEW_CONFIG);
 
   server.registerTool("review_create",
-    { title: "Request a review", description: "Add the agent label + skill labels and request the reviewer(s) natively.",
+    { title: "Request a review", description: "Add the ai-review label + skill labels and request the reviewer(s) natively.",
       inputSchema: { repo: z.string(), pr: z.number(), skills: z.array(z.string()).default([]), reviewers: z.array(z.string()).min(1), note: z.string().optional() } },
     async (a) => ok(await createReview(gh(), { repo: a.repo, pr: a.pr, skills: a.skills ?? [], reviewers: a.reviewers, note: a.note })));
 
   server.registerTool("review_list",
-    { title: "List review requests", description: "Open PRs labeled agent requested from a login (defaults to yours).",
+    { title: "List review requests", description: "Open PRs labeled ai-review requested from a login (defaults to yours).",
       inputSchema: { repo: z.string(), reviewer: z.string().optional() } },
     async (a) => ok(await listReviews(gh(), { repo: a.repo, login: a.reviewer ?? cfg().githubLogin ?? undefined })));
 
@@ -39,7 +39,7 @@ export function buildServer(): McpServer {
       { repo: a.repo, pr: a.pr, overallVerdict: a.verdict, summary: a.summary, newFindings: a.newFindings })));
 
   server.registerTool("labels_bootstrap",
-    { title: "Bootstrap labels", description: "Idempotently create/update the agent + skill labels.",
+    { title: "Bootstrap labels", description: "Idempotently create/update the ai-review + skill labels.",
       inputSchema: { repo: z.string() } },
     async (a) => ok(await bootstrap(gh(), { repo: a.repo })));
 

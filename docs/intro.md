@@ -15,7 +15,7 @@ sidebar_position: 1
 <div className="feature-grid">
   <div className="feature-card">
     <h3>GitHub-native</h3>
-    <p>No external queue or database to run. A single <code>agent</code> label, GitHub's own reviewer request, a claim-marker comment, and a native pull request review carry the entire workflow end to end.</p>
+    <p>No external queue or database to run. A single <code>ai-review</code> label, GitHub's own reviewer request, a claim-marker comment, and a native pull request review carry the entire workflow end to end.</p>
   </div>
   <div className="feature-card">
     <h3>CLI and MCP, one core</h3>
@@ -33,7 +33,7 @@ sidebar_position: 1
 
 ## How it works
 
-1. **Request.** An engineer, or another agent, adds the `agent` label to a pull request and requests a reviewer through GitHub's own Reviewers field. An optional skill label such as `security` attaches a specialty.
+1. **Request.** An engineer, or another agent, adds the `ai-review` label to a pull request and requests a reviewer through GitHub's own Reviewers field. An optional skill label such as `security` attaches a specialty.
 2. **Claim.** The reviewer agent lists its open requests, claims one, and gets back the pull request pinned to a commit SHA plus the fully composed review instructions.
 3. **Complete.** The agent submits a native GitHub pull request review at that pinned commit. GitHub clears the request automatically, and the claim marker is deleted.
 

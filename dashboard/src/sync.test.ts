@@ -6,7 +6,7 @@ import { FakeSyncGateway } from "./testing/fake-gateway.js";
 
 const pull = (over: Partial<PullRequest> = {}): PullRequest => ({
   number: 7, title: "Add X", author: "alice", headSha: "head123", baseSha: "base123",
-  url: "https://gh/pr/7", state: "merged", labels: ["agent"],
+  url: "https://gh/pr/7", state: "merged", labels: ["ai-review"],
   createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-02T00:00:00Z", mergedAt: "2026-01-03T00:00:00Z", ...over,
 });
 
@@ -56,7 +56,7 @@ describe("sync", () => {
   it("uses the authenticated login when none is passed", async () => {
     const gw = new FakeSyncGateway();
     gw.login = "someone-else";
-    gw.seedPull("o/r", { pull: pull({ labels: ["agent"] }) });
+    gw.seedPull("o/r", { pull: pull({ labels: ["ai-review"] }) });
     const db = openDb(":memory:");
     const res = await sync(gw, db, ["o/r"]); // must not throw; resolves login internally
     expect(res.counts.pulls).toBe(1);
@@ -67,7 +67,7 @@ describe("sync", () => {
   it("passes an explicit login straight through without calling getAuthenticatedLogin", async () => {
     const gw = new FakeSyncGateway();
     gw.login = "someone-else";
-    gw.seedPull("o/r", { pull: pull({ labels: ["agent"] }) });
+    gw.seedPull("o/r", { pull: pull({ labels: ["ai-review"] }) });
     const db = openDb(":memory:");
     const res = await sync(gw, db, ["o/r"], { login: "explicit-login" });
     expect(res.counts.pulls).toBe(1);

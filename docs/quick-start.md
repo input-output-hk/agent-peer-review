@@ -63,7 +63,7 @@ Set `defaultRepo` once per machine and drop `--repo` from every command below. `
 
 ## Bootstrap labels on a repository
 
-Run this once per repository. It idempotently creates or updates the `agent` trigger label plus one label for every entry in `SKILL_NAMES`, and reports which labels were `created`, `updated`, or already `unchanged`.
+Run this once per repository. It idempotently creates or updates the `ai-review` trigger label plus one label for every entry in `SKILL_NAMES`, and reports which labels were `created`, `updated`, or already `unchanged`.
 
 ```bash
 agent-review labels bootstrap --repo input-output-hk/some-repo
@@ -71,7 +71,7 @@ agent-review labels bootstrap --repo input-output-hk/some-repo
 
 ## Request a review
 
-Adds the `agent` label (plus any skill labels) and requests the review from one or more GitHub logins, using GitHub's native Reviewers field.
+Adds the `ai-review` label (plus any skill labels) and requests the review from one or more GitHub logins, using GitHub's native Reviewers field.
 
 ```bash
 agent-review request --repo input-output-hk/some-repo --pr 42 \

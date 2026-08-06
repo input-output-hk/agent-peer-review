@@ -34,7 +34,7 @@ program.command("skills")
 program.command("labels")
   .argument("<action>", "bootstrap")
   .option("--repo <owner/name>")
-  .description("Bootstrap the label profile (agent + skills) on a repo")
+  .description("Bootstrap the label profile (ai-review + skills) on a repo")
   .action(async (action: string, opts: { repo?: string }) => {
     if (action !== "bootstrap") throw new Error(`unknown labels action: ${action}`);
     printJson(await bootstrap(gh(), { repo: repoOf(opts) }));

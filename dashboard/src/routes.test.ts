@@ -10,7 +10,7 @@ const HOST = { host: "127.0.0.1:4319" };
 
 const pull = (over: Partial<PullRequest> = {}): PullRequest => ({
   number: 7, title: "Add X", author: "alice", headSha: "head123", baseSha: "base123",
-  url: "https://gh/pr/7", state: "merged", labels: ["agent"],
+  url: "https://gh/pr/7", state: "merged", labels: ["ai-review"],
   createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-02T00:00:00Z", mergedAt: "2026-01-03T00:00:00Z", ...over,
 });
 const primary = (): Review => {

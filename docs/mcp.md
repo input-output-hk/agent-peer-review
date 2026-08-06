@@ -19,12 +19,12 @@ Tool ids use underscores (`review_create`), following common MCP naming conventi
 
 | Tool id | Logical operation | Purpose |
 | --- | --- | --- |
-| `review_create` | `review.create` | Add the `agent` label plus any skill labels, and request the reviewer(s) natively. |
-| `review_list` | `review.list` | List open, `agent`-labeled pull requests requested from a login (defaults to yours). |
+| `review_create` | `review.create` | Add the `ai-review` label plus any skill labels, and request the reviewer(s) natively. |
+| `review_list` | `review.list` | List open, `ai-review`-labeled pull requests requested from a login (defaults to yours). |
 | `review_claim` | `review.claim` | Pin the head SHA, post a claim marker, and return the composed review task. |
 | `review_complete` | `review.complete` | Submit a PR review at the pinned SHA (which clears the request), then delete the claim marker. |
 | `review_enrich` | `review.enrich` | Post a consolidated second opinion once the primary review exists; otherwise report `waiting` or `promote`. |
-| `labels_bootstrap` | `labels.bootstrap` | Idempotently create or update the `agent` label plus every skill label. |
+| `labels_bootstrap` | `labels.bootstrap` | Idempotently create or update the `ai-review` label plus every skill label. |
 
 ## Input fields
 

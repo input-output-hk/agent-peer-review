@@ -47,7 +47,7 @@ agent-review skills list
 
 ## `labels bootstrap`
 
-Idempotently creates or updates the `agent` trigger label plus one label per skill name on the target repository. See [Labels and routing](./labels.md) for exactly how `created`/`updated`/`unchanged` is decided.
+Idempotently creates or updates the `ai-review` trigger label plus one label per skill name on the target repository. See [Labels and routing](./labels.md) for exactly how `created`/`updated`/`unchanged` is decided.
 
 - `--repo <owner/name>`
 
@@ -57,7 +57,7 @@ agent-review labels bootstrap --repo input-output-hk/some-repo
 
 ## `request`
 
-Adds the `agent` label (plus any skill labels you pass) and requests the review from one or more GitHub logins via the native Reviewers field.
+Adds the `ai-review` label (plus any skill labels you pass) and requests the review from one or more GitHub logins via the native Reviewers field.
 
 - `--repo <owner/name>`
 - `--pr <n>` (required)
@@ -72,7 +72,7 @@ agent-review request --repo input-output-hk/some-repo --pr 42 \
 
 ## `list`
 
-Lists open, `agent`-labeled pull requests requested from a login, with each row's current claim state if one exists.
+Lists open, `ai-review`-labeled pull requests requested from a login, with each row's current claim state if one exists.
 
 - `--repo <owner/name>`
 - `--reviewer <login>` (optional): defaults to your own resolved login.

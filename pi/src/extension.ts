@@ -19,11 +19,11 @@ export function registerTools(
   const gh = deps.gh ?? (() => new OctokitGateway());
   const cfg = deps.config ?? (() => loadConfig());
 
-  pi.registerTool({ name: "review_create", label: "Request a review", description: "Add the agent label + skill labels and request reviewer(s).",
+  pi.registerTool({ name: "review_create", label: "Request a review", description: "Add the ai-review label + skill labels and request reviewer(s).",
     parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), skills: Type.Optional(Type.Array(Type.String())), reviewers: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), note: Type.Optional(Type.String()) }),
     async execute(_id, p) { return ok(await createReview(gh(), { repo: p.repo, pr: p.pr, skills: p.skills ?? [], reviewers: p.reviewers, note: p.note })); } });
 
-  pi.registerTool({ name: "review_list", label: "List review requests", description: "Open PRs labeled agent requested from a login (defaults to yours).",
+  pi.registerTool({ name: "review_list", label: "List review requests", description: "Open PRs labeled ai-review requested from a login (defaults to yours).",
     parameters: Type.Object({ repo: Type.String(), reviewer: Type.Optional(Type.String()) }),
     async execute(_id, p) { return ok(await listReviews(gh(), { repo: p.repo, login: p.reviewer ?? cfg().githubLogin ?? undefined })); } });
 
@@ -39,7 +39,7 @@ export function registerTools(
     parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), verdict: Type.Union([Type.Literal("agree"), Type.Literal("disagree"), Type.Literal("mixed")]), summary: Type.String(), newFindings: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Number(), body: Type.String() }))) }),
     async execute(_id, p) { return ok(await enrichReview({ gh: gh(), config: cfg(), ttlMs: 30 * 60_000, nowMs: Date.now() }, { repo: p.repo, pr: p.pr, overallVerdict: p.verdict, summary: p.summary, newFindings: p.newFindings })); } });
 
-  pi.registerTool({ name: "labels_bootstrap", label: "Bootstrap labels", description: "Idempotently create/update the agent + skill labels.",
+  pi.registerTool({ name: "labels_bootstrap", label: "Bootstrap labels", description: "Idempotently create/update the ai-review + skill labels.",
     parameters: Type.Object({ repo: Type.String() }),
     async execute(_id, p) { return ok(await bootstrap(gh(), { repo: p.repo })); } });
 }
