@@ -25,6 +25,13 @@ describe("config", () => {
     expect(cfg.githubLogin).toBeNull();
     expect(cfg.runChecks).toBe(false);
     expect(cfg.captureMetadata).toBe(false); // opt-in metadata capture is off unless set
+    expect(cfg.reviewers).toEqual([]); // no default reviewers unless configured
+  });
+  it("parses reviewers from a config file", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, JSON.stringify({ reviewers: ["patextreme", "yshyn-iohk"] }));
+    expect(loadConfig(file).reviewers).toEqual(["patextreme", "yshyn-iohk"]);
   });
   it("reads model/agent/toolVersion/captureMetadata from env vars", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
@@ -67,6 +74,33 @@ describe("config", () => {
     writeFileSync(file, JSON.stringify({ model: "claude-opus-4-8" }));
     vi.stubEnv("AGENT_REVIEW_MODEL", "x");
     expect(loadConfig(file).model).toBe("x");
+  });
+  it("AGENT_REVIEW_REVIEWERS parses a comma-separated list, trimming whitespace", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, "{}");
+    vi.stubEnv("AGENT_REVIEW_REVIEWERS", "alice, bob ,  carol");
+    expect(loadConfig(file).reviewers).toEqual(["alice", "bob", "carol"]);
+  });
+  it("a set AGENT_REVIEW_REVIEWERS overrides a config file's reviewers list", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, JSON.stringify({ reviewers: ["patextreme"] }));
+    vi.stubEnv("AGENT_REVIEW_REVIEWERS", "alice");
+    expect(loadConfig(file).reviewers).toEqual(["alice"]);
+  });
+  it("an empty-string AGENT_REVIEW_REVIEWERS does not clobber the config file value (regression)", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, JSON.stringify({ reviewers: ["patextreme"] }));
+    vi.stubEnv("AGENT_REVIEW_REVIEWERS", "");
+    expect(loadConfig(file).reviewers).toEqual(["patextreme"]);
+  });
+  it("an unset AGENT_REVIEW_REVIEWERS leaves the default [] in place", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, "{}");
+    expect(loadConfig(file).reviewers).toEqual([]);
   });
   it("falls back to <agentHome>/config.json when no explicit path or AGENT_REVIEW_CONFIG is set", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "agent-home-"));

@@ -67,6 +67,14 @@ when both are set):
 A field left unset on both sides is simply omitted from the footer and the marker; capture never
 fails a claim or a completion because a field is missing.
 
+:::note[A similarly-shaped override, unrelated to metadata capture]
+`AGENT_REVIEW_REVIEWERS` follows the same convention as the environment variables above (unset or
+blank falls through to the config file's value), but it has nothing to do with `captureMetadata`:
+it is a comma-separated override for the `reviewers` config field, the default GitHub logins a
+`create`/`review_create` call requests when it names none. See
+[Quick start: Configure](./quick-start.md#configure-optional).
+:::
+
 ## Privacy
 
 :::caution

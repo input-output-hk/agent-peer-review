@@ -12,6 +12,10 @@ export const ConfigSchema = z.object({
   // complete/enrich, and the claim marker's model/agent/toolVersion fields). When false, the
   // workflow behaves exactly as before: v1 claim markers, no footer.
   captureMetadata: z.boolean().default(false),
+  // Global default reviewers to request when a create call (CLI --reviewers, MCP/pi `reviewers`)
+  // does not name any. Each adapter falls back to this list; ReviewRequestSchema.reviewers below
+  // still requires at least one reviewer once the fallback is applied.
+  reviewers: z.array(z.string().min(1)).default([]),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

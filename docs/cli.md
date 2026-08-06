@@ -60,12 +60,13 @@ agent-review labels bootstrap --repo input-output-hk/some-repo
 Guided setup: authenticates against GitHub, writes `~/.agent-peer-review/config.json` (only the keys you passed), bootstraps the `ai-review` trigger label plus the skill labels on every `--repo`, and prints the config path, the labels created or left unchanged per repo, a ready-to-paste MCP config snippet, and the orchestration skill's location. See [Quick start](./quick-start.md#guided-setup) for the full walkthrough and [`AGENTS.md`](https://github.com/input-output-hk/agent-peer-review/blob/main/AGENTS.md) for the install contract this command backs.
 
 - `--repo <owner/name...>` (repeatable): one or more repositories to bootstrap.
+- `--reviewer <login...>` (repeatable, optional): default reviewer login(s), written to the `reviewers` config field; see [Configure](./quick-start.md#configure-optional). `request` (and the MCP/pi `review_create` tool) fall back to this list when a call omits reviewers.
 - `--capture-metadata` (optional): opt in to durable review metadata capture; see [Review metadata capture](./metadata-capture.md).
 - `--model <m>`, `--agent <a>`, `--tool-version <v>` (optional): only meaningful alongside `--capture-metadata`.
 - `--yes` (optional): non-interactive. Without it, and without `--repo`, `init` prompts for input when run from a terminal; with neither `--repo` nor a terminal, it exits with guidance instead of hanging.
 
 ```bash
-agent-review init --repo input-output-hk/some-repo --yes
+agent-review init --repo input-output-hk/some-repo --reviewer patextreme --yes
 ```
 
 On a token or authentication failure, `init` prints a friendly message ("Could not authenticate to GitHub. Set `GITHUB_TOKEN` or run `gh auth login`.") and exits with a non-zero status instead of a raw stack trace.
@@ -76,7 +77,7 @@ Adds the `ai-review` label (plus any skill labels you pass) and requests the rev
 
 - `--repo <owner/name>`
 - `--pr <n>` (required)
-- `--reviewers <csv>` (required): comma-separated GitHub logins.
+- `--reviewers <csv>` (optional): comma-separated GitHub logins. Defaults to the `reviewers` config field (see [Configure](./quick-start.md#configure-optional)) when omitted; the command exits with an error if both are empty.
 - `--skills <csv>` (optional): comma-separated skill names; unrecognized names are silently dropped.
 - `--note <text>` (optional): posted as a plain issue comment alongside the request.
 

@@ -1,19 +1,28 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { hostname } from "node:os";
-import { loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, enrichReview, bootstrap } from "../core/index.js";
+import {
+  loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, enrichReview, bootstrap,
+  type GitHubGateway, type Config,
+} from "../core/index.js";
 
 const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] });
 
-export function buildServer(): McpServer {
+export function buildServer(deps: { gh?: () => GitHubGateway; config?: () => Config } = {}): McpServer {
   const server = new McpServer({ name: "agent-review", version: "0.3.0" });
-  const gh = () => new OctokitGateway();
-  const cfg = () => loadConfig(process.env.AGENT_REVIEW_CONFIG);
+  const gh = deps.gh ?? (() => new OctokitGateway());
+  const cfg = deps.config ?? (() => loadConfig(process.env.AGENT_REVIEW_CONFIG));
 
   server.registerTool("review_create",
-    { title: "Request a review", description: "Add the ai-review label + skill labels and request the reviewer(s) natively.",
-      inputSchema: { repo: z.string(), pr: z.number(), skills: z.array(z.string()).default([]), reviewers: z.array(z.string()).min(1), note: z.string().optional() } },
-    async (a) => ok(await createReview(gh(), { repo: a.repo, pr: a.pr, skills: a.skills ?? [], reviewers: a.reviewers, note: a.note })));
+    { title: "Request a review", description: "Add the ai-review label + skill labels and request the reviewer(s) natively (defaults to the configured \"reviewers\" when omitted).",
+      inputSchema: { repo: z.string(), pr: z.number(), skills: z.array(z.string()).default([]), reviewers: z.array(z.string()).optional(), note: z.string().optional() } },
+    async (a) => {
+      const reviewers = a.reviewers?.length ? a.reviewers : cfg().reviewers;
+      if (reviewers.length === 0) {
+        throw new Error('No reviewers: pass "reviewers" or set a default "reviewers" in ~/.agent-peer-review/config.json');
+      }
+      return ok(await createReview(gh(), { repo: a.repo, pr: a.pr, skills: a.skills ?? [], reviewers, note: a.note }));
+    });
 
   server.registerTool("review_list",
     { title: "List review requests", description: "Open PRs labeled ai-review requested from a login (defaults to yours).",

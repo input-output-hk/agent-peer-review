@@ -55,6 +55,13 @@ describe("runInit", () => {
     expect(JSON.parse(written)).toEqual({});
   });
 
+  it("writes reviewers to config.json when --reviewer is passed", async () => {
+    const deps = makeDeps();
+    const result = await runInit({ repos: ["o/r"], reviewers: ["patextreme", "yshyn-iohk"] }, deps);
+    const written = deps.writes.get(result.configPath)!;
+    expect(JSON.parse(written)).toEqual({ reviewers: ["patextreme", "yshyn-iohk"] });
+  });
+
   it("bootstraps every repo passed, each with its own summary", async () => {
     const deps = makeDeps();
     const result = await runInit({ repos: ["o/r1", "o/r2"] }, deps);
