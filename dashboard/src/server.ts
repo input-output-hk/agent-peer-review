@@ -34,9 +34,9 @@ export function isAllowedOrigin(origin: string | undefined): boolean {
 
 /**
  * Build the read-only dashboard server: the DNS-rebinding guard, a global rate limit, the JSON
- * API routes, and static SPA serving with an API-aware not-found fallback (unknown `/api/*` paths
- * get JSON 404; every other unmatched path gets the SPA shell so client-side routing works on
- * refresh/deep link).
+ * API routes, and static SPA serving with an API-aware not-found fallback (unknown `/api` or
+ * `/api/*` paths get JSON 404; every other unmatched path gets the SPA shell so client-side
+ * routing works on refresh/deep link).
  */
 export function buildServer(opts: {
   db: DB;
@@ -79,7 +79,7 @@ export function buildServer(opts: {
     const root = opts.staticRoot ?? defaultStaticRoot();
     app.register(fastifyStatic, { root, wildcard: false });
     app.setNotFoundHandler((req, reply) => {
-      if (req.url.startsWith("/api/")) {
+      if (req.url === "/api" || req.url.startsWith("/api/")) {
         reply.code(404).send({ error: "not found" });
         return;
       }

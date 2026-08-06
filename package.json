@@ -1,6 +1,6 @@
 {
   "name": "@input-output-hk/agent-review",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Minimal asynchronous PR-review workflow over GitHub for Claude, Codex, and pi.dev agents.",
   "license": "Apache-2.0",
   "type": "module",
@@ -10,7 +10,7 @@
     ".": { "types": "./dist/core/index.d.ts", "default": "./dist/core/index.js" },
     "./package.json": "./package.json"
   },
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22" },
   "workspaces": ["pi", "dashboard", "."],
   "bin": {
     "agent-review": "dist/cli/index.js",

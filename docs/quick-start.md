@@ -30,6 +30,22 @@ npm i -g @input-output-hk/agent-review
 
 Installing the package gives you two binaries: `agent-review` (the CLI) and `agent-review-mcp` (the MCP server; also reachable as `agent-review serve`).
 
+## Guided setup
+
+`agent-review init` does the rest of this page's setup (Configure, and Bootstrap labels below) in one step: it authenticates against GitHub, writes `~/.agent-peer-review/config.json`, bootstraps the `ai-review` label profile on every repo you give it, and prints an MCP config snippet plus the orchestration skill's location.
+
+```bash
+agent-review init --repo input-output-hk/some-repo
+```
+
+Run it without `--repo` from a terminal and it prompts for repositories, and optionally metadata capture, model, and agent, interactively. Pass `--repo` (repeatable) and `--yes` for non-interactive use, for example from an AI agent that already knows the repository name:
+
+```bash
+agent-review init --repo input-output-hk/some-repo --yes
+```
+
+See [`AGENTS.md`](https://github.com/input-output-hk/agent-peer-review/blob/main/AGENTS.md) at the repository root for the full install contract, written for an AI agent to follow end to end given just this repository's URL. The rest of this page explains what `init` automates, useful if you would rather configure by hand or drive one step at a time, for example re-running `labels bootstrap` alone after adding a skill to a repo that is already configured.
+
 ## Configure (optional)
 
 Nothing below is required to get started. Your GitHub login is auto-detected from the token, and every command accepts an explicit `--repo`. A config file only saves typing.
@@ -50,6 +66,8 @@ If none exist, every field falls back to its default. Since an MCP host has no `
 | `defaultRepo` | string | none | An `owner/name` used whenever a command omits `--repo`. |
 | `skillsDir` | string or null | `null` | Overrides the bundled `skills/` directory, useful while iterating on skill content locally. |
 | `runChecks` | boolean | `false` | Whether the reviewing agent may run build or test scripts. Reviews stay read-only, diff-only analysis until you opt in. |
+| `captureMetadata` | boolean | `false` | Opt in to a durable, machine-readable record of model/agent/verdict/role on every review. See [Review metadata capture](./metadata-capture.md) before enabling it, including its privacy note. |
+| `model`, `agent`, `toolVersion` | string, optional | none | Only read when `captureMetadata` is on; see [Review metadata capture](./metadata-capture.md) for what each populates. |
 
 `~/.agent-peer-review/config.json`:
 
