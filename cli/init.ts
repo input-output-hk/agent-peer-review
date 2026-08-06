@@ -8,6 +8,7 @@ export interface InitInput {
   model?: string;
   agent?: string;
   toolVersion?: string;
+  reviewers?: string[]; // default reviewers to request when a create call omits --reviewers
 }
 
 export interface InitDeps {
@@ -73,6 +74,7 @@ export async function runInit(input: InitInput, deps: InitDeps): Promise<InitRes
   if (input.model !== undefined) config.model = input.model;
   if (input.agent !== undefined) config.agent = input.agent;
   if (input.toolVersion !== undefined) config.toolVersion = input.toolVersion;
+  if (input.reviewers !== undefined) config.reviewers = input.reviewers;
 
   deps.writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
 

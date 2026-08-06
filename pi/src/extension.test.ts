@@ -25,6 +25,39 @@ describe("pi extension", () => {
     expect(pi.tools.map((t) => t.name).sort()).toEqual(
       ["labels_bootstrap", "review_claim", "review_complete", "review_create", "review_enrich", "review_list"]);
   });
+  it("review_create falls back to config.reviewers when the call omits reviewers", async () => {
+    const pi = fakePi();
+    const calls: any = {};
+    const gh = {
+      addLabels: async () => {},
+      requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
+    } as any;
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    const create = pi.tools.find((t) => t.name === "review_create");
+    const res = await create.execute("id-create-1", { repo: "o/r", pr: 7 }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).reviewers).toEqual(["patextreme"]);
+    expect(calls.reviewers).toEqual(["patextreme"]); // config default reached the gateway
+  });
+  it("review_create prefers an explicit reviewers list over the config default", async () => {
+    const pi = fakePi();
+    const calls: any = {};
+    const gh = {
+      addLabels: async () => {},
+      requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
+    } as any;
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    const create = pi.tools.find((t) => t.name === "review_create");
+    const res = await create.execute("id-create-2", { repo: "o/r", pr: 7, reviewers: ["alice"] }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).reviewers).toEqual(["alice"]);
+    expect(calls.reviewers).toEqual(["alice"]); // explicit call wins over the config default
+  });
+  it("review_create throws a clear error when reviewers are empty everywhere", async () => {
+    const pi = fakePi();
+    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: null, skillsDir: null, runChecks: false, reviewers: [] }) as any });
+    const create = pi.tools.find((t) => t.name === "review_create");
+    await expect(create.execute("id-create-3", { repo: "o/r", pr: 7 }, undefined, undefined, undefined))
+      .rejects.toThrow(/no reviewers/i);
+  });
   it("review_list wraps the core result in Pi content shape", async () => {
     const pi = fakePi();
     const gh = { getAuthenticatedLogin: async () => "me", listReviewRequests: async () => [], listComments: async () => [] } as any;

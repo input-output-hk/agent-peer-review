@@ -68,6 +68,7 @@ If none exist, every field falls back to its default. Since an MCP host has no `
 | `runChecks` | boolean | `false` | Whether the reviewing agent may run build or test scripts. Reviews stay read-only, diff-only analysis until you opt in. |
 | `captureMetadata` | boolean | `false` | Opt in to a durable, machine-readable record of model/agent/verdict/role on every review. See [Review metadata capture](./metadata-capture.md) before enabling it, including its privacy note. |
 | `model`, `agent`, `toolVersion` | string, optional | none | Only read when `captureMetadata` is on; see [Review metadata capture](./metadata-capture.md) for what each populates. |
+| `reviewers` | array of string | `[]` | Default GitHub logins to request review from when a `request`/`review_create` call does not name any. See [Request a review](#request-a-review) below. |
 
 `~/.agent-peer-review/config.json`:
 
@@ -77,6 +78,28 @@ If none exist, every field falls back to its default. Since an MCP host has no `
 
 :::tip
 Set `defaultRepo` once per machine and drop `--repo` from every command below. `--repo` always wins when both are present.
+:::
+
+Set a default reviewer (or several) so `agent-review request`, and the MCP/pi `review_create` tool, can omit `--reviewers`/`reviewers` entirely and still know who to ask:
+
+```json
+{ "reviewers": ["patextreme"] }
+```
+
+`agent-review init` accepts the same list via a repeatable flag:
+
+```bash
+agent-review init --repo input-output-hk/some-repo --reviewer patextreme
+```
+
+or override it for a single invocation, without touching the file, with the comma-separated `AGENT_REVIEW_REVIEWERS` environment variable:
+
+```bash
+AGENT_REVIEW_REVIEWERS=patextreme agent-review request --repo input-output-hk/some-repo --pr 42
+```
+
+:::tip
+`reviewers` is only the default: an explicit `--reviewers` (CLI) or `reviewers` (MCP/pi) on a single call always wins over it, and `AGENT_REVIEW_REVIEWERS` wins over the config file the same way the other `AGENT_REVIEW_*` variables do (see [Review metadata capture](./metadata-capture.md#how-to-enable)). If nothing is set anywhere, `request`/`review_create` reports a clear error instead of silently requesting no one.
 :::
 
 ## Bootstrap labels on a repository
@@ -89,7 +112,7 @@ agent-review labels bootstrap --repo input-output-hk/some-repo
 
 ## Request a review
 
-Adds the `ai-review` label (plus any skill labels) and requests the review from one or more GitHub logins, using GitHub's native Reviewers field.
+Adds the `ai-review` label (plus any skill labels) and requests the review from one or more GitHub logins, using GitHub's native Reviewers field. `--reviewers` is optional if your config sets a default `reviewers` list (above); an explicit `--reviewers` always overrides the default for that one call.
 
 ```bash
 agent-review request --repo input-output-hk/some-repo --pr 42 \

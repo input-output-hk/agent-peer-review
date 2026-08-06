@@ -19,9 +19,15 @@ export function registerTools(
   const gh = deps.gh ?? (() => new OctokitGateway());
   const cfg = deps.config ?? (() => loadConfig());
 
-  pi.registerTool({ name: "review_create", label: "Request a review", description: "Add the ai-review label + skill labels and request reviewer(s).",
-    parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), skills: Type.Optional(Type.Array(Type.String())), reviewers: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }), note: Type.Optional(Type.String()) }),
-    async execute(_id, p) { return ok(await createReview(gh(), { repo: p.repo, pr: p.pr, skills: p.skills ?? [], reviewers: p.reviewers, note: p.note })); } });
+  pi.registerTool({ name: "review_create", label: "Request a review", description: "Add the ai-review label + skill labels and request reviewer(s) (defaults to the configured \"reviewers\" when omitted).",
+    parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), skills: Type.Optional(Type.Array(Type.String())), reviewers: Type.Optional(Type.Array(Type.String({ minLength: 1 }))), note: Type.Optional(Type.String()) }),
+    async execute(_id, p) {
+      const reviewers = p.reviewers?.length ? p.reviewers : cfg().reviewers;
+      if (reviewers.length === 0) {
+        throw new Error('No reviewers: pass "reviewers" or set a default "reviewers" in ~/.agent-peer-review/config.json');
+      }
+      return ok(await createReview(gh(), { repo: p.repo, pr: p.pr, skills: p.skills ?? [], reviewers, note: p.note }));
+    } });
 
   pi.registerTool({ name: "review_list", label: "List review requests", description: "Open PRs labeled ai-review requested from a login (defaults to yours).",
     parameters: Type.Object({ repo: Type.String(), reviewer: Type.Optional(Type.String()) }),

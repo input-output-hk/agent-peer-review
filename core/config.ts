@@ -23,6 +23,15 @@ function isTruthy(value: string | undefined): boolean {
 // counts as an override.
 const fromEnv = (v: string | undefined): string | undefined => (v && v.length > 0 ? v : undefined);
 
+// Same fall-through rule as fromEnv, for a comma-separated list (parsed the same way the CLI's own
+// --reviewers/--skills csv() helper does: split, trim, drop blanks). An unset variable, an empty
+// string, or one that is only commas/whitespace all yield undefined rather than [], so the caller's
+// `?? cfg.reviewers` falls through to the config value instead of clobbering it with an empty list.
+const fromEnvList = (v: string | undefined): string[] | undefined => {
+  const list = (v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return list.length > 0 ? list : undefined;
+};
+
 // Environment variables win over whatever the config file (or default) supplied, so a single
 // invocation can override capture behavior without editing the file on disk.
 function applyEnvOverrides(cfg: Config): Config {
@@ -34,6 +43,7 @@ function applyEnvOverrides(cfg: Config): Config {
     captureMetadata: process.env.AGENT_REVIEW_CAPTURE_METADATA !== undefined
       ? isTruthy(process.env.AGENT_REVIEW_CAPTURE_METADATA)
       : cfg.captureMetadata,
+    reviewers: fromEnvList(process.env.AGENT_REVIEW_REVIEWERS) ?? cfg.reviewers,
   };
 }
 

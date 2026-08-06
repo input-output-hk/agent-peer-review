@@ -35,7 +35,7 @@ Tool ids use underscores (`review_create`), following common MCP naming conventi
 | `repo` | string | yes |
 | `pr` | number | yes |
 | `skills` | array of string | no, defaults to `[]` |
-| `reviewers` | array of string | yes, at least one |
+| `reviewers` | array of string | no, defaults to the config file's `reviewers` (see [Quick start: Configure](./quick-start.md#configure-optional)); the tool reports an error if both are empty |
 | `note` | string | no |
 
 ### `review_list`

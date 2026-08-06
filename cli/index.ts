@@ -8,7 +8,7 @@ import {
   loadConfig, OctokitGateway, bootstrap, SKILL_NAMES, ensureAgentHome, skillsRoot,
   createReview, listReviews, claimReview, completeReview, enrichReview,
 } from "../core/index.js";
-import { printJson, printLine } from "./render.js";
+import { printJson, printLine, printErrLine } from "./render.js";
 import { runInit } from "./init.js";
 
 const program = new Command();
@@ -77,12 +77,13 @@ async function promptForInit(): Promise<{ repos: string[]; captureMetadata: bool
 program.command("init")
   .description("Guided setup: authenticate, write the global config, and bootstrap the ai-review label profile")
   .option("--repo <owner/name...>", "repository to bootstrap (repeatable)")
+  .option("--reviewer <login...>", "default reviewer login to request when a create call omits --reviewers (repeatable)")
   .option("--capture-metadata", "opt in to durable review metadata capture (model/agent/machine become part of the public review)")
   .option("--model <model>", "model identifier recorded when --capture-metadata is on")
   .option("--agent <agent>", "agent/host identifier recorded when --capture-metadata is on")
   .option("--tool-version <version>", "tool version recorded when --capture-metadata is on")
   .option("--yes", "non-interactive: never prompt; fail with guidance if --repo is missing")
-  .action(async (opts: { repo?: string[]; captureMetadata?: boolean; model?: string; agent?: string; toolVersion?: string; yes?: boolean }) => {
+  .action(async (opts: { repo?: string[]; reviewer?: string[]; captureMetadata?: boolean; model?: string; agent?: string; toolVersion?: string; yes?: boolean }) => {
     let repos = opts.repo ?? [];
     let captureMetadata = opts.captureMetadata;
     let model = opts.model;
@@ -110,7 +111,7 @@ program.command("init")
     let result;
     try {
       result = await runInit(
-        { repos, captureMetadata, model, agent, toolVersion: opts.toolVersion },
+        { repos, captureMetadata, model, agent, toolVersion: opts.toolVersion, reviewers: opts.reviewer },
         {
           gateway: gh(),
           home: ensureAgentHome(),
@@ -141,11 +142,17 @@ program.command("init")
 
 program.command("request")
   .option("--repo <owner/name>").requiredOption("--pr <n>", "PR number")
-  .requiredOption("--reviewers <csv>", "comma-separated GitHub logins to request review from")
+  .option("--reviewers <csv>", "comma-separated GitHub logins to request review from (defaults to the \"reviewers\" config field)")
   .option("--skills <csv>", "comma-separated skills", "")
   .option("--note <text>")
   .action(async (o) => {
-    printJson(await createReview(gh(), { repo: repoOf(o), pr: Number(o.pr), skills: csv(o.skills), reviewers: csv(o.reviewers), note: o.note }));
+    const reviewers = o.reviewers ? csv(o.reviewers) : cfg().reviewers;
+    if (reviewers.length === 0) {
+      printErrLine('No reviewers: pass --reviewers or set "reviewers" in ~/.agent-peer-review/config.json');
+      process.exitCode = 1;
+      return;
+    }
+    printJson(await createReview(gh(), { repo: repoOf(o), pr: Number(o.pr), skills: csv(o.skills), reviewers, note: o.note }));
   });
 
 program.command("list")
