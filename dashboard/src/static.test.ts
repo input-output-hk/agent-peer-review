@@ -5,8 +5,8 @@ import type { FastifyInstance } from "fastify";
 import { openDb } from "./db/open.js";
 import { buildServer } from "./server.js";
 
-// staticRoot points at the repo public/ dir for the test:
-const staticRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
+// staticRoot points at the committed fixture so server tests never depend on a UI build:
+const staticRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "testing/fixture-public");
 
 const HOST = { host: "127.0.0.1:4319" };
 
@@ -20,14 +20,14 @@ describe("static SPA serving", () => {
     app = buildServer({ db: openDb(":memory:"), staticRoot });
     const res = await app.inject({ method: "GET", url: "/", headers: HOST });
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain("Agent Peer Review Dashboard");
+    expect(res.body).toContain("spa-shell-fixture");
   });
 
   it("SPA fallback: unknown non-api path returns index.html", async () => {
     app = buildServer({ db: openDb(":memory:"), staticRoot });
     const res = await app.inject({ method: "GET", url: "/repos/o/r", headers: HOST });
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain("Agent Peer Review Dashboard");
+    expect(res.body).toContain("spa-shell-fixture");
   });
 
   it("unknown /api path returns JSON 404", async () => {
