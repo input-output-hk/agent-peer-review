@@ -2,6 +2,14 @@
 
 Notable changes to `@input-output-hk/agent-review` and `@input-output-hk/agent-review-pi`. The two packages are versioned in lockstep.
 
+## 0.4.0
+
+### Configurable reviewers
+- A `reviewers` array in the global config (`~/.agent-peer-review/config.json`) names the default reviewer logins a review request targets when a call does not name any. Also settable via the `AGENT_REVIEW_REVIEWERS` environment variable (comma-separated) or `agent-review init --reviewer <login...>` (repeatable). The CLI `request` command, the MCP `review_create` tool, and the pi `review_create` tool all fall back to the configured default, and report a clear error when no reviewers are configured or passed. An explicit reviewers list on the call still wins over the config default.
+
+### Dashboard
+- The local, unpublished `dashboard` package gained its UI foundation: a Vite/React scaffold, the IOG theme, a typed API client, sanitized markdown rendering, and hand-rolled charts. The views themselves follow in a later release.
+
 ## 0.3.0
 
 ### Installation

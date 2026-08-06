@@ -12,7 +12,7 @@ import { printJson, printLine, printErrLine } from "./render.js";
 import { runInit } from "./init.js";
 
 const program = new Command();
-program.name("agent-review").description("Minimal async PR review over GitHub").version("0.3.0");
+program.name("agent-review").description("Minimal async PR review over GitHub").version("0.4.0");
 program.option("-c, --config <path>", "explicit config file path");
 
 const gh = () => new OctokitGateway();

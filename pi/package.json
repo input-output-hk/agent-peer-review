@@ -1,6 +1,6 @@
 {
   "name": "@input-output-hk/agent-review-pi",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "pi.dev integration for the agent peer-review workflow (extension + skill).",
   "license": "Apache-2.0",
   "type": "module",
@@ -14,7 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
-  "dependencies": { "@input-output-hk/agent-review": "^0.3.0" },
+  "dependencies": { "@input-output-hk/agent-review": "^0.4.0" },
   "peerDependencies": { "@earendil-works/pi-coding-agent": ">=0.83.0", "typebox": "^1.3.9" },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.83.0",
