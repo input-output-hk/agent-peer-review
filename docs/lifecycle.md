@@ -11,8 +11,8 @@ sequenceDiagram
   participant R as Requester
   participant GH as GitHub (PR)
   participant A as Reviewer agent
-  R->>GH: add `agent` label · request review from yshyn-iohk
-  A->>GH: list → label:agent review-requested:me
+  R->>GH: add `ai-review` label · request review from yshyn-iohk
+  A->>GH: list → label:ai-review review-requested:me
   A->>GH: claim → pin head SHA · post claim marker
   GH-->>A: composed task (PR + pinned SHA + skill contents)
   A->>A: checkout SHA · run default/specialty review
@@ -23,9 +23,9 @@ sequenceDiagram
 
 ### Requested
 
-`review.create` (CLI: `agent-review request`, MCP: `review_create`) adds the `agent` label plus any skill labels, then calls GitHub's native `requestReviewers` API for every login you pass to `--reviewers`. There is no separate status label for "requested": the state is simply "carries `agent`, and I am in the PR's requested-reviewers list."
+`review.create` (CLI: `agent-review request`, MCP: `review_create`) adds the `ai-review` label plus any skill labels, then calls GitHub's native `requestReviewers` API for every login you pass to `--reviewers`. There is no separate status label for "requested": the state is simply "carries `ai-review`, and I am in the PR's requested-reviewers list."
 
-An agent finds its own work with a GitHub search, not a custom index: `is:pr is:open label:agent review-requested:<login>`. That search is exactly what `review.list` runs.
+An agent finds its own work with a GitHub search, not a custom index: `is:pr is:open label:ai-review review-requested:<login>`. That search is exactly what `review.list` runs.
 
 ### Claimed
 

@@ -22,7 +22,7 @@ const deps = (gh: FakeGitHubGateway, dir: string, machine = "mbp-01", now = "t1"
 describe("claimReview", () => {
   it("pins the head SHA, posts a marker, returns composed skills", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 5, title: "t", author: "a", headSha: "deadbeef", baseSha: "b", url: "u", state: "open", labels: ["agent", "security"] });
+    gh.seedPr({ number: 5, title: "t", author: "a", headSha: "deadbeef", baseSha: "b", url: "u", state: "open", labels: ["ai-review", "security"] });
     gh.seedPullFiles("o/r", 5, ["a.ts", "b.sol"]);
     gh.seedFile("o/r", "deadbeef", "CLAUDE.md", "x");
     const task = await claimReview(deps(gh, skillsDir()), { repo: "o/r", pr: 5 });
@@ -39,7 +39,7 @@ describe("claimReview", () => {
 
   it("resumes when the same login already holds the claim", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 6, title: "t", author: "a", headSha: "cafe1234", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 6, title: "t", author: "a", headSha: "cafe1234", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     await gh.createComment("o/r", 6, serializeMarker({ v: 1, reviewer: "me", machine: "other", sha: "old1234", claimedAt: "t0" }));
     const task = await claimReview(deps(gh, skillsDir()), { repo: "o/r", pr: 6 });
     expect(task.headSha).toBe("old1234"); // resumes the pinned SHA
@@ -48,7 +48,7 @@ describe("claimReview", () => {
   it("lets a second login also claim; earliest is anchor, next is enricher", async () => {
     const dir = skillsDir();
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 5, title: "t", author: "a", headSha: "deadbeef", baseSha: "b", url: "u", state: "open", labels: ["agent", "security"] });
+    gh.seedPr({ number: 5, title: "t", author: "a", headSha: "deadbeef", baseSha: "b", url: "u", state: "open", labels: ["ai-review", "security"] });
     gh.login = "alice";
     const a = await claimReview({ gh, config: cfg(dir), machine: "m1", now: "2026-07-30T00:00:00Z" }, { repo: "o/r", pr: 5 });
     expect(a.role).toBe("anchor");
@@ -62,7 +62,7 @@ describe("claimReview", () => {
   it("resumes the same login's claim as anchor on the pinned SHA", async () => {
     const dir = skillsDir();
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 6, title: "t", author: "a", headSha: "cafe1234", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 6, title: "t", author: "a", headSha: "cafe1234", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     gh.login = "alice";
     await claimReview({ gh, config: cfg(dir), machine: "m1", now: "2026-07-30T00:00:00Z" }, { repo: "o/r", pr: 6 });
     const again = await claimReview({ gh, config: cfg(dir), machine: "m1", now: "2026-07-30T00:05:00Z" }, { repo: "o/r", pr: 6 });
@@ -73,7 +73,7 @@ describe("claimReview", () => {
   it("filters a manually-applied second-opinion label so only the enricher auto-inject serves it, exactly once", async () => {
     const dir = skillsDir();
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 7, title: "t", author: "a", headSha: "feed1234", baseSha: "b", url: "u", state: "open", labels: ["agent", "second-opinion"] });
+    gh.seedPr({ number: 7, title: "t", author: "a", headSha: "feed1234", baseSha: "b", url: "u", state: "open", labels: ["ai-review", "second-opinion"] });
     gh.login = "alice";
     const a = await claimReview({ gh, config: cfg(dir), machine: "m1", now: "2026-07-30T00:00:00Z" }, { repo: "o/r", pr: 7 });
     expect(a.role).toBe("anchor");
@@ -87,7 +87,7 @@ describe("claimReview", () => {
 
   it("posts a v1 marker with no metadata when captureMetadata is off (default)", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 8, title: "t", author: "a", headSha: "sha00008", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 8, title: "t", author: "a", headSha: "sha00008", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     await claimReview(deps(gh, skillsDir()), { repo: "o/r", pr: 8 });
     const marker = parseMarkers(await gh.listComments("o/r", 8))[0].marker;
     expect(marker).toEqual({ v: 1, reviewer: "me", machine: "mbp-01", sha: "sha00008", claimedAt: "t1" });
@@ -95,7 +95,7 @@ describe("claimReview", () => {
 
   it("posts a v2 marker carrying model/agent/toolVersion when captureMetadata is on", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 9, title: "t", author: "a", headSha: "sha00009", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 9, title: "t", author: "a", headSha: "sha00009", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     const config = { ...cfg(skillsDir()), captureMetadata: true, model: "claude-opus-4-8", agent: "claude-code", toolVersion: "1.0.0" };
     await claimReview({ gh, config, machine: "mbp-01", now: "t1" }, { repo: "o/r", pr: 9 });
     const marker = parseMarkers(await gh.listComments("o/r", 9))[0].marker;

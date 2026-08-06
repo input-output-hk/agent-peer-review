@@ -1,5 +1,6 @@
 import type { GitHubGateway } from "../../core/github.js";
 import type { PullRequest, IssueComment, LabelSpec, Review, ReviewComment } from "../../core/model.js";
+import { TRIGGER } from "../../core/labels.js";
 
 // seedPr's timestamp fields default to these fixed ISO strings so the many existing callers that
 // predate PullRequest.createdAt/updatedAt/mergedAt keep compiling without passing them.
@@ -39,13 +40,13 @@ export class FakeGitHubGateway implements GitHubGateway {
   }
   async listReviewRequests(repo: string, login: string): Promise<PullRequest[]> {
     return [...this.prs.values()].filter((p) =>
-      p.state === "open" && p.labels.includes("agent") && (this.requested.get(this.key(repo, p.number))?.has(login) ?? false));
+      p.state === "open" && p.labels.includes(TRIGGER) && (this.requested.get(this.key(repo, p.number))?.has(login) ?? false));
   }
   async findAgentPulls(repo: string, login: string): Promise<PullRequest[]> {
     const prefix = `${repo}#`;
     const reviewedNumbers = new Set(this.reviews.filter((r) => r.repo === repo && r.author === login).map((r) => r.pr));
     return [...this.prs.entries()]
-      .filter(([key, p]) => key.startsWith(prefix) && (p.labels.includes("agent") || reviewedNumbers.has(p.number)))
+      .filter(([key, p]) => key.startsWith(prefix) && (p.labels.includes(TRIGGER) || reviewedNumbers.has(p.number)))
       .map(([, p]) => ({ ...p, labels: [...p.labels] }));
   }
   async requestReviewers(repo: string, pr: number, reviewers: string[]): Promise<void> {

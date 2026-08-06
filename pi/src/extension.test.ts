@@ -46,7 +46,7 @@ describe("pi extension", () => {
       listComments: async () => [{ id: 1, author: "me", body: marker }],
       getPullRequest: async () => ({
         number: 7, title: "t", author: "a", headSha: "feed1234", baseSha: "base1",
-        url: "https://example.com/o/r/pull/7", state: "open" as const, labels: ["agent"],
+        url: "https://example.com/o/r/pull/7", state: "open" as const, labels: ["ai-review"],
       }),
       listPullFiles: async () => [],
       getFileContent: async () => null,
@@ -68,7 +68,7 @@ describe("pi extension", () => {
     const gh = {
       getPullRequest: async () => ({
         number: 7, title: "t", author: "a", headSha: "feed1234", baseSha: "base1",
-        url: "https://example.com/o/r/pull/7", state: "open" as const, labels: ["agent"],
+        url: "https://example.com/o/r/pull/7", state: "open" as const, labels: ["ai-review"],
       }),
       listComments: async () => [{ id: 9, author: "me", body: marker }],
       getReviews: async () => [], // completeReview now checks for a competing primary

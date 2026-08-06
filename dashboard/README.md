@@ -8,7 +8,7 @@ Phase 3.
 ## What it stores
 
 `sync` walks every requested repository, finds pull requests touched by the agent-review workflow
-(labeled `agent`, or reviewed by the agent login), and writes them into SQLite: the pull request
+(labeled `ai-review`, or reviewed by the agent login), and writes them into SQLite: the pull request
 itself, its reviews (with the primary/second-opinion role, verdict, and model metadata parsed from
 the review body), inline review notes, claim markers, and participants (author and reviewers). Each
 run is also recorded in a `sync_run` table with its counts and outcome.

@@ -6,9 +6,9 @@ describe("bootstrap", () => {
   it("creates the profile then reports unchanged on re-run", async () => {
     const gh = new FakeGitHubGateway();
     const first = await bootstrap(gh, { repo: "o/r", skillNames: ["security"] });
-    expect(first.created).toEqual(["agent", "security"]);
+    expect(first.created).toEqual(["ai-review", "security"]);
     const second = await bootstrap(gh, { repo: "o/r", skillNames: ["security"] });
     expect(second.created).toEqual([]);
-    expect(second.unchanged).toEqual(["agent", "security"]);
+    expect(second.unchanged).toEqual(["ai-review", "security"]);
   });
 });

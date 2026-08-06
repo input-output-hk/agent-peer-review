@@ -1,6 +1,6 @@
 import type { LabelSpec } from "./model.js";
 
-export const TRIGGER = "agent";
+export const TRIGGER = "ai-review";
 
 export const SKILL_NAMES = [
   "security", "architecture", "performance", "testing", "api",

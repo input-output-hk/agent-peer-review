@@ -12,7 +12,7 @@ const cfgCapture = { ...cfg, captureMetadata: true, model: "claude-opus-4-8", ag
 describe("completeReview", () => {
   it("submits at the pinned SHA, clears the request, deletes the marker", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 9, title: "t", author: "a", headSha: "newsha", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 9, title: "t", author: "a", headSha: "newsha", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     gh.seedRequest("o/r", 9, "me");
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "me", machine: "m", sha: "pinnedsha", claimedAt: "t" }));
     const res = await completeReview({ gh, config: cfg }, { repo: "o/r", pr: 9, event: "request-changes", summary: "fix it" });
@@ -24,13 +24,13 @@ describe("completeReview", () => {
 
   it("errors when there is no active claim by this login", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 10, title: "t", author: "a", headSha: "s", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 10, title: "t", author: "a", headSha: "s", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     await expect(completeReview({ gh, config: cfg }, { repo: "o/r", pr: 10, event: "comment", summary: "x" })).rejects.toThrow(/claim/i);
   });
 
   it("passes inline comments through to the submitted review", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 11, title: "t", author: "a", headSha: "pinnedsha", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 11, title: "t", author: "a", headSha: "pinnedsha", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     gh.seedRequest("o/r", 11, "me");
     await gh.createComment("o/r", 11, serializeMarker({ v: 1, reviewer: "me", machine: "m", sha: "pinnedsha", claimedAt: "t" }));
     await completeReview({ gh, config: cfg }, {
@@ -42,7 +42,7 @@ describe("completeReview", () => {
 
   it("degrades to a second-opinion COMMENT instead of a competing primary when a primary already exists", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 12, title: "t", author: "a", headSha: "sha0012", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 12, title: "t", author: "a", headSha: "sha0012", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     gh.seedRequest("o/r", 12, "me");
     gh.login = "alice";
     await gh.submitReview("o/r", 12, { commitId: "sha0012", event: "REQUEST_CHANGES", body: `primary\n\n${PRIMARY_MARKER}` });
@@ -57,7 +57,7 @@ describe("completeReview", () => {
 
   it("does NOT downgrade when only a human review (no primary tag) exists", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 13, title: "t", author: "a", headSha: "sha0013", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 13, title: "t", author: "a", headSha: "sha0013", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     gh.seedRequest("o/r", 13, "me");
     gh.login = "human";
     await gh.submitReview("o/r", 13, { commitId: "sha0013", event: "REQUEST_CHANGES", body: "a human review, no agent tag" });
@@ -72,7 +72,7 @@ describe("completeReview", () => {
 
   it("does NOT downgrade for a prior round's primary at a different commit", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 15, title: "t", author: "a", headSha: "round2s", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 15, title: "t", author: "a", headSha: "round2s", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     gh.seedRequest("o/r", 15, "me");
     gh.login = "alice";
     await gh.submitReview("o/r", 15, { commitId: "round1s", event: "APPROVE", body: `round 1 primary\n\n${PRIMARY_MARKER}` }); // prior round, older commit
@@ -86,7 +86,7 @@ describe("completeReview", () => {
 
   it("degrades AND notes drift when a competing primary exists and the head has moved", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 14, title: "t", author: "a", headSha: "newhead", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 14, title: "t", author: "a", headSha: "newhead", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     gh.seedRequest("o/r", 14, "me");
     gh.login = "alice";
     await gh.submitReview("o/r", 14, { commitId: "pinned0", event: "APPROVE", body: `primary\n\n${PRIMARY_MARKER}` });
@@ -103,7 +103,7 @@ describe("completeReview", () => {
 
   it("does NOT treat a review that merely quotes the primary tag as a competing primary", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 16, title: "t", author: "a", headSha: "sha0016", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 16, title: "t", author: "a", headSha: "sha0016", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     gh.seedRequest("o/r", 16, "me");
     gh.login = "human";
     // A human review that mentions the marker mid-body (not ending with it); includes() would
@@ -118,7 +118,7 @@ describe("completeReview", () => {
 
   it("writes a durable meta footer before the primary marker, preserving isPrimaryReview", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 30, title: "t", author: "a", headSha: "pinned0", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 30, title: "t", author: "a", headSha: "pinned0", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     gh.seedRequest("o/r", 30, "me");
     await gh.createComment("o/r", 30, serializeMarker({ v: 2, reviewer: "me", machine: "mbp", sha: "pinned0", claimedAt: "t0", model: "claude-opus-4-8", agent: "claude-code" }));
     await completeReview({ gh, config: cfgCapture }, { repo: "o/r", pr: 30, event: "approve", summary: "lgtm" });
@@ -131,7 +131,7 @@ describe("completeReview", () => {
 
   it("writes a second-opinion meta footer with no primary marker when degraded by a competing primary", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 31, title: "t", author: "a", headSha: "sha0031", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 31, title: "t", author: "a", headSha: "sha0031", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     gh.seedRequest("o/r", 31, "me");
     gh.login = "alice";
     await gh.submitReview("o/r", 31, { commitId: "sha0031", event: "REQUEST_CHANGES", body: `primary\n\n${PRIMARY_MARKER}` });
@@ -146,7 +146,7 @@ describe("completeReview", () => {
 
   it("writes no meta footer when captureMetadata is off (default), preserving today's behavior", async () => {
     const gh = new FakeGitHubGateway();
-    gh.seedPr({ number: 32, title: "t", author: "a", headSha: "sha0032", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+    gh.seedPr({ number: 32, title: "t", author: "a", headSha: "sha0032", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     gh.seedRequest("o/r", 32, "me");
     await gh.createComment("o/r", 32, serializeMarker({ v: 1, reviewer: "me", machine: "m", sha: "sha0032", claimedAt: "t" }));
     const res = await completeReview({ gh, config: cfg }, { repo: "o/r", pr: 32, event: "approve", summary: "lgtm" });

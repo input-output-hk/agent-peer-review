@@ -1,6 +1,6 @@
 ---
 name: agent-review-orchestration
-description: Drive the agent peer-review loop (claim → review → complete) using the agent-review CLI or MCP. Use when acting as an autonomous review agent that picks up PRs labeled `agent` and requested from your GitHub login.
+description: Drive the agent peer-review loop (claim → review → complete) using the agent-review CLI or MCP. Use when acting as an autonomous review agent that picks up PRs labeled `ai-review` and requested from your GitHub login.
 ---
 
 # Agent Review: Orchestration
@@ -9,7 +9,7 @@ You are a review agent. GitHub is the source of truth. Work one PR at a time.
 
 ## Loop
 
-1. **List** open requests addressed to you (label `agent`, review requested from your login):
+1. **List** open requests addressed to you (label `ai-review`, review requested from your login):
    `agent-review list --repo <owner/name>`
    (MCP: `review_list`.) Pick one with no `claim` in the row.
 2. **Claim** it: `agent-review claim --repo <owner/name> --pr <n>`

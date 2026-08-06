@@ -10,7 +10,7 @@ const cfgCapture = { ...cfg, captureMetadata: true, model: "claude-opus-4-8", ag
 const TTL = 30 * 60_000;
 
 function panelPr(gh: FakeGitHubGateway) {
-  gh.seedPr({ number: 9, title: "t", author: "a", headSha: "head", baseSha: "b", url: "u", state: "open", labels: ["agent"] });
+  gh.seedPr({ number: 9, title: "t", author: "a", headSha: "head", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
   gh.seedRequest("o/r", 9, "alice"); gh.seedRequest("o/r", 9, "bob");
 }
 
