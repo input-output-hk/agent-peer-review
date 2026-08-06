@@ -11,3 +11,10 @@ export function openDb(path: string): DB {
   runMigrations(db);
   return db;
 }
+
+/** Open an EXISTING database read-only (for the server). Does not migrate or write. */
+export function openDbReadonly(path: string): DB {
+  const db = new Database(path, { readonly: true, fileMustExist: true });
+  db.pragma("query_only = ON");
+  return db;
+}

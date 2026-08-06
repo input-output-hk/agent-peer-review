@@ -1,8 +1,9 @@
 # agent-review-dashboard
 
-Local dashboard for agent PR-review activity. Phase 1 is ingestion only: a CLI command reads
-agent-reviewed pull requests from GitHub and stores them in a local SQLite database. There is no
-API server and no UI yet; those are later phases.
+Local dashboard for agent PR-review activity. `sync` reads agent-reviewed pull requests from GitHub
+and stores them in a local SQLite database; `serve` runs a read-only HTTP API and UI over that
+database on localhost. The API is complete; the user interface it serves is a placeholder until
+Phase 3.
 
 ## What it stores
 
@@ -15,7 +16,7 @@ run is also recorded in a `sync_run` table with its counts and outcome.
 Each sync fully replaces the reviews, notes, claims, and participants for every pull request it
 visits, so the database always reflects the current state of GitHub for the PRs in scope.
 
-## Usage
+## Sync
 
 ```bash
 agent-review-dashboard sync --repo <owner/name> [--db <path>]
@@ -32,6 +33,35 @@ Example:
 
 ```bash
 agent-review-dashboard sync --repo input-output-hk/agent-peer-review
+```
+
+## Serve
+
+```bash
+agent-review-dashboard serve [--db <path>] [--port <n>] [--host <addr>]
+```
+
+Serves the read-only dashboard API and UI, by default at `http://127.0.0.1:4319`.
+
+- `-d, --db <path>`: SQLite database file to read from. Defaults to `~/.agent-peer-review/dashboard.db`
+  (see [Files and directories](#files-and-directories) below), the same default `sync` writes to.
+  `serve` opens it read-only and never writes to it.
+- `-p, --port <n>`: port to listen on. Defaults to `4319`.
+- `--host <addr>`: address to bind to. Defaults to `127.0.0.1`.
+
+`serve` is localhost-only: it checks both the request's `Host` header (against an allowlist of
+`localhost`, `127.0.0.1`, and `::1`) and its `Origin` header (when present), rejecting anything else
+with `403`, and it sends no CORS headers, so a page on another origin cannot read the API from a
+browser either. This guards against DNS rebinding, not against other processes on the same machine.
+If the database at `--db` does not exist yet, `serve` prints a message telling you to run `sync`
+first and exits, instead of failing with a raw database error.
+
+Example:
+
+```bash
+agent-review-dashboard sync --repo input-output-hk/agent-peer-review
+agent-review-dashboard serve
+# Dashboard on http://127.0.0.1:4319
 ```
 
 ## Files and directories
@@ -61,14 +91,16 @@ point after `npm run build && npm run -w dashboard build`:
 
 ```bash
 node dashboard/dist/cli.js sync --repo input-output-hk/agent-peer-review --db ./dashboard.db
+node dashboard/dist/cli.js serve --db ./dashboard.db
 ```
 
 ## Authentication
 
-The CLI reads `GITHUB_TOKEN` from the environment. A fine-grained personal access token scoped to
+`sync` reads `GITHUB_TOKEN` from the environment. A fine-grained personal access token scoped to
 read-only access on Pull requests and Issues is sufficient; no write scopes are needed because
-Phase 1 only reads from GitHub. If `GITHUB_TOKEN` is not set, it falls back to `gh auth token` (the
-GitHub CLI's cached credential).
+`sync` only reads from GitHub. If `GITHUB_TOKEN` is not set, it falls back to `gh auth token` (the
+GitHub CLI's cached credential). `serve` needs no token: it only reads the local SQLite database
+`sync` already wrote.
 
 ## Known limitations
 
@@ -80,6 +112,8 @@ GitHub CLI's cached credential).
   windowing (for example, by date range) that is not implemented yet.
 - **Requester attribution is not captured.** The dashboard records who authored and who reviewed a
   pull request, but not who originally requested the review.
+- **No user interface yet.** `serve`'s HTTP API is complete, but the page it serves at `/` is a
+  placeholder; a real dashboard UI arrives in Phase 3.
 
 ## Native dependency
 
