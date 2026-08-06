@@ -37,6 +37,14 @@
         "captureMetadata": {
           "type": "boolean",
           "default": false
+        },
+        "reviewers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
         }
       },
       "additionalProperties": false

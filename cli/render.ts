@@ -4,3 +4,6 @@ export function printJson(value: unknown): void {
 export function printLine(msg: string): void {
   process.stdout.write(msg + "\n");
 }
+export function printErrLine(msg: string): void {
+  process.stderr.write(msg + "\n");
+}
