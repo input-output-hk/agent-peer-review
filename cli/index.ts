@@ -9,7 +9,7 @@ import {
 import { printJson, printLine } from "./render.js";
 
 const program = new Command();
-program.name("agent-review").description("Minimal async PR review over GitHub").version("0.2.0");
+program.name("agent-review").description("Minimal async PR review over GitHub").version("0.3.0");
 program.option("-c, --config <path>", "explicit config file path");
 
 const gh = () => new OctokitGateway();

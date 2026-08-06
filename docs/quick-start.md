@@ -50,6 +50,8 @@ If none exist, every field falls back to its default. Since an MCP host has no `
 | `defaultRepo` | string | none | An `owner/name` used whenever a command omits `--repo`. |
 | `skillsDir` | string or null | `null` | Overrides the bundled `skills/` directory, useful while iterating on skill content locally. |
 | `runChecks` | boolean | `false` | Whether the reviewing agent may run build or test scripts. Reviews stay read-only, diff-only analysis until you opt in. |
+| `captureMetadata` | boolean | `false` | Opt in to a durable, machine-readable record of model/agent/verdict/role on every review. See [Review metadata capture](./metadata-capture.md) before enabling it, including its privacy note. |
+| `model`, `agent`, `toolVersion` | string, optional | none | Only read when `captureMetadata` is on; see [Review metadata capture](./metadata-capture.md) for what each populates. |
 
 `~/.agent-peer-review/config.json`:
 

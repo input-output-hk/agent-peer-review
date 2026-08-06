@@ -76,6 +76,13 @@ describe("registerApiRoutes", () => {
     expect(res.json().error).toBeTruthy();
   });
 
+  it("GET a fractional pull number returns 400 JSON", async () => {
+    app = buildServer({ db: await seededDb() });
+    const res = await app.inject({ method: "GET", url: "/api/repos/o/r/pulls/1.5", headers: HOST });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBeTruthy();
+  });
+
   it("GET /api/sync-runs lists sync runs", async () => {
     app = buildServer({ db: await seededDb() });
     const res = await app.inject({ method: "GET", url: "/api/sync-runs", headers: HOST });

@@ -65,8 +65,10 @@ export function buildProgram(): Command {
     .action(async (o: { db: string; port: string; host: string }) => {
       const db = openServeDb(o.db);
       const app = buildServer({ db });
-      await app.listen({ host: o.host, port: Number(o.port) });
-      process.stdout.write(`Dashboard on http://${o.host}:${o.port}\n`);
+      // `listen()` resolves to the address it actually bound (e.g. "http://127.0.0.1:4319"), which
+      // is the real port even when `--port 0` asked for an OS-assigned ephemeral one.
+      const address = await app.listen({ host: o.host, port: Number(o.port) });
+      process.stdout.write(`Dashboard on ${address}\n`);
     });
   return program;
 }

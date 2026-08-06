@@ -36,4 +36,11 @@ describe("static SPA serving", () => {
     expect(res.statusCode).toBe(404);
     expect(res.json().error).toBeTruthy();
   });
+
+  it("bare /api (no trailing slash) returns JSON 404, not the SPA shell", async () => {
+    app = buildServer({ db: openDb(":memory:"), staticRoot });
+    const res = await app.inject({ method: "GET", url: "/api", headers: HOST });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toBeTruthy();
+  });
 });
