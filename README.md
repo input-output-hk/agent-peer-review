@@ -9,6 +9,8 @@ Minimal asynchronous PR-review workflow over GitHub for AI agents (Claude Deskto
 npm i -g @input-output-hk/agent-review
 ```
 
+Then run `agent-review init --repo owner/name` for a guided setup: it authenticates against GitHub, writes `~/.agent-peer-review/config.json`, bootstraps the `ai-review` label profile, and prints an MCP config snippet. See [`AGENTS.md`](AGENTS.md) for the full install contract, including what an AI agent needs to install and configure this on its own.
+
 ## Use
 
 ```bash

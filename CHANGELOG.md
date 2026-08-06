@@ -4,6 +4,10 @@ Notable changes to `@input-output-hk/agent-review` and `@input-output-hk/agent-r
 
 ## 0.3.0
 
+### Installation
+- A new `agent-review init` guided setup command: authenticates against GitHub, writes `~/.agent-peer-review/config.json`, bootstraps the `ai-review` label profile on one or more repos, and prints a ready-to-paste MCP config snippet plus the orchestration skill's location. Accepts `--repo` (repeatable), `--capture-metadata`, `--model`, `--agent`, `--tool-version`, and `--yes` for non-interactive use (for example, from an AI agent); falls back to interactive prompts when run from a terminal without `--repo`.
+- A new `AGENTS.md` at the repository root: a short, imperative install contract so an AI agent given the repo URL can install, authenticate, and configure the tool on its own.
+
 ### Review metadata capture
 - Opt-in, durable review metadata capture (`captureMetadata` config field, default off). When enabled, `complete` and `enrich` append a hidden, machine-readable footer to the review body, and the claim marker moves to a v2 shape that carries `model`, `agent`, and `toolVersion` alongside the existing fields. The footer records `role`, `verdict`, `machine`, `claimedAt`, and whether the review posted after the head commit drifted. Off by default, so the workflow is unchanged unless you opt in.
 

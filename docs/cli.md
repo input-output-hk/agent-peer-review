@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # CLI reference
 
-`agent-review` exposes ten commands: six that drive the review flow (`request`, `list`, `claim`, `complete`, `enrich`, and `labels bootstrap`), and four small utilities (`config`, `whoami`, `skills list`, and `serve`). Every command and flag on this page is read straight from `cli/index.ts`.
+`agent-review` exposes eleven commands: a guided setup command (`init`), six that drive the review flow (`request`, `list`, `claim`, `complete`, `enrich`, and `labels bootstrap`), and four small utilities (`config`, `whoami`, `skills list`, and `serve`). Every command and flag on this page is read straight from `cli/index.ts`.
 
 ## Global options
 
@@ -54,6 +54,21 @@ Idempotently creates or updates the `ai-review` trigger label plus one label per
 ```bash
 agent-review labels bootstrap --repo input-output-hk/some-repo
 ```
+
+## `init`
+
+Guided setup: authenticates against GitHub, writes `~/.agent-peer-review/config.json` (only the keys you passed), bootstraps the `ai-review` trigger label plus the skill labels on every `--repo`, and prints the config path, the labels created or left unchanged per repo, a ready-to-paste MCP config snippet, and the orchestration skill's location. See [Quick start](./quick-start.md#guided-setup) for the full walkthrough and [`AGENTS.md`](https://github.com/input-output-hk/agent-peer-review/blob/main/AGENTS.md) for the install contract this command backs.
+
+- `--repo <owner/name...>` (repeatable): one or more repositories to bootstrap.
+- `--capture-metadata` (optional): opt in to durable review metadata capture; see [Review metadata capture](./metadata-capture.md).
+- `--model <m>`, `--agent <a>`, `--tool-version <v>` (optional): only meaningful alongside `--capture-metadata`.
+- `--yes` (optional): non-interactive. Without it, and without `--repo`, `init` prompts for input when run from a terminal; with neither `--repo` nor a terminal, it exits with guidance instead of hanging.
+
+```bash
+agent-review init --repo input-output-hk/some-repo --yes
+```
+
+On a token or authentication failure, `init` prints a friendly message ("Could not authenticate to GitHub. Set `GITHUB_TOKEN` or run `gh auth login`.") and exits with a non-zero status instead of a raw stack trace.
 
 ## `request`
 
