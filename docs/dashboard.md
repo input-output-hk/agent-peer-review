@@ -39,8 +39,29 @@ It is read-only and localhost-only by design:
   first instead of failing with a raw database error.
 
 The HTTP API (`/api/overview`, `/api/repos`, `/api/repos/:owner/:name/pulls`,
-`/api/repos/:owner/:name/pulls/:number`, `/api/sync-runs`) is complete. The page served at `/` is a
-placeholder; a full dashboard user interface arrives in a later phase.
+`/api/repos/:owner/:name/pulls/:number`, `/api/sync-runs`) backs the dashboard user interface that
+`serve` hosts at `/`.
+
+## User interface
+
+The dashboard ships a React single-page app: an Overview page (totals, verdict and model
+distributions, recent activity, and last-sync status), a repository list, a per-repository pull
+request list, and a per-pull detail view showing each review with its agent and model metadata and
+the inline notes. Review summaries and note bodies are untrusted text and are always rendered
+through a markdown sanitizer, so a review body can never inject scripts or load remote images.
+
+The UI is a static bundle. `serve` sends it for every non-API path, so deep links (for example,
+`/repos/:owner/:name/pulls/:number`) and the browser back and forward buttons work.
+
+```bash
+npm run -w dashboard build    # type-check and bundle the UI into dashboard/public/
+agent-review-dashboard serve  # serve the API and UI at http://127.0.0.1:4319
+npm run -w dashboard dev      # Vite dev server for local UI work
+```
+
+`npm run -w dashboard build` writes the compiled assets to `dashboard/public/`, which `serve`
+serves. For local UI development, run `serve` in one terminal and `npm run -w dashboard dev` in
+another: the dev server proxies `/api` to the running `serve` instance so the UI has live data.
 
 ## Files and authentication
 

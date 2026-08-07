@@ -7,6 +7,9 @@ Notable changes to `@input-output-hk/agent-review` and `@input-output-hk/agent-r
 ### Release process
 - On-demand releases from `main`. A one-click `Release` workflow (from the Actions tab) bumps the version across every workspace with a single semver-aware script, finalizes this changelog, commits to `main`, and creates the GitHub release, which the existing publish workflow ships. A new `check:version` CI gate keeps the version consistent across all files, and `npm run version:set <patch|minor|major>` performs the bump locally. See `docs/releasing.md`.
 
+### Dashboard
+- The local, unpublished `dashboard` package gained its full UI: the Overview, Repos, repo Pulls, and Pull detail views, a hand-rolled client router with a light and dark theme toggle, and sanitized rendering of review summaries and inline notes. Build it with `npm run -w dashboard build` and serve it with `agent-review-dashboard serve`.
+
 ## 0.4.0
 
 ### Configurable reviewers
