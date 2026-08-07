@@ -25,7 +25,7 @@ export function LastSync({ lastSync }: LastSyncProps) {
   return (
     <div className="card">
       <p style={{ margin: 0 }}>
-        Last sync <strong style={{ color: ok ? undefined : "var(--primary)" }}>{statusLabel}</strong>, {whenLabel}
+        Last sync <strong style={{ color: ok ? undefined : "var(--danger)" }}>{statusLabel}</strong>, {whenLabel}
       </p>
       <p style={{ margin: "0.25rem 0 0", color: "var(--muted)", fontSize: "0.875rem" }}>
         {shortDate(startedAt)}

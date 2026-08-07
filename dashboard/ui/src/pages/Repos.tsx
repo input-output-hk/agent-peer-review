@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { listRepos } from "../api";
 import type { RepoSummary } from "../types";
+import { Link } from "../router";
 
 type ReposState =
   | { status: "loading" }
@@ -60,9 +61,9 @@ export function Repos() {
               {repos.map((repo) => (
                 <tr key={`${repo.owner}/${repo.name}`}>
                   <td style={{ padding: "0.5rem", borderTop: "1px solid var(--border)" }}>
-                    <a href={`/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`}>
+                    <Link to={`/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`}>
                       {repo.owner}/{repo.name}
-                    </a>
+                    </Link>
                   </td>
                   <td style={{ padding: "0.5rem", textAlign: "right", borderTop: "1px solid var(--border)" }}>
                     {repo.pulls}

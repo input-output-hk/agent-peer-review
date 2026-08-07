@@ -1,9 +1,8 @@
 # agent-review-dashboard
 
 Local dashboard for agent PR-review activity. `sync` reads agent-reviewed pull requests from GitHub
-and stores them in a local SQLite database; `serve` runs a read-only HTTP API and UI over that
-database on localhost. The API is complete; the user interface it serves is a placeholder until
-Phase 3.
+and stores them in a local SQLite database; `serve` runs a read-only HTTP API and a React user
+interface over that database on localhost.
 
 ## What it stores
 
@@ -64,6 +63,29 @@ agent-review-dashboard serve
 # Dashboard on http://127.0.0.1:4319
 ```
 
+## User interface
+
+`serve` hosts a React single-page app at `/`: an Overview page (totals, verdict and model
+distributions, recent activity, and last-sync status), a repository list, a per-repository pull
+request list, and a per-pull detail view with each review, its agent and model metadata, and the
+inline notes. It supports a light and dark theme toggle. Review summaries and note bodies are
+untrusted text, so they are always rendered through a markdown sanitizer (no raw HTML, no remote
+images). The UI is a static bundle and `serve` returns it for every non-API path, so deep links and
+the browser back and forward buttons work.
+
+```bash
+npm run build                 # build the server (root workspace)
+npm run -w dashboard build    # type-check and bundle the UI into dashboard/public/
+```
+
+`npm run -w dashboard build` writes the compiled UI to `dashboard/public/`, which `serve` serves.
+For local UI development, run `serve` in one terminal and the Vite dev server in another; the dev
+server proxies `/api` to the running `serve` instance so the UI has live data:
+
+```bash
+npm run -w dashboard dev      # Vite dev server with hot reload
+```
+
 ## Files and directories
 
 The dashboard follows the same `~/.agent-peer-review/` convention as the `agent-review` CLI:
@@ -112,8 +134,6 @@ GitHub CLI's cached credential). `serve` needs no token: it only reads the local
   windowing (for example, by date range) that is not implemented yet.
 - **Requester attribution is not captured.** The dashboard records who authored and who reviewed a
   pull request, but not who originally requested the review.
-- **No user interface yet.** `serve`'s HTTP API is complete, but the page it serves at `/` is a
-  placeholder; a real dashboard UI arrives in Phase 3.
 
 ## Native dependency
 
