@@ -249,7 +249,9 @@ export class OctokitGateway implements GitHubGateway {
   }
   async deleteComment(repo: string, commentId: number): Promise<void> {
     const [owner, name] = split(repo);
-    await this.kit.issues.deleteComment({ owner, repo: name, comment_id: commentId });
+    try {
+      await this.kit.issues.deleteComment({ owner, repo: name, comment_id: commentId });
+    } catch (e: any) { if (e.status === 404) return; throw e; } // already deleted
   }
   async submitReview(repo: string, pr: number, review: { commitId: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: Array<{ path: string; line: number; body: string }> }): Promise<{ url: string }> {
     const [owner, name] = split(repo);

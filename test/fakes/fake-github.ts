@@ -79,6 +79,12 @@ export class FakeGitHubGateway implements GitHubGateway {
   }
   async requestReviewers(repo: string, pr: number, reviewers: string[]): Promise<void> {
     for (const r of reviewers) this.seedRequest(repo, pr, r);
+    // `requested` (search-shaped, drives listReviewRequests) and `requestedReviewers` (the PR-3
+    // listRequestedReviewers surface) are two views of the SAME GitHub concept, so a request has to
+    // land in both. Keeping them in step is what lets an operation notice a reviewer it asked for
+    // on an earlier tick.
+    const current = this.requestedReviewers.get(this.key(repo, pr)) ?? { users: [], teams: [] };
+    this.requestedReviewers.set(this.key(repo, pr), { users: [...new Set([...current.users, ...reviewers])], teams: [...current.teams] });
   }
   async addLabels(repo: string, pr: number, labels: string[]): Promise<void> {
     const stored = this.prs.get(this.key(repo, pr))!;
@@ -106,7 +112,10 @@ export class FakeGitHubGateway implements GitHubGateway {
     const stateMap = { APPROVE: "APPROVED", REQUEST_CHANGES: "CHANGES_REQUESTED", COMMENT: "COMMENTED" } as const;
     this.reviews.push({ repo, pr, id, author: this.login, state: stateMap[review.event], event: review.event, body: review.body, commitId: review.commitId, comments: review.comments, submittedAt: `t${id}` });
     for (const c of review.comments ?? []) this.reviewComments.push({ repo, pr, id: this.reviewCommentSeq++, path: c.path, line: c.line, body: c.body, author: this.login });
-    this.requested.get(this.key(repo, pr))?.delete(this.login); // native: submitting clears the request
+    // Native: submitting a review clears that reviewer's open request, in both views of it.
+    this.requested.get(this.key(repo, pr))?.delete(this.login);
+    const open = this.requestedReviewers.get(this.key(repo, pr));
+    if (open) this.requestedReviewers.set(this.key(repo, pr), { users: open.users.filter((u) => u !== this.login), teams: [...open.teams] });
     return { url: `https://github.com/${repo}/pull/${pr}#pullrequestreview-${id}` };
   }
   async getReviews(repo: string, pr: number): Promise<Review[]> {

@@ -553,6 +553,42 @@ describe("OctokitGateway.removeLabel", () => {
   });
 });
 
+function fakeDeleteCommentFetch(byId: Record<string, number>) {
+  const calls: string[] = [];
+  const fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    const url = typeof input === "string" ? input : input.toString();
+    const id = new URL(url).pathname.match(/\/comments\/([^/]+)$/)?.[1] ?? "";
+    calls.push(id);
+    const status = byId[id] ?? 204;
+    const body = status === 204 ? null : JSON.stringify({ message: "Not Found" });
+    return new Response(body, { status, headers: { "content-type": "application/json; charset=utf-8" } });
+  }) as typeof globalThis.fetch;
+  return { fetch, calls };
+}
+
+describe("OctokitGateway.deleteComment", () => {
+  it("resolves normally on success", async () => {
+    const { fetch, calls } = fakeDeleteCommentFetch({ "7": 204 });
+    const gw = new OctokitGateway("fake-token", fetch);
+    await expect(gw.deleteComment("o/r", 7)).resolves.toBeUndefined();
+    expect(calls).toEqual(["7"]);
+  });
+
+  // A maintainer deleting our stale proposal between listComments and deleteComment is ordinary,
+  // not exceptional: the comment is gone either way, so the tick must not abort over it.
+  it("swallows a 404 (comment already deleted) instead of throwing", async () => {
+    const { fetch } = fakeDeleteCommentFetch({ "8": 404 });
+    const gw = new OctokitGateway("fake-token", fetch);
+    await expect(gw.deleteComment("o/r", 8)).resolves.toBeUndefined();
+  });
+
+  it("propagates other errors", async () => {
+    const { fetch } = fakeDeleteCommentFetch({ "9": 403 });
+    const gw = new OctokitGateway("fake-token", fetch);
+    await expect(gw.deleteComment("o/r", 9)).rejects.toThrow();
+  });
+});
+
 describe("OctokitGateway.listRequestedReviewers", () => {
   it("maps users and teams to login/slug arrays", async () => {
     const fetch = (async () => new Response(JSON.stringify({

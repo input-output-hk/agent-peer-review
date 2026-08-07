@@ -86,8 +86,11 @@ export function evaluateGates(input: GateInput): GateDecision {
   // 5. Branch protection (required reviews/checks/conversations/enforce_admins) must be satisfied.
   if (!input.branchProtectionSatisfied) reasons.push("branch protection requirements are not satisfied");
 
-  // 6. No new security alert introduced by this change.
-  if (input.hasNewSecurityAlert) reasons.push("a new security alert was detected on this change");
+  // 6. The security alert rail must be satisfied. The wording stays neutral because the input is
+  // whatever the caller could actually establish, which today is a repository-wide open-alert count
+  // that may also be unreadable; claiming "new on this change" would overstate it. Callers append
+  // the specific cause (alerts present, or no access) as an extra reason.
+  if (input.hasNewSecurityAlert) reasons.push("the security alert rail is not satisfied");
 
   // 7. No human review in flight; never race a human reviewer.
   if (input.humanReviewInFlight) reasons.push("a human review is in flight");
