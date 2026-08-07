@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "./fake-github.js";
+import type { Mergeability } from "../../core/github.js";
 
 describe("FakeGitHubGateway", () => {
   it("clears the review request when a review is submitted", async () => {
@@ -67,5 +68,195 @@ describe("FakeGitHubGateway", () => {
     expect(typeof pr.createdAt).toBe("string");
     expect(typeof pr.updatedAt).toBe("string");
     expect(pr.mergedAt).toBeNull();
+  });
+});
+
+describe("FakeGitHubGateway expedition methods (PR 3)", () => {
+  it("getMergeability defaults to clean/not-draft with the seeded PR's headSha, and setMergeability overrides it", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 1, title: "t", author: "a", headSha: "headsha1", baseSha: "b", url: "u", state: "open", labels: [] });
+    expect(await gh.getMergeability("o/r", 1)).toEqual({ state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: "headsha1" });
+
+    gh.setMergeability("o/r", 1, { state: "dirty", mergeable: false, draft: false, baseRef: "main", headSha: "headsha1" });
+    expect((await gh.getMergeability("o/r", 1)).state).toBe("dirty");
+  });
+
+  it("getChecks defaults to [] and setChecks overrides it", async () => {
+    const gh = new FakeGitHubGateway();
+    expect(await gh.getChecks("o/r", "deadbeef")).toEqual([]);
+    gh.setChecks("o/r", "deadbeef", [{ name: "build", status: "failure" }]);
+    expect(await gh.getChecks("o/r", "deadbeef")).toEqual([{ name: "build", status: "failure" }]);
+  });
+
+  it('getBranchProtection defaults to "none" and setBranchProtection can arrange "unknown" or a summary', async () => {
+    const gh = new FakeGitHubGateway();
+    expect(await gh.getBranchProtection("o/r", "main")).toBe("none");
+    gh.setBranchProtection("o/r", "main", "unknown");
+    expect(await gh.getBranchProtection("o/r", "main")).toBe("unknown");
+    gh.setBranchProtection("o/r", "main", {
+      requiresPullRequestReviews: true, requiredApprovingReviewCount: 0,
+      requiredChecks: ["ci"], enforceAdmins: true, requiresConversationResolution: false,
+    });
+    expect(await gh.getBranchProtection("o/r", "main")).toEqual({
+      requiresPullRequestReviews: true, requiredApprovingReviewCount: 0,
+      requiredChecks: ["ci"], enforceAdmins: true, requiresConversationResolution: false,
+    });
+  });
+
+  it("getBranchProtection returns a deep copy: mutating a returned requiredChecks array does not corrupt the stored state", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.setBranchProtection("o/r", "main", {
+      requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
+      requiredChecks: ["ci"], enforceAdmins: false, requiresConversationResolution: false,
+    });
+    const first = await gh.getBranchProtection("o/r", "main");
+    if (typeof first === "string") throw new Error("expected a summary");
+    first.requiredChecks.push("mutated");
+    const second = await gh.getBranchProtection("o/r", "main");
+    if (typeof second === "string") throw new Error("expected a summary");
+    expect(second.requiredChecks).toEqual(["ci"]); // unaffected by the mutation above
+  });
+
+  it("setMergeability and setDetailedFiles store copies: mutating the caller's object/array after the call does not corrupt fake state", async () => {
+    const gh = new FakeGitHubGateway();
+    const m: Mergeability = { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: "s" };
+    gh.setMergeability("o/r", 1, m);
+    m.state = "dirty";
+    expect((await gh.getMergeability("o/r", 1)).state).toBe("clean");
+
+    const files = [{ filename: "a.ts", status: "added", additions: 1, deletions: 0, patch: undefined }];
+    gh.setDetailedFiles("o/r", 1, files);
+    files[0].status = "removed";
+    expect((await gh.listPullFilesDetailed("o/r", 1))[0].status).toBe("added");
+  });
+
+  it("listPullFilesDetailed derives additions/deletions 1/0 from seedPullFiles, and setDetailedFiles overrides it", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPullFiles("o/r", 2, ["a.ts", "b.ts"]);
+    expect(await gh.listPullFilesDetailed("o/r", 2)).toEqual([
+      { filename: "a.ts", status: "modified", additions: 1, deletions: 0, patch: undefined },
+      { filename: "b.ts", status: "modified", additions: 1, deletions: 0, patch: undefined },
+    ]);
+
+    gh.setDetailedFiles("o/r", 2, [{ filename: "a.ts", status: "added", additions: 20, deletions: 0, patch: "@@ x @@" }]);
+    expect(await gh.listPullFilesDetailed("o/r", 2)).toEqual([
+      { filename: "a.ts", status: "added", additions: 20, deletions: 0, patch: "@@ x @@" },
+    ]);
+  });
+
+  it("listRequestedReviewers defaults to empty users/teams and setRequestedReviewers overrides it", async () => {
+    const gh = new FakeGitHubGateway();
+    expect(await gh.listRequestedReviewers("o/r", 1)).toEqual({ users: [], teams: [] });
+    gh.setRequestedReviewers("o/r", 1, { users: ["alice"], teams: ["backend"] });
+    expect(await gh.listRequestedReviewers("o/r", 1)).toEqual({ users: ["alice"], teams: ["backend"] });
+  });
+
+  it("getActorType defaults to User and setActorType overrides it", async () => {
+    const gh = new FakeGitHubGateway();
+    expect(await gh.getActorType("octocat")).toBe("User");
+    gh.setActorType("reviewbot", "Bot");
+    expect(await gh.getActorType("reviewbot")).toBe("Bot");
+    expect(await gh.getActorType("octocat")).toBe("User"); // unaffected
+  });
+
+  it("listOpenSecurityAlertCount defaults to 0 and setAlertCount can arrange a count or null", async () => {
+    const gh = new FakeGitHubGateway();
+    expect(await gh.listOpenSecurityAlertCount("o/r")).toBe(0);
+    gh.setAlertCount("o/r", 5);
+    expect(await gh.listOpenSecurityAlertCount("o/r")).toBe(5);
+    gh.setAlertCount("o/r", null);
+    expect(await gh.listOpenSecurityAlertCount("o/r")).toBeNull();
+  });
+
+  it("mergePull's sha guard: a mismatched sha fails without merging or recording; a matching sha merges, marks the PR merged, and records it", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 3, title: "t", author: "a", headSha: "currentsha", baseSha: "b", url: "u", state: "open", labels: [] });
+
+    const mismatched = await gh.mergePull("o/r", 3, { sha: "stalesha" });
+    expect(mismatched).toEqual({ merged: false, sha: null, message: "head sha mismatch", reason: "head-moved" });
+    expect(gh.merges).toHaveLength(0);
+    expect((await gh.getPullRequest("o/r", 3)).state).toBe("open");
+
+    const matched = await gh.mergePull("o/r", 3, { sha: "currentsha", method: "squash", commitTitle: "Squash it" });
+    expect(matched).toEqual({ merged: true, sha: "merge-currentsha", message: "merged", reason: null });
+    expect(gh.merges).toEqual([{ repo: "o/r", pr: 3, sha: "currentsha", method: "squash", commitTitle: "Squash it" }]);
+    const merged = await gh.getPullRequest("o/r", 3);
+    expect(merged.state).toBe("merged");
+    expect(merged.mergedAt).toBe("2026-01-01T00:00:00Z");
+  });
+
+  it("mergePull defaults method to merge when omitted", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 4, title: "t", author: "a", headSha: "s", baseSha: "b", url: "u", state: "open", labels: [] });
+    await gh.mergePull("o/r", 4, { sha: "s" });
+    expect(gh.merges[0]).toMatchObject({ method: "merge" });
+  });
+
+  it("mergePull refuses a PR whose arranged mergeability is not clean, or that is not open, even when the sha matches", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 10, title: "t", author: "a", headSha: "s10", baseSha: "b", url: "u", state: "open", labels: [] });
+    gh.setMergeability("o/r", 10, { state: "dirty", mergeable: false, draft: false, baseRef: "main", headSha: "s10" });
+    const dirty = await gh.mergePull("o/r", 10, { sha: "s10" });
+    expect(dirty).toEqual({ merged: false, sha: null, message: "not mergeable", reason: "not-mergeable" });
+    expect(gh.merges).toHaveLength(0);
+
+    gh.seedPr({ number: 11, title: "t", author: "a", headSha: "s11", baseSha: "b", url: "u", state: "closed", labels: [] });
+    const closed = await gh.mergePull("o/r", 11, { sha: "s11" });
+    expect(closed).toEqual({ merged: false, sha: null, message: "not mergeable", reason: "not-mergeable" });
+    expect(gh.merges).toHaveLength(0);
+  });
+
+  it("getMergeability stops reporting clean once mergePull has merged the PR", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 12, title: "t", author: "a", headSha: "s12", baseSha: "b", url: "u", state: "open", labels: [] });
+    expect((await gh.getMergeability("o/r", 12)).state).toBe("clean");
+
+    await gh.mergePull("o/r", 12, { sha: "s12" });
+    const after = await gh.getMergeability("o/r", 12);
+    expect(after.state).toBe("unknown");
+    expect(after.mergeable).toBe(false);
+  });
+
+  it('updateBranch defaults to "updated", advances the PR\'s headSha on success (never on conflict), is configurable via setUpdateBranchResult, and records every call', async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 5, title: "t", author: "a", headSha: "sha0", baseSha: "b", url: "u", state: "open", labels: [] });
+
+    expect(await gh.updateBranch("o/r", 5, "expectedsha")).toBe("updated");
+    expect((await gh.getPullRequest("o/r", 5)).headSha).toBe("sha0-updated"); // real pulls.updateBranch always creates a new head commit
+
+    gh.setUpdateBranchResult("conflict");
+    expect(await gh.updateBranch("o/r", 5)).toBe("conflict");
+    expect((await gh.getPullRequest("o/r", 5)).headSha).toBe("sha0-updated"); // unchanged: no new commit on a conflict
+
+    expect(gh.updateBranchCalls).toEqual([
+      { repo: "o/r", pr: 5, expectedHeadSha: "expectedsha", previousHeadSha: "sha0" },
+      { repo: "o/r", pr: 5, expectedHeadSha: undefined, previousHeadSha: "sha0-updated" },
+    ]);
+  });
+
+  it("updateBranch tolerates a PR that was never seeded (records the call, reports no previousHeadSha, does not throw)", async () => {
+    const gh = new FakeGitHubGateway();
+    await expect(gh.updateBranch("o/r", 999)).resolves.toBe("updated");
+    expect(gh.updateBranchCalls).toEqual([{ repo: "o/r", pr: 999, expectedHeadSha: undefined, previousHeadSha: undefined }]);
+  });
+
+  it("removeLabel removes the label from the PR (no error if absent) and records every call", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 6, title: "t", author: "a", headSha: "s", baseSha: "b", url: "u", state: "open", labels: ["ai-review", "bug"] });
+
+    await gh.removeLabel("o/r", 6, "bug");
+    expect((await gh.getPullRequest("o/r", 6)).labels).toEqual(["ai-review"]);
+
+    await expect(gh.removeLabel("o/r", 6, "not-there")).resolves.toBeUndefined(); // no error if absent
+    expect(gh.removedLabels).toEqual([
+      { repo: "o/r", pr: 6, label: "bug" },
+      { repo: "o/r", pr: 6, label: "not-there" },
+    ]);
+  });
+
+  it("addAssignees records every call", async () => {
+    const gh = new FakeGitHubGateway();
+    await gh.addAssignees("o/r", 7, ["alice", "bob"]);
+    expect(gh.assigneesAdded).toEqual([{ repo: "o/r", pr: 7, assignees: ["alice", "bob"] }]);
   });
 });
