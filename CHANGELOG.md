@@ -2,6 +2,11 @@
 
 Notable changes to `@input-output-hk/agent-review` and `@input-output-hk/agent-review-pi`. The two packages are versioned in lockstep.
 
+## Unreleased
+
+### Release process
+- On-demand releases from `main`. A one-click `Release` workflow (from the Actions tab) bumps the version across every workspace with a single semver-aware script, finalizes this changelog, commits to `main`, and creates the GitHub release, which the existing publish workflow ships. A new `check:version` CI gate keeps the version consistent across all files, and `npm run version:set <patch|minor|major>` performs the bump locally. See `docs/releasing.md`.
+
 ## 0.4.0
 
 ### Configurable reviewers
