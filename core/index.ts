@@ -9,6 +9,8 @@ export * from "./claim-marker.js";
 export * from "./review-meta.js";
 export * from "./paths.js";
 export * from "./guard.js";
+export * from "./expedition/classify.js";
+export * from "./expedition/gate.js";
 export { bootstrap } from "./operations/bootstrap.js";
 export { createReview } from "./operations/create.js";
 export { listReviews } from "./operations/list.js";
