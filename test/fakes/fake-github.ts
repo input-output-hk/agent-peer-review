@@ -1,4 +1,4 @@
-import type { GitHubGateway } from "../../core/github.js";
+import type { GitHubGateway, Mergeability, CheckResult, BranchProtectionSummary, DetailedPullFile } from "../../core/github.js";
 import type { PullRequest, IssueComment, LabelSpec, Review, ReviewComment } from "../../core/model.js";
 import { TRIGGER } from "../../core/labels.js";
 
@@ -6,6 +6,9 @@ import { TRIGGER } from "../../core/labels.js";
 // predate PullRequest.createdAt/updatedAt/mergedAt keep compiling without passing them.
 const DEFAULT_PR_TIMESTAMPS = { createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", mergedAt: null } as const;
 type SeedPr = Omit<PullRequest, "createdAt" | "updatedAt" | "mergedAt"> & Partial<Pick<PullRequest, "createdAt" | "updatedAt" | "mergedAt">>;
+
+// Fixed, deterministic stand-in for "now" when mergePull marks a PR merged. Never Date.now().
+const FAKE_MERGED_AT = "2026-01-01T00:00:00Z";
 
 export class FakeGitHubGateway implements GitHubGateway {
   login = "me";
@@ -18,6 +21,21 @@ export class FakeGitHubGateway implements GitHubGateway {
   pullFiles = new Map<string, string[]>();
   fileContents = new Map<string, string>();
   dirs = new Map<string, string[]>();
+  // Expedition state (PR 3): settable per-PR/per-repo state for the gateway's read/write surface
+  // added in this PR. Safe defaults below mean existing callers that never touch these keep
+  // working unchanged; Task 2 arranges failing checks, dirty mergeability, etc. via the setters.
+  mergeability = new Map<string, Mergeability>();
+  checks = new Map<string, CheckResult[]>();
+  protection = new Map<string, BranchProtectionSummary | "none" | "unknown">();
+  detailedFiles = new Map<string, DetailedPullFile[]>();
+  requestedReviewers = new Map<string, { users: string[]; teams: string[] }>();
+  actorTypes = new Map<string, "User" | "Bot" | "Organization" | "unknown">();
+  alertCount = new Map<string, number | null>();
+  updateBranchResult: "updated" | "conflict" = "updated";
+  merges: Array<{ repo: string; pr: number; sha: string; method: "merge" | "squash" | "rebase"; commitTitle?: string }> = [];
+  updateBranchCalls: Array<{ repo: string; pr: number; expectedHeadSha?: string; previousHeadSha?: string }> = [];
+  removedLabels: Array<{ repo: string; pr: number; label: string }> = [];
+  assigneesAdded: Array<{ repo: string; pr: number; assignees: string[] }> = [];
   private commentId = 1;
   private reviewSeq = 1;
   private reviewCommentSeq = 1;
@@ -31,6 +49,16 @@ export class FakeGitHubGateway implements GitHubGateway {
   seedPullFiles(repo: string, pr: number, paths: string[]) { this.pullFiles.set(`${repo}#${pr}`, paths); }
   seedFile(repo: string, ref: string, path: string, content: string) { this.fileContents.set(`${repo}@${ref}:${path}`, content); }
   seedDir(repo: string, ref: string, path: string, paths: string[]) { this.dirs.set(`${repo}@${ref}:${path}`, paths); }
+  // Stores a copy, not the caller's own object/array: the caller mutating what it passed in
+  // after calling the setter must not silently corrupt this fake's stored state.
+  setMergeability(repo: string, pr: number, m: Mergeability) { this.mergeability.set(this.key(repo, pr), { ...m }); }
+  setChecks(repo: string, ref: string, checks: CheckResult[]) { this.checks.set(`${repo}@${ref}`, checks); }
+  setBranchProtection(repo: string, branch: string, p: BranchProtectionSummary | "none" | "unknown") { this.protection.set(`${repo}@${branch}`, p); }
+  setDetailedFiles(repo: string, pr: number, files: DetailedPullFile[]) { this.detailedFiles.set(this.key(repo, pr), files.map((f) => ({ ...f }))); }
+  setRequestedReviewers(repo: string, pr: number, r: { users: string[]; teams: string[] }) { this.requestedReviewers.set(this.key(repo, pr), r); }
+  setActorType(login: string, type: "User" | "Bot" | "Organization" | "unknown") { this.actorTypes.set(login, type); }
+  setAlertCount(repo: string, count: number | null) { this.alertCount.set(repo, count); }
+  setUpdateBranchResult(result: "updated" | "conflict") { this.updateBranchResult = result; }
 
   async getAuthenticatedLogin(): Promise<string> { return this.login; }
   async getPullRequest(repo: string, pr: number): Promise<PullRequest> {
@@ -51,6 +79,12 @@ export class FakeGitHubGateway implements GitHubGateway {
   }
   async requestReviewers(repo: string, pr: number, reviewers: string[]): Promise<void> {
     for (const r of reviewers) this.seedRequest(repo, pr, r);
+    // `requested` (search-shaped, drives listReviewRequests) and `requestedReviewers` (the PR-3
+    // listRequestedReviewers surface) are two views of the SAME GitHub concept, so a request has to
+    // land in both. Keeping them in step is what lets an operation notice a reviewer it asked for
+    // on an earlier tick.
+    const current = this.requestedReviewers.get(this.key(repo, pr)) ?? { users: [], teams: [] };
+    this.requestedReviewers.set(this.key(repo, pr), { users: [...new Set([...current.users, ...reviewers])], teams: [...current.teams] });
   }
   async addLabels(repo: string, pr: number, labels: string[]): Promise<void> {
     const stored = this.prs.get(this.key(repo, pr))!;
@@ -78,7 +112,10 @@ export class FakeGitHubGateway implements GitHubGateway {
     const stateMap = { APPROVE: "APPROVED", REQUEST_CHANGES: "CHANGES_REQUESTED", COMMENT: "COMMENTED" } as const;
     this.reviews.push({ repo, pr, id, author: this.login, state: stateMap[review.event], event: review.event, body: review.body, commitId: review.commitId, comments: review.comments, submittedAt: `t${id}` });
     for (const c of review.comments ?? []) this.reviewComments.push({ repo, pr, id: this.reviewCommentSeq++, path: c.path, line: c.line, body: c.body, author: this.login });
-    this.requested.get(this.key(repo, pr))?.delete(this.login); // native: submitting clears the request
+    // Native: submitting a review clears that reviewer's open request, in both views of it.
+    this.requested.get(this.key(repo, pr))?.delete(this.login);
+    const open = this.requestedReviewers.get(this.key(repo, pr));
+    if (open) this.requestedReviewers.set(this.key(repo, pr), { users: open.users.filter((u) => u !== this.login), teams: [...open.teams] });
     return { url: `https://github.com/${repo}/pull/${pr}#pullrequestreview-${id}` };
   }
   async getReviews(repo: string, pr: number): Promise<Review[]> {
@@ -92,4 +129,78 @@ export class FakeGitHubGateway implements GitHubGateway {
   async listPullFiles(repo: string, pr: number): Promise<string[]> { return this.pullFiles.get(`${repo}#${pr}`) ?? []; }
   async getFileContent(repo: string, ref: string, path: string): Promise<string | null> { return this.fileContents.get(`${repo}@${ref}:${path}`) ?? null; }
   async listDir(repo: string, ref: string, path: string): Promise<string[]> { return this.dirs.get(`${repo}@${ref}:${path}`) ?? []; }
+
+  // -- Expedition methods (PR 3) -----------------------------------------------------------
+  async getMergeability(repo: string, pr: number): Promise<Mergeability> {
+    const key = this.key(repo, pr);
+    const explicit = this.mergeability.get(key);
+    if (explicit) return { ...explicit };
+    const found = this.prs.get(key);
+    if (found && found.state !== "open") {
+      // A merged/closed PR is never cleanly mergeable. There is no literal "closed" member of
+      // Mergeability["state"], so "unknown" is the closest honest signal; mergeable: false makes
+      // the practical consequence unambiguous regardless of which state string a caller checks.
+      return { state: "unknown", mergeable: false, draft: false, baseRef: "main", headSha: found.headSha };
+    }
+    return { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: found?.headSha ?? "" };
+  }
+  async getChecks(repo: string, ref: string): Promise<CheckResult[]> {
+    return (this.checks.get(`${repo}@${ref}`) ?? []).map((c) => ({ ...c }));
+  }
+  async getBranchProtection(repo: string, branch: string): Promise<BranchProtectionSummary | "none" | "unknown"> {
+    const p = this.protection.get(`${repo}@${branch}`) ?? "none";
+    return typeof p === "string" ? p : { ...p, requiredChecks: [...p.requiredChecks] };
+  }
+  async mergePull(repo: string, pr: number, opts: { sha: string; method?: "merge" | "squash" | "rebase"; commitTitle?: string }): Promise<{ merged: boolean; sha: string | null; message: string; reason: "head-moved" | "not-mergeable" | null }> {
+    const key = this.key(repo, pr);
+    const found = this.prs.get(key);
+    if (!found) throw new Error(`no PR ${repo}#${pr}`);
+    if (found.headSha !== opts.sha) {
+      return { merged: false, sha: null, message: "head sha mismatch", reason: "head-moved" }; // mirrors GitHub's 409 guard
+    }
+    const mergeability = await this.getMergeability(repo, pr);
+    if (mergeability.state !== "clean" || found.state !== "open") {
+      return { merged: false, sha: null, message: "not mergeable", reason: "not-mergeable" }; // mirrors GitHub's 405
+    }
+    this.merges.push({ repo, pr, sha: opts.sha, method: opts.method ?? "merge", commitTitle: opts.commitTitle });
+    const mergeSha = `merge-${opts.sha}`; // the merge commit's sha is distinct from the PR's own head sha
+    found.state = "merged";
+    found.mergedAt = FAKE_MERGED_AT;
+    return { merged: true, sha: mergeSha, message: "merged", reason: null };
+  }
+  async updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict"> {
+    const found = this.prs.get(this.key(repo, pr));
+    this.updateBranchCalls.push({ repo, pr, expectedHeadSha, previousHeadSha: found?.headSha });
+    if (this.updateBranchResult === "updated" && found) {
+      found.headSha = `${found.headSha}-updated`; // real pulls.updateBranch always creates a new head commit
+    }
+    return this.updateBranchResult;
+  }
+  async listPullFilesDetailed(repo: string, pr: number): Promise<DetailedPullFile[]> {
+    const key = this.key(repo, pr);
+    const explicit = this.detailedFiles.get(key);
+    if (explicit) return explicit.map((f) => ({ ...f }));
+    // No explicit detailed files seeded: derive from the plain filename list so existing
+    // seedPullFiles callers still get a usable (if minimal) detailed view.
+    return (this.pullFiles.get(key) ?? []).map((filename) => ({ filename, status: "modified", additions: 1, deletions: 0, patch: undefined }));
+  }
+  async removeLabel(repo: string, pr: number, label: string): Promise<void> {
+    const stored = this.prs.get(this.key(repo, pr));
+    if (stored) stored.labels = stored.labels.filter((l) => l !== label); // no error if absent
+    this.removedLabels.push({ repo, pr, label });
+  }
+  async listRequestedReviewers(repo: string, pr: number): Promise<{ users: string[]; teams: string[] }> {
+    const r = this.requestedReviewers.get(this.key(repo, pr));
+    return r ? { users: [...r.users], teams: [...r.teams] } : { users: [], teams: [] };
+  }
+  async addAssignees(repo: string, pr: number, assignees: string[]): Promise<void> {
+    this.assigneesAdded.push({ repo, pr, assignees: [...assignees] });
+  }
+  async getActorType(login: string): Promise<"User" | "Bot" | "Organization" | "unknown"> {
+    return this.actorTypes.get(login) ?? "User";
+  }
+  async listOpenSecurityAlertCount(repo: string): Promise<number | null> {
+    const v = this.alertCount.get(repo);
+    return v === undefined ? 0 : v;
+  }
 }

@@ -12,6 +12,24 @@ import {
   type ConditionalResponse,
 } from "./octokit-cache.js";
 
+// Shared types for the expedition gateway methods below (PR 3). Plain data, no behavior.
+export interface Mergeability {
+  state: "clean" | "dirty" | "behind" | "blocked" | "unstable" | "draft" | "unknown";
+  mergeable: boolean | null;   // GitHub's tri-state
+  draft: boolean;
+  baseRef: string;
+  headSha: string;
+}
+export interface CheckResult { name: string; status: "success" | "failure" | "pending" | "neutral" }
+export interface BranchProtectionSummary {
+  requiresPullRequestReviews: boolean;
+  requiredApprovingReviewCount: number;   // 0 is meaningful: PR required, no approvals needed
+  requiredChecks: string[];
+  enforceAdmins: boolean;
+  requiresConversationResolution: boolean;
+}
+export interface DetailedPullFile { filename: string; status: string; additions: number; deletions: number; patch?: string }
+
 export interface GitHubGateway {
   getAuthenticatedLogin(): Promise<string>;
   getPullRequest(repo: string, pr: number): Promise<PullRequest>;
@@ -33,6 +51,19 @@ export interface GitHubGateway {
   listPullFiles(repo: string, pr: number): Promise<string[]>;
   getFileContent(repo: string, ref: string, path: string): Promise<string | null>;
   listDir(repo: string, ref: string, path: string): Promise<string[]>;
+  // Expedition methods (PR 3): read/write surface the auto-merge safety gate (Task 2) and the
+  // acting flows (PR 4) need. Dumb mappings only; no judgment lives here.
+  getMergeability(repo: string, pr: number): Promise<Mergeability>;
+  getChecks(repo: string, ref: string): Promise<CheckResult[]>;
+  getBranchProtection(repo: string, branch: string): Promise<BranchProtectionSummary | "none" | "unknown">;
+  mergePull(repo: string, pr: number, opts: { sha: string; method?: "merge" | "squash" | "rebase"; commitTitle?: string }): Promise<{ merged: boolean; sha: string | null; message: string; reason: "head-moved" | "not-mergeable" | null }>;
+  updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict">;
+  listPullFilesDetailed(repo: string, pr: number): Promise<DetailedPullFile[]>;
+  removeLabel(repo: string, pr: number, label: string): Promise<void>;
+  listRequestedReviewers(repo: string, pr: number): Promise<{ users: string[]; teams: string[] }>;
+  addAssignees(repo: string, pr: number, assignees: string[]): Promise<void>;
+  getActorType(login: string): Promise<"User" | "Bot" | "Organization" | "unknown">;
+  listOpenSecurityAlertCount(repo: string): Promise<number | null>;
 }
 
 export function resolveToken(): string {
@@ -45,6 +76,42 @@ const split = (repo: string): [string, string] => {
   const [owner, name] = repo.split("/");
   return [owner, name];
 };
+
+// GitHub's `mergeable_state` values, mapped to Mergeability["state"]. `has_hooks` is a GitHub
+// Enterprise Server-only value meaning "mergeable, pending pre-receive hooks"; treated as clean
+// since the PR itself is mergeable. Any other or future value maps to "unknown" rather than
+// guessing at its meaning.
+const KNOWN_MERGEABLE_STATES: readonly Mergeability["state"][] =
+  ["clean", "dirty", "behind", "blocked", "unstable", "draft", "unknown"];
+function mapMergeableState(raw: string): Mergeability["state"] {
+  if (raw === "has_hooks") return "clean";
+  return (KNOWN_MERGEABLE_STATES as readonly string[]).includes(raw) ? (raw as Mergeability["state"]) : "unknown";
+}
+
+// Check-run `conclusion` -> CheckResult["status"]. `conclusion` is null while the run is
+// queued/in_progress, which maps to "pending". The Octokit response type does not include
+// "stale" (a value GitHub can still report for an older check run); it is handled explicitly
+// here alongside the other documented terminal, non-green conclusions.
+function checkRunStatus(conclusion: string | null): CheckResult["status"] {
+  if (conclusion === null) return "pending";
+  switch (conclusion) {
+    case "success": return "success";
+    case "neutral":
+    case "skipped": return "neutral";
+    default: return "failure"; // failure, cancelled, timed_out, action_required, stale, or unrecognized
+  }
+}
+
+// Commit-status `state` -> CheckResult["status"]. The Status API only reports
+// success/pending/failure/error (no neutral); "error" folds into "failure" since both are
+// terminal and non-green.
+function commitStatusStatus(state: string): CheckResult["status"] {
+  switch (state) {
+    case "success": return "success";
+    case "pending": return "pending";
+    default: return "failure"; // failure, error, or unrecognized
+  }
+}
 
 export class OctokitGateway implements GitHubGateway {
   private kit: Octokit;
@@ -72,7 +139,15 @@ export class OctokitGateway implements GitHubGateway {
           return retryCount < 2;
         },
       },
-      retry: { retries: 2 },
+      // @octokit/plugin-retry's own default is doNotRetry: [400,401,403,404,410,422,451]. Passing
+      // doNotRetry here REPLACES that list rather than extending it, so every status that must
+      // not retry is spelled out below (the original seven, plus 405 and 409). 409 on
+      // pulls.merge means the pinned `sha` is no longer the PR's head; retrying the identical
+      // `sha` cannot succeed. 405 on pulls.merge means the PR is not mergeable; a retry that
+      // happened to succeed inside the retry window would merge a state the safety gate never
+      // evaluated. Adding 409 here also stops repos.getContent from retrying GitHub's 409 for an
+      // empty repository instead of failing fast.
+      retry: { retries: 2, doNotRetry: [400, 401, 403, 404, 405, 409, 410, 422, 451] },
     });
     this.wireConditionalCache();
   }
@@ -174,7 +249,9 @@ export class OctokitGateway implements GitHubGateway {
   }
   async deleteComment(repo: string, commentId: number): Promise<void> {
     const [owner, name] = split(repo);
-    await this.kit.issues.deleteComment({ owner, repo: name, comment_id: commentId });
+    try {
+      await this.kit.issues.deleteComment({ owner, repo: name, comment_id: commentId });
+    } catch (e: any) { if (e.status === 404) return; throw e; } // already deleted
   }
   async submitReview(repo: string, pr: number, review: { commitId: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: Array<{ path: string; line: number; body: string }> }): Promise<{ url: string }> {
     const [owner, name] = split(repo);
@@ -215,5 +292,142 @@ export class OctokitGateway implements GitHubGateway {
       const { data } = await this.kit.repos.getContent({ owner, repo: name, path, ref });
       return Array.isArray(data) ? data.map((d) => d.path) : [];
     } catch (e: any) { if (e.status === 404) return []; throw e; }
+  }
+
+  // -- Expedition methods (PR 3) -----------------------------------------------------------
+  async getMergeability(repo: string, pr: number): Promise<Mergeability> {
+    const [owner, name] = split(repo);
+    const { data } = await this.kit.pulls.get({ owner, repo: name, pull_number: pr });
+    return {
+      state: mapMergeableState(data.mergeable_state),
+      mergeable: data.mergeable,
+      draft: data.draft ?? false,
+      baseRef: data.base.ref,
+      headSha: data.head.sha,
+    };
+  }
+  async getChecks(repo: string, ref: string): Promise<CheckResult[]> {
+    const [owner, name] = split(repo);
+    const [runs, statusResponse] = await Promise.all([
+      // Relies on GitHub's default filter=latest (only the latest run per check name, not every
+      // historical run for this ref). That default is load-bearing for this method's contract:
+      // "current state of each check", not a full history.
+      this.kit.paginate(this.kit.checks.listForRef, { owner, repo: name, ref, per_page: 100 }),
+      // Not run through kit.paginate: the combined-status body carries a top-level `url` key
+      // alongside `total_count`, so octokit.paginate's search-shaped normalization (which
+      // requires `total_count` WITHOUT a sibling `url`, see normalizePaginatedListResponse in
+      // @octokit/plugin-paginate-rest) is skipped for it; a manual link-following loop would be
+      // needed to paginate it. Out of scope for v1: a ref rarely has more than 100 distinct
+      // status contexts.
+      this.kit.repos.getCombinedStatusForRef({ owner, repo: name, ref, per_page: 100 }),
+    ]);
+    const fromRuns: CheckResult[] = runs.map((r) => ({ name: r.name, status: checkRunStatus(r.conclusion) }));
+    const fromStatuses: CheckResult[] = statusResponse.data.statuses.map((s) => ({ name: s.context, status: commitStatusStatus(s.state) }));
+    return [...fromRuns, ...fromStatuses];
+  }
+  async getBranchProtection(repo: string, branch: string): Promise<BranchProtectionSummary | "none" | "unknown"> {
+    const [owner, name] = split(repo);
+    try {
+      const { data } = await this.kit.repos.getBranchProtection({ owner, repo: name, branch });
+      return {
+        requiresPullRequestReviews: data.required_pull_request_reviews != null,
+        requiredApprovingReviewCount: data.required_pull_request_reviews?.required_approving_review_count ?? 0,
+        // `contexts` is the older field; `checks` is the modern replacement (supports multiple
+        // apps producing the same-named check). Fall back to deriving from `checks` so a branch
+        // protected only via the modern field is not reported as requiring nothing.
+        requiredChecks: data.required_status_checks?.contexts ?? data.required_status_checks?.checks?.map((c) => c.context) ?? [],
+        enforceAdmins: data.enforce_admins?.enabled ?? false,
+        requiresConversationResolution: data.required_conversation_resolution?.enabled ?? false,
+      };
+    } catch (e: any) {
+      if (e.status === 404) return "none"; // branch has no protection configured
+      // 403: the token lacks permission to read protection settings on this branch. The caller
+      // cannot distinguish "protected but invisible to me" from "unprotected", so it must fail
+      // closed rather than guess.
+      if (e.status === 403) return "unknown";
+      throw e;
+    }
+  }
+  async mergePull(repo: string, pr: number, opts: { sha: string; method?: "merge" | "squash" | "rebase"; commitTitle?: string }): Promise<{ merged: boolean; sha: string | null; message: string; reason: "head-moved" | "not-mergeable" | null }> {
+    const [owner, name] = split(repo);
+    try {
+      // `method` defaults to "merge" here only as a safety net; flows (PR 4) pass it explicitly
+      // from config, so this default is never meant to encode a policy preference.
+      const { data } = await this.kit.pulls.merge({
+        owner, repo: name, pull_number: pr, sha: opts.sha, merge_method: opts.method ?? "merge",
+        commit_title: opts.commitTitle,
+      });
+      return { merged: data.merged, sha: data.sha, message: data.message, reason: null };
+    } catch (e: any) {
+      // 405: the PR is not in a mergeable state. 409: `sha` no longer matches the PR's current
+      // head (GitHub's own head-race guard). Both are expected "could not merge" outcomes, not
+      // exceptional failures, so they return a value instead of throwing. `reason` lets callers
+      // react differently (e.g. re-fetch and re-evaluate on a moved head vs. give up on 405).
+      if (e.status === 409) return { merged: false, sha: null, message: e.message ?? "", reason: "head-moved" };
+      if (e.status === 405) return { merged: false, sha: null, message: e.message ?? "", reason: "not-mergeable" };
+      throw e;
+    }
+  }
+  async updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict"> {
+    const [owner, name] = split(repo);
+    try {
+      await this.kit.pulls.updateBranch({
+        owner, repo: name, pull_number: pr,
+        ...(expectedHeadSha ? { expected_head_sha: expectedHeadSha } : {}),
+      });
+      return "updated";
+    } catch (e: any) {
+      // 422 covers both an actual conflict updating the branch and an expected_head_sha
+      // mismatch; GitHub does not distinguish the two with different status codes.
+      if (e.status === 422) return "conflict";
+      throw e;
+    }
+  }
+  async listPullFilesDetailed(repo: string, pr: number): Promise<DetailedPullFile[]> {
+    const [owner, name] = split(repo);
+    const items = await this.kit.paginate(this.kit.pulls.listFiles, { owner, repo: name, pull_number: pr, per_page: 100 });
+    return items.map((f) => ({ filename: f.filename, status: f.status, additions: f.additions, deletions: f.deletions, patch: f.patch }));
+  }
+  async removeLabel(repo: string, pr: number, label: string): Promise<void> {
+    const [owner, name] = split(repo);
+    try {
+      await this.kit.issues.removeLabel({ owner, repo: name, issue_number: pr, name: label });
+    } catch (e: any) { if (e.status === 404) return; throw e; } // already absent
+  }
+  async listRequestedReviewers(repo: string, pr: number): Promise<{ users: string[]; teams: string[] }> {
+    const [owner, name] = split(repo);
+    const { data } = await this.kit.pulls.listRequestedReviewers({ owner, repo: name, pull_number: pr });
+    return { users: (data.users ?? []).map((u) => u.login), teams: (data.teams ?? []).map((t) => t.slug) };
+  }
+  async addAssignees(repo: string, pr: number, assignees: string[]): Promise<void> {
+    const [owner, name] = split(repo);
+    await this.kit.issues.addAssignees({ owner, repo: name, issue_number: pr, assignees });
+  }
+  async getActorType(login: string): Promise<"User" | "Bot" | "Organization" | "unknown"> {
+    try {
+      const { data } = await this.kit.users.getByUsername({ username: login });
+      switch (data.type) {
+        case "User": return "User";
+        case "Bot": return "Bot";
+        case "Organization": return "Organization";
+        default: return "unknown";
+      }
+    } catch (e: any) {
+      if (e.status === 404) return "unknown";
+      throw e;
+    }
+  }
+  async listOpenSecurityAlertCount(repo: string): Promise<number | null> {
+    const [owner, name] = split(repo);
+    try {
+      const items = await this.kit.paginate(this.kit.dependabot.listAlertsForRepo, { owner, repo: name, state: "open", per_page: 100 });
+      return items.length;
+    } catch (e: any) {
+      // 403/404: Dependabot alerts are disabled or the token lacks access. 451: repository
+      // access is blocked (e.g. a legal takedown). Callers must treat null as fail-closed for
+      // any auto-merge decision: "we don't know" is never the same as "safe".
+      if (e.status === 403 || e.status === 404 || e.status === 451) return null;
+      throw e;
+    }
   }
 }
