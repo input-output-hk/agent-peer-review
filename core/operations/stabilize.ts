@@ -1,7 +1,17 @@
 import type { GitHubGateway } from "../github.js";
 
 export interface StabilizeResult {
-  status: "up-to-date" | "updated" | "conflict" | "blocked" | "draft";
+  /**
+   * `gone` and `blocked` are deliberately separate, and callers must not conflate them.
+   *
+   * `gone` means the pull request is closed or merged: there is nothing left to do with it, ever.
+   * `blocked` means the pull request is OPEN and healthy enough to work on, but its mergeable state
+   * is one syncing cannot change ("blocked", "unstable", "unknown"). On a protected repository
+   * "blocked" is the everyday state of a pull request whose required review has not been submitted
+   * yet, so a caller that treats it as terminal would abandon precisely the pull requests that need
+   * a review requested.
+   */
+  status: "up-to-date" | "updated" | "conflict" | "blocked" | "draft" | "gone";
   detail: string;
 }
 
@@ -26,7 +36,7 @@ export async function stabilize(gh: GitHubGateway, input: { repo: string; pr: nu
   // gate-consuming operations make: a closed or merged pull request must never be pushed to.
   const pull = await gh.getPullRequest(repo, pr);
   if (pull.state !== "open") {
-    return { status: "blocked", detail: `the pull request is ${pull.state}, not open; there is nothing to sync` };
+    return { status: "gone", detail: `the pull request is ${pull.state}, not open; there is nothing to sync` };
   }
 
   const mergeability = await gh.getMergeability(repo, pr);
@@ -54,8 +64,10 @@ export async function stabilize(gh: GitHubGateway, input: { repo: string; pr: nu
       return { status: "conflict", detail: `the branch has merge conflicts with ${mergeability.baseRef} that only the author can resolve` };
     default:
       // "blocked" (a required review or check is missing), "unstable" (a non-required check is
-      // failing), and "unknown" (GitHub has not finished computing mergeability, or the pull
-      // request is closed). None of them is a sync problem, so syncing would not help.
+      // failing), and "unknown" (GitHub has not finished computing mergeability yet). None of them
+      // is a sync problem, so syncing would not help, and none of them means the pull request is
+      // finished: all three describe an OPEN pull request that still wants attention. A closed or
+      // merged pull request never reaches here; it returned "gone" above.
       return { status: "blocked", detail: `mergeable state is ${mergeability.state}; stabilize cannot change that` };
   }
 }

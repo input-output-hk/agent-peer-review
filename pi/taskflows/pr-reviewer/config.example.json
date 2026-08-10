@@ -1,0 +1,5 @@
+{
+  "_setup": "Copy this whole directory and pr-reviewer.json and pr-reviewer.meta.json into your repository's .pi/taskflows/, rename this file to config.json, and list your repositories. The flow needs pi-taskflow installed in the host: pi install npm:pi-taskflow.",
+  "_comment_repos": "Every repository the flow looks in for reviews requested from you and for pull requests you already reviewed, as owner/name.",
+  "repos": ["owner/name"]
+}

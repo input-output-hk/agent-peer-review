@@ -1,0 +1,47 @@
+{
+  "name": "pr-steward",
+  "description": "Steward the bot dependency upgrades: ask the dependency gate for a verdict on every open bot pull request and post what it decided (propose by default).",
+  "version": 1,
+  "concurrency": 4,
+  "strictInterpolation": true,
+  "args": {
+    "autonomy": {
+      "type": "enum",
+      "values": ["propose", "auto"],
+      "default": "propose",
+      "description": "propose (the default) posts a recommendation and merges nothing. auto is an explicit per-invocation opt-in; the ten-rail safety gate still decides."
+    }
+  },
+  "phases": [
+    {
+      "id": "discover",
+      "type": "script",
+      "run": ["node", ".pi/taskflows/pr-steward/discover.mjs"],
+      "timeout": 300000
+    },
+    {
+      "id": "process",
+      "type": "map",
+      "over": "{steps.discover.json}",
+      "as": "item",
+      "agent": "executor",
+      "dependsOn": ["discover"],
+      "idempotent": false,
+      "optional": true,
+      "timeout": 900000,
+      "idleTimeout": 600000,
+      "context": [".pi/taskflows/pr-steward/instructions.md"],
+      "contextLimit": 20000,
+      "task": "You are stewarding one open dependency-upgrade pull request opened by a bot.\n\nPull request: {item.repo} #{item.number}\nAuthor: {item.author}\nHead commit: {item.headSha}\nTitle: {item.title}\nURL: {item.url}\nAutonomy for this run: {args.autonomy}\n\nThe instructions file above is your contract. Follow it exactly: it names the only tool you may use and the single result line you must print last. Work on this pull request only.\n\nPass autonomy \"{args.autonomy}\" to the tool. Never use gh, git, or any other command to merge, approve, comment on, or label."
+    },
+    {
+      "id": "summarize",
+      "type": "script",
+      "run": ["node", ".pi/taskflows/pr-steward/summarize.mjs"],
+      "input": "{steps.process.output}",
+      "dependsOn": ["process"],
+      "timeout": 60000,
+      "final": true
+    }
+  ]
+}

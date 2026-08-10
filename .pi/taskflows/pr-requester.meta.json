@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Move my own open pull requests forward: stabilize the branch, ask the expedition gate for a verdict, and route anything carrying real code to an agent peer review.",
+  "tags": ["pull-request", "expedition", "agent-peer-review", "propose-only"],
+  "notes": "Propose-only by default. Pass autonomy=auto per invocation to let the gate consider a merge. Configure the repositories in .pi/taskflows/pr-requester/config.json.",
+  "phaseSignature": "script→map→script",
+  "phaseCount": 3,
+  "agentUsage": ["executor"],
+  "version": 1
+}

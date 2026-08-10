@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "engines": { "node": ">=22" },
-  "files": ["dist", "skills"],
+  "files": ["dist", "skills", "taskflows"],
   "keywords": ["pi-package"],
   "publishConfig": { "registry": "https://npm.pkg.github.com" },
   "pi": { "extensions": ["./dist/extension.js"], "skills": ["./skills"] },

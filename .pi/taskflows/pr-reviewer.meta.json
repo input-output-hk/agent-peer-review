@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Work the reviewer side: claim and complete the reviews requested from me, and decide what to do next about the pull requests I have already reviewed.",
+  "tags": ["pull-request", "code-review", "agent-peer-review", "propose-only"],
+  "notes": "Never merges. Reviews are posted through review_claim and review_complete only. Configure the repositories in .pi/taskflows/pr-reviewer/config.json.",
+  "phaseSignature": "script→map→script",
+  "phaseCount": 3,
+  "agentUsage": ["executor"],
+  "version": 1
+}

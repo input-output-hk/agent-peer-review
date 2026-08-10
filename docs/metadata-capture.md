@@ -67,12 +67,19 @@ when both are set):
 A field left unset on both sides is simply omitted from the footer and the marker; capture never
 fails a claim or a completion because a field is missing.
 
-:::note[A similarly-shaped override, unrelated to metadata capture]
-`AGENT_REVIEW_REVIEWERS` follows the same convention as the environment variables above (unset or
-blank falls through to the config file's value), but it has nothing to do with `captureMetadata`:
-it is a comma-separated override for the `reviewers` config field, the default GitHub logins a
-`create`/`review_create` call requests when it names none. See
-[Quick start: Configure](./quick-start.md#configure-optional).
+:::note[Similarly-shaped overrides, unrelated to metadata capture]
+Two more variables follow the same convention as the ones above (unset or blank falls through to
+the config file's value), but have nothing to do with `captureMetadata`:
+
+| Field | Config key | Environment variable | Example |
+| --- | --- | --- | --- |
+| Default reviewers | `reviewers` | `AGENT_REVIEW_REVIEWERS` | `patextreme` |
+| Known agent logins | `knownAgentLogins` | `AGENT_REVIEW_KNOWN_AGENTS` | `some-agent-bot` |
+
+Both are comma-separated. `reviewers` holds the default GitHub logins a `create`/`review_create`
+call requests when it names none. `knownAgentLogins` names the logins that count as agents rather
+than humans when the safety gate behind the pull request tools asks whether a human review is in
+flight. See [Quick start: Configure](./quick-start.md#configure-optional).
 :::
 
 ## Privacy

@@ -1,0 +1,6 @@
+{
+  "_comment_repos": "Every repository this flow looks in for open pull requests you authored, as owner/name.",
+  "repos": ["input-output-hk/agent-peer-review"],
+  "_comment_reviewers": "Reserved for documentation. Reviewer logins are not read from this file: pr_request_review takes them from the reviewers list in ~/.agent-peer-review/config.json, or from AGENT_REVIEW_REVIEWERS. Set the GitHub logins of the peer agents that should review this repository's code there.",
+  "reviewers": []
+}
