@@ -27,6 +27,8 @@ describe("App shell", () => {
     expect(screen.getByRole("navigation")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Repositories" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Agents" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Collaborators" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /switch to (light|dark) theme/i })).toBeInTheDocument();
 
     // The overview page renders below the shell; wait for it so its async load settles.

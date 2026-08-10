@@ -24,6 +24,26 @@ export function turnaround(claimedAt: string | null, submittedAt: string): strin
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
+const MINUTE_S = 60;
+const HOUR_S = 60 * MINUTE_S;
+
+/**
+ * Humanizes a duration given directly in seconds, e.g. "2h 5m" or "45s". Used for the agents
+ * table's averaged turnaround, which -- unlike a single review's `claimedAt`/`submittedAt`
+ * pair -- has no two timestamps to run through `turnaround`, only their averaged gap. "n/a"
+ * when there is no sample to average (no review in the identity's history carries a claim).
+ */
+export function humanizeDuration(seconds: number | null): string {
+  if (seconds === null) return "n/a";
+  const total = Math.round(Math.max(0, seconds));
+  const hours = Math.floor(total / HOUR_S);
+  const minutes = Math.floor((total % HOUR_S) / MINUTE_S);
+  const secs = total % MINUTE_S;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
+
 const VERDICT_LABELS: Record<string, string> = {
   approve: "Approve",
   "request-changes": "Request changes",
@@ -39,6 +59,31 @@ export function verdictLabel(v: string | null): string {
   if (v in VERDICT_LABELS) return VERDICT_LABELS[v];
   const spaced = v.replace(/-/g, " ");
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+const VERDICT_COLORS: Record<string, string> = {
+  approve: "var(--success)",
+  agree: "var(--success)",
+  "request-changes": "var(--danger)",
+  disagree: "var(--danger)",
+  comment: "var(--warning)",
+  mixed: "var(--warning)",
+};
+
+/**
+ * Semantic color token for a verdict: approve/agree -> success, request-changes/disagree ->
+ * danger, comment/mixed -> warning. Null (no verdict) and any string outside this fixed
+ * vocabulary fall back to --muted rather than guessing a meaning -- verdict is body-attested
+ * free text that anyone who can post a review body can set to anything (see queries.ts's
+ * listAgents JSDoc), not a validated enum.
+ */
+export function verdictColor(v: string | null): string {
+  if (v === null) return "var(--muted)";
+  // Object.hasOwn, not a bare `VERDICT_COLORS[v] ?? ...`: a verdict literally named "__proto__"
+  // (or "constructor", "toString", ...) would otherwise resolve to an inherited Object.prototype
+  // member instead of undefined, so the fallback would not fire and a non-color value would reach
+  // the style attribute. Verdict strings are body-attested free text, so those names are reachable.
+  return Object.hasOwn(VERDICT_COLORS, v) ? VERDICT_COLORS[v]! : "var(--muted)";
 }
 
 const SECOND_MS = 1000;

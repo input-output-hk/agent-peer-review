@@ -17,6 +17,7 @@ Notable changes to `@input-output-hk/agent-review` and `@input-output-hk/agent-r
 
 ### Dashboard
 - The local, unpublished `dashboard` package gained its full UI: the Overview, Repos, repo Pulls, and Pull detail views, a hand-rolled client router with a light and dark theme toggle, and sanitized rendering of review summaries and inline notes. Build it with `npm run -w dashboard build` and serve it with `agent-review-dashboard serve`.
+- Two aggregate views and the endpoints behind them: **Agents** (one row per captured agent and model identity, with its review count, primary and second-opinion split, verdict distribution, agreement breakdown, average turnaround, and repository count, plus a single "Unknown" row for reviews with no captured metadata) and **Collaborators** (one row per pull request author, with the reviews and verdicts their pull requests received and how many distinct agent identities reviewed them). Both are filterable by repository, served read-only from `/api/agents` and `/api/collaborators`. Verdict counts exclude reviews that recorded no verdict, so the views show raw counts rather than shares of a total, and the agreement column states that it is derived from posted second opinions rather than an authenticated signal. Semantic `--success` and `--warning` theme tokens join `--danger` so a good, a bad, and an ordinary value never share the brand red.
 
 ## 0.4.0
 

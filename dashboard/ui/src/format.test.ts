@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shortDate, turnaround, verdictLabel, relativeTime } from "./format";
+import { shortDate, turnaround, verdictLabel, verdictColor, humanizeDuration, relativeTime } from "./format";
 
 describe("shortDate", () => {
   it("returns a compact YYYY-MM-DD for a known ISO timestamp", () => {
@@ -47,6 +47,49 @@ describe("verdictLabel", () => {
 
   it("returns \"Unknown\" for null", () => {
     expect(verdictLabel(null)).toBe("Unknown");
+  });
+});
+
+describe("verdictColor", () => {
+  it.each([
+    ["approve", "var(--success)"],
+    ["agree", "var(--success)"],
+    ["request-changes", "var(--danger)"],
+    ["disagree", "var(--danger)"],
+    ["comment", "var(--warning)"],
+    ["mixed", "var(--warning)"],
+  ])("colors %s as %s", (input, expected) => {
+    expect(verdictColor(input)).toBe(expected);
+  });
+
+  it("returns --muted for null", () => {
+    expect(verdictColor(null)).toBe("var(--muted)");
+  });
+
+  it("returns --muted for a verdict outside the fixed vocabulary", () => {
+    expect(verdictColor("__proto__")).toBe("var(--muted)");
+  });
+});
+
+describe("humanizeDuration", () => {
+  it("formats hours and minutes for a known duration", () => {
+    expect(humanizeDuration(7500)).toBe("2h 5m");
+  });
+
+  it("formats minutes and seconds when under an hour", () => {
+    expect(humanizeDuration(125)).toBe("2m 5s");
+  });
+
+  it("formats seconds only when under a minute", () => {
+    expect(humanizeDuration(45)).toBe("45s");
+  });
+
+  it("returns \"n/a\" for null", () => {
+    expect(humanizeDuration(null)).toBe("n/a");
+  });
+
+  it("clamps a negative duration to zero", () => {
+    expect(humanizeDuration(-5)).toBe("0s");
   });
 });
 
