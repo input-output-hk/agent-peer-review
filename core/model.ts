@@ -16,6 +16,12 @@ export const ConfigSchema = z.object({
   // does not name any. Each adapter falls back to this list; ReviewRequestSchema.reviewers below
   // still requires at least one reviewer once the fallback is applied.
   reviewers: z.array(z.string().min(1)).default([]),
+  // Logins the expedition human-review rail treats as agents; any login NOT listed counts as a
+  // human (conservative; see core/expedition/human-review.ts). Fed to `expedite`,
+  // `approveDependencyUpgrade`, and `pr_watch` by the adapters. Never fed autonomy: asking for a
+  // merge is a per-invocation argument (the shipped pr-requester/pr-reviewer/pr-steward taskflows
+  // pass their own `autonomy` flow argument down to the tool), never a value read from this config.
+  knownAgentLogins: z.array(z.string().min(1)).default([]),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

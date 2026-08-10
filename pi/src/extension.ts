@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { hostname } from "node:os";
 import {
   loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, enrichReview, bootstrap,
+  stabilize, expedite, requestPeerReview, approveDependencyUpgrade, watchAndReReview, DEFAULT_GATE_POLICY,
   type GitHubGateway, type Config,
 } from "@input-output-hk/agent-review";
 
@@ -48,6 +49,110 @@ export function registerTools(
   pi.registerTool({ name: "labels_bootstrap", label: "Bootstrap labels", description: "Idempotently create/update the ai-review + skill labels.",
     parameters: Type.Object({ repo: Type.String() }),
     async execute(_id, p) { return ok(await bootstrap(gh(), { repo: p.repo })); } });
+
+  pi.registerTool({ name: "pr_stabilize", label: "Stabilize a PR", description: "Sync a PR with its base branch.",
+    parameters: Type.Object({ repo: Type.String(), pr: Type.Number() }),
+    async execute(_id, p) { return ok(await stabilize(gh(), { repo: p.repo, pr: p.pr })); } });
+
+  // pr_expedite and pr_approve_dep_upgrade below both take "autonomy" as an explicit tool
+  // parameter, defaulting to "propose", and NEVER read it from the global config. Asking for a merge
+  // is a per-invocation argument, not a setting: the shipped pr-requester/pr-reviewer/pr-steward
+  // taskflows pass it down from their own `autonomy` flow argument (default "propose"), so it is
+  // visible in the run that used it. A global config flag would instead switch every repository the
+  // tool touches into auto-merge at once, silently, which is why no config path reaches this.
+  pi.registerTool({
+    name: "pr_expedite",
+    label: "Expedite a PR",
+    description: "Evaluate the expedition gate; propose (default) or, only when explicitly asked, auto-merge a trivial change.",
+    parameters: Type.Object({
+      repo: Type.String(),
+      pr: Type.Number(),
+      autonomy: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("propose")])),
+      mergeMethod: Type.Optional(Type.Union([Type.Literal("merge"), Type.Literal("squash"), Type.Literal("rebase")])),
+      maxFiles: Type.Optional(Type.Integer({
+        minimum: 1,
+        description: `At most the default max files cap (${DEFAULT_GATE_POLICY.maxFiles}); narrows the size rail, never widens it.`,
+      })),
+      maxLines: Type.Optional(Type.Integer({
+        minimum: 1,
+        description: `At most the default max lines cap (${DEFAULT_GATE_POLICY.maxLines}); narrows the size rail, never widens it.`,
+      })),
+    }),
+    async execute(_id, p) {
+      // Clamped, never widened: a maxFiles/maxLines the caller supplies can only tighten the
+      // default size rail. Widening the blast-radius cap is a human/config decision, not
+      // something the calling model may grant itself in the same call that requests a merge.
+      const policy = p.maxFiles !== undefined || p.maxLines !== undefined
+        ? {
+          maxFiles: p.maxFiles === undefined ? undefined : Math.min(p.maxFiles, DEFAULT_GATE_POLICY.maxFiles),
+          maxLines: p.maxLines === undefined ? undefined : Math.min(p.maxLines, DEFAULT_GATE_POLICY.maxLines),
+        }
+        : undefined;
+      return ok(await expedite(gh(), {
+        repo: p.repo, pr: p.pr, now: new Date().toISOString(),
+        autonomy: p.autonomy ?? "propose", mergeMethod: p.mergeMethod, policy,
+        knownAgentLogins: cfg().knownAgentLogins,
+      }));
+    },
+  });
+
+  pi.registerTool({
+    name: "pr_request_review", label: "Request a peer review",
+    description: "Request an agent peer review (idempotent); reviewers default to the configured \"reviewers\" when omitted.",
+    parameters: Type.Object({
+      repo: Type.String(), pr: Type.Number(),
+      skills: Type.Optional(Type.Array(Type.String())),
+      reviewers: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    }),
+    async execute(_id, p) {
+      const reviewers = p.reviewers?.length ? p.reviewers : cfg().reviewers;
+      if (reviewers.length === 0) {
+        throw new Error('No reviewers: pass "reviewers" or set a default "reviewers" in ~/.agent-peer-review/config.json');
+      }
+      return ok(await requestPeerReview(gh(), { repo: p.repo, pr: p.pr, reviewers, skills: p.skills }));
+    },
+  });
+
+  // See the note above pr_expedite: autonomy is an explicit parameter here too, defaulting to
+  // "propose", and is never read from the global config.
+  pi.registerTool({
+    name: "pr_approve_dep_upgrade",
+    label: "Approve a dependency upgrade",
+    description: "Evaluate a bot dependency-upgrade PR; propose (default) or, only when explicitly asked, approve and merge.",
+    parameters: Type.Object({
+      repo: Type.String(),
+      pr: Type.Number(),
+      autonomy: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("propose")])),
+      mergeMethod: Type.Optional(Type.Union([Type.Literal("merge"), Type.Literal("squash"), Type.Literal("rebase")])),
+      botAllowlist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    }),
+    async execute(_id, p) {
+      return ok(await approveDependencyUpgrade(gh(), {
+        repo: p.repo, pr: p.pr, now: new Date().toISOString(),
+        autonomy: p.autonomy ?? "propose", mergeMethod: p.mergeMethod, botAllowlist: p.botAllowlist,
+        knownAgentLogins: cfg().knownAgentLogins,
+      }));
+    },
+  });
+
+  pi.registerTool({
+    name: "pr_watch",
+    label: "Watch a reviewed PR",
+    description: "Decide the reviewer watch action for a PR I reviewed (re-review / wait / hold-for-human / abandoned / approved / none).",
+    parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), maxReviewRounds: Type.Optional(Type.Integer({ minimum: 1 })) }),
+    async execute(_id, p) {
+      // Same login resolution as the CLI: the configured login wins, falling back to the token's
+      // own login. A single gateway instance is reused for both calls: the default deps.gh
+      // factory (`() => new OctokitGateway()`) builds a brand-new client on every call, so
+      // calling gh() twice here would resolve the login on one client and act on another.
+      const github = gh();
+      const config = cfg();
+      const myLogin = config.githubLogin ?? await github.getAuthenticatedLogin();
+      return ok(await watchAndReReview(github, {
+        repo: p.repo, pr: p.pr, myLogin, maxReviewRounds: p.maxReviewRounds, knownAgentLogins: config.knownAgentLogins,
+      }));
+    },
+  });
 }
 
 export default function (pi: ExtensionAPI): void {

@@ -7,7 +7,7 @@ import TabItem from '@theme/TabItem';
 
 # pi.dev integration
 
-`@input-output-hk/agent-review-pi` is a Pi Package: a small TypeScript extension that registers the same six review operations as native tools inside [pi.dev](https://pi.dev) (`@earendil-works/pi-coding-agent`), plus an `agent-review` skill that drives the claim-review-complete loop. It is a thin adapter over the `@input-output-hk/agent-review` core, the same core the CLI and the MCP server use, so a Claude host, a Codex host, and a pi.dev host all see identical review instructions.
+`@input-output-hk/agent-review-pi` is a Pi Package: a small TypeScript extension that registers eleven tools inside [pi.dev](https://pi.dev) (`@earendil-works/pi-coding-agent`), plus an `agent-review` skill that drives the claim-review-complete loop. Six of them are the review operations the CLI and the MCP server also expose; the other five drive pull requests forward and are unique to this package. It is a thin adapter over the `@input-output-hk/agent-review` core, the same core the CLI and the MCP server use, so a Claude host, a Codex host, and a pi.dev host all see identical review instructions.
 
 ## Install
 
@@ -15,14 +15,14 @@ import TabItem from '@theme/TabItem';
 pi install npm:@input-output-hk/agent-review-pi
 ```
 
-This registers the extension (the six tools below) and the bundled `agent-review` skill with your pi.dev host in one step. Point npm at GitHub Packages first, the same as for the core package (see [Quick start](./quick-start.md#install)):
+This registers the extension (the eleven tools below) and the bundled `agent-review` skill with your pi.dev host in one step. Point npm at GitHub Packages first, the same as for the core package (see [Quick start](./quick-start.md#install)):
 
 ```ini
 @input-output-hk:registry=https://npm.pkg.github.com
 //npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
 ```
 
-## The six tools
+## The review tools
 
 Same operations, same core, same result shape as the [MCP reference](./mcp.md): every tool returns a single text content block holding pretty-printed JSON.
 
@@ -37,9 +37,25 @@ Same operations, same core, same result shape as the [MCP reference](./mcp.md): 
 
 Input fields are identical to the [MCP reference's input fields](./mcp.md#input-fields); only the transport differs.
 
+## The pull request tools
+
+Five more tools have no MCP or CLI counterpart. They move a pull request forward instead of reviewing one, and every decision that could merge, approve, or comment goes through the central safety gate first. All of them return pretty-printed JSON in a single text block, the same as the review tools.
+
+| Tool | Purpose |
+| --- | --- |
+| `pr_stabilize` | Sync a pull request's branch with its base branch, and report what stands in the way when it cannot be done. |
+| `pr_expedite` | Evaluate the expedition gate, then propose the merge in a comment (the default) or, only when explicitly asked, merge a trivial change. |
+| `pr_request_review` | Request an agent peer review, at most once per round. Reviewers default to the configured `reviewers` when omitted. |
+| `pr_approve_dep_upgrade` | Evaluate a bot dependency-upgrade pull request, then propose (the default) or, only when explicitly asked, approve and merge it. |
+| `pr_watch` | Decide the reviewer's next action for a pull request this agent already reviewed: `re-review`, `wait`, `hold-for-human`, `abandoned`, `approved`, or `none`. Reads only. |
+
+`pr_expedite` and `pr_approve_dep_upgrade` take an `autonomy` parameter that defaults to `propose` and is never read from the config file, so a caller has to ask for the merge path explicitly on every single call. Their optional `maxFiles` and `maxLines` parameters can only tighten the default size caps, never widen them.
+
+These five are what the three [expedition taskflows](./taskflows.md) call. The flows are the scheduled way to use them across a set of repositories, and they default to propose-only as well.
+
 ## The `agent-review` skill
 
-The package bundles a Pi skill, `skills/agent-review/SKILL.md`, that describes the reviewer loop in terms of the tools above: list open requests, claim one (which pins a commit SHA and returns `instructions` plus auto-detected `languages` and `repoContext`), review the diff at the pinned SHA against everything the claim served, then finish as the anchor (`review_complete`) or as a second reviewer (`review_enrich`). It also reads the local checkout directly for repo-specific conventions, and never merges; humans own merge decisions. pi.dev loads the skill automatically once the package is installed, no extra configuration needed.
+The package bundles a Pi skill, `skills/agent-review/SKILL.md`, that describes the reviewer loop in terms of the review tools above: list open requests, claim one (which pins a commit SHA and returns `instructions` plus auto-detected `languages` and `repoContext`), review the diff at the pinned SHA against everything the claim served, then finish as the anchor (`review_complete`) or as a second reviewer (`review_enrich`). It also reads the local checkout directly for repo-specific conventions. A review never merges: the reviewer's job ends at the verdict, and merge decisions belong to the pull request tools above, which propose by default. pi.dev loads the skill automatically once the package is installed, no extra configuration needed.
 
 ## Config
 

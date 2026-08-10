@@ -5,7 +5,7 @@ import type { Config } from "../core/index.js";
 import { buildServer } from "../mcp/server.js";
 import { FakeGitHubGateway } from "./fakes/fake-github.js";
 
-const baseConfig: Config = { githubLogin: null, skillsDir: null, runChecks: false, captureMetadata: false, reviewers: [] };
+const baseConfig: Config = { githubLogin: null, skillsDir: null, runChecks: false, captureMetadata: false, reviewers: [], knownAgentLogins: [] };
 
 // Connects a real MCP Client to buildServer()'s McpServer over an in-memory transport pair, so
 // review_create's zod input schema and handler run exactly as they would for a real host, with no

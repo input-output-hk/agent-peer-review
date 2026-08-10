@@ -45,12 +45,21 @@ describe("stabilize", () => {
     expect(gh.updateBranchCalls).toEqual([]);
   });
 
+  // These three states describe an OPEN pull request that syncing cannot help. They are reported as
+  // "blocked", never as "gone": on a protected repository "blocked" is the everyday state of a pull
+  // request whose required review has not been submitted yet, so a caller that read it as terminal
+  // would abandon exactly the pull requests that still need a review requested.
   it.each(["blocked", "unstable", "unknown"] as const)("reports blocked for a %s state, naming it, and mutates nothing", async (state) => {
     const gh = seed(state);
     const result = await stabilize(gh, { repo: REPO, pr: 1 });
     expect(result.status).toBe("blocked");
     expect(result.detail).toContain(state);
     expect(gh.updateBranchCalls).toEqual([]);
+  });
+
+  it("keeps blocked distinct from gone: an open blocked pull request is never reported as gone", async () => {
+    const gh = seed("blocked");
+    expect((await stabilize(gh, { repo: REPO, pr: 1 })).status).not.toBe("gone");
   });
 
   describe("drafts", () => {
@@ -69,14 +78,22 @@ describe("stabilize", () => {
 
   describe("pull request state", () => {
     // stabilize is the one operation that writes without first consulting the gate, so it owes the
-    // same liveness check: a closed or merged pull request must never be pushed to.
-    it.each(["closed", "merged"] as const)("reports blocked for a %s pull request and syncs nothing", async (state) => {
+    // same liveness check: a closed or merged pull request must never be pushed to. It reports
+    // "gone" rather than "blocked" so a caller can tell "this is over" from "this is open and
+    // waiting on something syncing cannot fix"; only "gone" is terminal.
+    it.each(["closed", "merged"] as const)("reports gone for a %s pull request and syncs nothing", async (state) => {
       const gh = seed("behind");
       gh.prs.get("o/r#1")!.state = state;
       const result = await stabilize(gh, { repo: REPO, pr: 1 });
-      expect(result.status).toBe("blocked");
+      expect(result.status).toBe("gone");
       expect(result.detail).toContain(state);
       expect(gh.updateBranchCalls).toEqual([]);
+    });
+
+    it("checks liveness before mergeability, so a closed pull request is gone whatever its state says", async () => {
+      const gh = seed("blocked");
+      gh.prs.get("o/r#1")!.state = "closed";
+      expect((await stabilize(gh, { repo: REPO, pr: 1 })).status).toBe("gone");
     });
   });
 

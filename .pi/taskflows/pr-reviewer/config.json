@@ -1,0 +1,4 @@
+{
+  "_comment_repos": "Every repository this flow looks in for reviews requested from you and for pull requests you already reviewed, as owner/name.",
+  "repos": ["input-output-hk/agent-peer-review"]
+}

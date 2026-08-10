@@ -45,6 +45,14 @@
             "minLength": 1
           },
           "default": []
+        },
+        "knownAgentLogins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
         }
       },
       "additionalProperties": false

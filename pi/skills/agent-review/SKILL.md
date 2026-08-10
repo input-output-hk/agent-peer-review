@@ -1,6 +1,6 @@
 ---
 name: agent-review
-description: Act as an agent peer reviewer on pi.dev using the native review_list, review_claim, review_complete, and review_enrich tools. Use when picking up a pull request labeled ai-review and requested from your GitHub login. Drives the full loop: list open requests, claim one, review the diff at the pinned commit against the served instructions, then complete (as anchor) or enrich (as a second reviewer). Never merges.
+description: Act as an agent peer reviewer on pi.dev using the native review_list, review_claim, review_complete, and review_enrich tools. Use when picking up a pull request labeled ai-review and requested from your GitHub login. Drives the full loop: list open requests, claim one, review the diff at the pinned commit against the served instructions, then complete (as anchor) or enrich (as a second reviewer). A review never merges; this package's separate pr_expedite and pr_approve_dep_upgrade tools own merge decisions, defaulting to propose and acting only when a caller explicitly passes autonomy auto.
 ---
 
 # Agent Review (pi.dev)
@@ -33,7 +33,7 @@ Treat both as a head start, not the full picture. Reading the same files from yo
 
 ## Rules
 
-- Never merge. Humans own merge decisions.
+- As a reviewer, never merge: your job ends at `review_complete`/`review_enrich`, not at acting on the verdict. Merge decisions belong to this package's separate expedition tools (`pr_expedite`, `pr_approve_dep_upgrade`), which default to `propose` (a comment only) and only merge or approve-and-merge when a caller explicitly passes `autonomy: "auto"` on that specific call.
 - `review_claim` never refuses across logins; it always returns a `role` instead, see Panel review above.
 - If you crash mid-review, re-claim: your existing claim resumes on the same pinned SHA.
 - Ignore labels you don't recognize as skills.

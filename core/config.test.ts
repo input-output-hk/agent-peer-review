@@ -26,12 +26,22 @@ describe("config", () => {
     expect(cfg.runChecks).toBe(false);
     expect(cfg.captureMetadata).toBe(false); // opt-in metadata capture is off unless set
     expect(cfg.reviewers).toEqual([]); // no default reviewers unless configured
+    expect(cfg.knownAgentLogins).toEqual([]); // no default known agents unless configured
   });
   it("parses reviewers from a config file", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
     const file = path.join(dir, "config.json");
     writeFileSync(file, JSON.stringify({ reviewers: ["patextreme", "yshyn-iohk"] }));
     expect(loadConfig(file).reviewers).toEqual(["patextreme", "yshyn-iohk"]);
+  });
+  it("parses knownAgentLogins from a config file", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, JSON.stringify({ knownAgentLogins: ["peer-bot", "yshyn-iohk"] }));
+    // Stubbed to unset (rather than relying on the ambient shell not exporting it) so this test
+    // reads the file value deterministically instead of an env override winning by accident.
+    vi.stubEnv("AGENT_REVIEW_KNOWN_AGENTS", "");
+    expect(loadConfig(file).knownAgentLogins).toEqual(["peer-bot", "yshyn-iohk"]);
   });
   it("reads model/agent/toolVersion/captureMetadata from env vars", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
@@ -101,6 +111,33 @@ describe("config", () => {
     const file = path.join(dir, "config.json");
     writeFileSync(file, "{}");
     expect(loadConfig(file).reviewers).toEqual([]);
+  });
+  it("AGENT_REVIEW_KNOWN_AGENTS parses a comma-separated list, trimming whitespace", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, "{}");
+    vi.stubEnv("AGENT_REVIEW_KNOWN_AGENTS", "peer-bot, review-bot ,  ci-bot");
+    expect(loadConfig(file).knownAgentLogins).toEqual(["peer-bot", "review-bot", "ci-bot"]);
+  });
+  it("a set AGENT_REVIEW_KNOWN_AGENTS overrides a config file's knownAgentLogins list", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, JSON.stringify({ knownAgentLogins: ["patextreme"] }));
+    vi.stubEnv("AGENT_REVIEW_KNOWN_AGENTS", "peer-bot");
+    expect(loadConfig(file).knownAgentLogins).toEqual(["peer-bot"]);
+  });
+  it("an empty-string AGENT_REVIEW_KNOWN_AGENTS does not clobber the config file value (regression)", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, JSON.stringify({ knownAgentLogins: ["patextreme"] }));
+    vi.stubEnv("AGENT_REVIEW_KNOWN_AGENTS", "");
+    expect(loadConfig(file).knownAgentLogins).toEqual(["patextreme"]);
+  });
+  it("an unset AGENT_REVIEW_KNOWN_AGENTS leaves the default [] in place", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cfg-"));
+    const file = path.join(dir, "config.json");
+    writeFileSync(file, "{}");
+    expect(loadConfig(file).knownAgentLogins).toEqual([]);
   });
   it("falls back to <agentHome>/config.json when no explicit path or AGENT_REVIEW_CONFIG is set", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "agent-home-"));

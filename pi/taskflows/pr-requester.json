@@ -1,0 +1,47 @@
+{
+  "name": "pr-requester",
+  "description": "Move my own open pull requests forward: sync each branch with its base, ask the expedition gate for a verdict (propose by default), and hand anything carrying real code to an agent peer review.",
+  "version": 1,
+  "concurrency": 4,
+  "strictInterpolation": true,
+  "args": {
+    "autonomy": {
+      "type": "enum",
+      "values": ["propose", "auto"],
+      "default": "propose",
+      "description": "propose (the default) posts a recommendation and merges nothing. auto is an explicit per-invocation opt-in; the ten-rail safety gate still decides."
+    }
+  },
+  "phases": [
+    {
+      "id": "discover",
+      "type": "script",
+      "run": ["node", ".pi/taskflows/pr-requester/discover.mjs"],
+      "timeout": 300000
+    },
+    {
+      "id": "process",
+      "type": "map",
+      "over": "{steps.discover.json}",
+      "as": "item",
+      "agent": "executor",
+      "dependsOn": ["discover"],
+      "idempotent": false,
+      "optional": true,
+      "timeout": 1200000,
+      "idleTimeout": 600000,
+      "context": [".pi/taskflows/pr-requester/instructions.md"],
+      "contextLimit": 20000,
+      "task": "You are expediting one open pull request that this account authored.\n\nPull request: {item.repo} #{item.number}\nHead commit: {item.headSha}\nTitle: {item.title}\nURL: {item.url}\nAutonomy for this run: {args.autonomy}\n\nThe instructions file above is your contract. Follow it exactly: it names the only tools you may use, the order to call them in, and the single result line you must print last. Work on this pull request only.\n\nPass autonomy \"{args.autonomy}\" to every tool that takes it. Never use gh, git, or any other command to merge, approve, comment on, label, or push."
+    },
+    {
+      "id": "summarize",
+      "type": "script",
+      "run": ["node", ".pi/taskflows/pr-requester/summarize.mjs"],
+      "input": "{steps.process.output}",
+      "dependsOn": ["process"],
+      "timeout": 60000,
+      "final": true
+    }
+  ]
+}

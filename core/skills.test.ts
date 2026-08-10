@@ -5,7 +5,7 @@ import path from "node:path";
 import { composeInstructions, hasSkill, composeLanguages } from "./skills.js";
 
 let dir: string;
-const cfg = () => ({ githubLogin: null, skillsDir: dir, runChecks: false, captureMetadata: false, reviewers: [] });
+const cfg = () => ({ githubLogin: null, skillsDir: dir, runChecks: false, captureMetadata: false, reviewers: [], knownAgentLogins: [] });
 beforeAll(() => {
   dir = mkdtempSync(path.join(tmpdir(), "skills-"));
   writeFileSync(path.join(dir, "review.md"), "# default review");

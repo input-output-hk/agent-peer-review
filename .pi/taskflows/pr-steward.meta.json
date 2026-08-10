@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Steward bot dependency upgrades: ask the dependency gate for a verdict on every open bot pull request and post what it decided.",
+  "tags": ["pull-request", "dependencies", "expedition", "propose-only"],
+  "notes": "Propose-only by default. Pass autonomy=auto per invocation to let the gate consider a merge. Configure the repositories and the bot allowlist in .pi/taskflows/pr-steward/config.json.",
+  "phaseSignature": "script→map→script",
+  "phaseCount": 3,
+  "agentUsage": ["executor"],
+  "version": 1
+}

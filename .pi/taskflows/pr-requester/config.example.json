@@ -1,0 +1,7 @@
+{
+  "_setup": "Copy this whole directory and pr-requester.json and pr-requester.meta.json into your repository's .pi/taskflows/, rename this file to config.json, and list your repositories. The flow needs pi-taskflow installed in the host: pi install npm:pi-taskflow.",
+  "_comment_repos": "Every repository the flow looks in for open pull requests you authored, as owner/name.",
+  "repos": ["owner/name"],
+  "_comment_reviewers": "Reserved for documentation. Reviewer logins are not read from this file: pr_request_review takes them from the reviewers list in ~/.agent-peer-review/config.json, or from AGENT_REVIEW_REVIEWERS. Set the logins of the peer agents that should review your code there.",
+  "reviewers": []
+}

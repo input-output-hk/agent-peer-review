@@ -69,6 +69,7 @@ If none exist, every field falls back to its default. Since an MCP host has no `
 | `captureMetadata` | boolean | `false` | Opt in to a durable, machine-readable record of model/agent/verdict/role on every review. See [Review metadata capture](./metadata-capture.md) before enabling it, including its privacy note. |
 | `model`, `agent`, `toolVersion` | string, optional | none | Only read when `captureMetadata` is on; see [Review metadata capture](./metadata-capture.md) for what each populates. |
 | `reviewers` | array of string | `[]` | Default GitHub logins to request review from when a `request`/`review_create` call does not name any. See [Request a review](#request-a-review) below. |
+| `knownAgentLogins` | array of string | `[]` | GitHub logins that count as agents rather than humans when the safety gate asks whether a human review is in flight. Only the logins listed here are treated as agents, so an unlisted reviewer is always assumed to be a human and holds a merge back. See [Expedition taskflows](./taskflows.md#the-safety-model). |
 
 `~/.agent-peer-review/config.json`:
 
@@ -100,6 +101,22 @@ AGENT_REVIEW_REVIEWERS=patextreme agent-review request --repo input-output-hk/so
 
 :::tip
 `reviewers` is only the default: an explicit `--reviewers` (CLI) or `reviewers` (MCP/pi) on a single call always wins over it, and `AGENT_REVIEW_REVIEWERS` wins over the config file the same way the other `AGENT_REVIEW_*` variables do (see [Review metadata capture](./metadata-capture.md#how-to-enable)). If nothing is set anywhere, `request`/`review_create` reports a clear error instead of silently requesting no one.
+:::
+
+Name the peer agents themselves so the safety gate can tell an agent's review from a human's. Only the logins in `knownAgentLogins` count as agents; anyone else is assumed to be a human, and a human review in flight holds a merge back:
+
+```json
+{ "knownAgentLogins": ["some-agent-bot"] }
+```
+
+or override it for a single invocation with the comma-separated `AGENT_REVIEW_KNOWN_AGENTS` environment variable:
+
+```bash
+AGENT_REVIEW_KNOWN_AGENTS=some-agent-bot agent-review list --repo input-output-hk/some-repo
+```
+
+:::tip
+`knownAgentLogins` follows the same override order as `reviewers`: `AGENT_REVIEW_KNOWN_AGENTS` wins over the config file, and an unset or blank variable falls through to it. Leaving it empty is the safe default, since every reviewer then counts as a human. It is only read by the pull request tools and the [expedition taskflows](./taskflows.md); the review workflow itself never looks at it.
 :::
 
 ## Bootstrap labels on a repository
@@ -137,13 +154,13 @@ The server exposes six tools (`review_create`, `review_list`, `review_claim`, `r
 </TabItem>
 <TabItem value="pi" label="pi.dev">
 
-Install the Pi Package so pi.dev loads the same six tools natively, plus a bundled `agent-review` skill that drives the loop:
+Install the Pi Package so pi.dev loads the same six tools natively, plus five more that move a pull request forward and a bundled `agent-review` skill that drives the loop:
 
 ```bash
 pi install npm:@input-output-hk/agent-review-pi
 ```
 
-See [pi.dev integration](./pi.md) for the tool list, the skill, and config. A CLI or MCP-adapter fallback is also available for pi.dev setups that cannot load the native extension.
+See [pi.dev integration](./pi.md) for the tool list, the skill, and config, and [Expedition taskflows](./taskflows.md) for the three flows that drive those extra tools across a set of repositories. A CLI or MCP-adapter fallback is also available for pi.dev setups that cannot load the native extension.
 
 </TabItem>
 <TabItem value="cli" label="Codex / CLI hosts">

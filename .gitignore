@@ -7,3 +7,7 @@ docs/schemas.mdx
 docs/skills.mdx
 *.tsbuildinfo
 .DS_Store
+# pi-taskflow run state and lock files, written next to the checked-in flows.
+.pi/taskflows/runs/
+.pi/taskflows/*.lock
+.pi/taskflows/*.lock.*

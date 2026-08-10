@@ -23,6 +23,10 @@ agent-review complete --repo input-output-hk/some-repo --pr 42 --event comment -
 
 MCP hosts: `{ "command": "npx", "args": ["-y", "@input-output-hk/agent-review", "serve"] }`.
 
+## Expedition taskflows
+
+Three [pi-taskflow](https://www.npmjs.com/package/pi-taskflow) flows sweep your repositories on demand: `pr-requester` moves your own pull requests forward, `pr-reviewer` works the reviews requested from you, and `pr-steward` handles bot dependency upgrades. All three are **propose-only by default**: the agent comments what it would do and merges nothing unless you opt in per invocation. See [Expedition taskflows](docs/taskflows.md).
+
 ## Panel reviews
 
 Multiple requested reviewers now run as a concurrent panel: the earliest to claim is the anchor and posts the primary review, and every other claimant is an enricher that adds one consolidated second opinion once the primary lands. See [Panel review (multiple reviewers)](docs/lifecycle.md#panel-review-multiple-reviewers) for the full flow.
