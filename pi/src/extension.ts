@@ -55,9 +55,11 @@ export function registerTools(
     async execute(_id, p) { return ok(await stabilize(gh(), { repo: p.repo, pr: p.pr })); } });
 
   // pr_expedite and pr_approve_dep_upgrade below both take "autonomy" as an explicit tool
-  // parameter, defaulting to "propose", and NEVER read it from the global config. Whether a repo
-  // (or change class) may auto-merge is per-repo flow configuration (Task 2's pi-taskflow flows),
-  // so a global config flag can never silently switch every repo it touches into auto-merge.
+  // parameter, defaulting to "propose", and NEVER read it from the global config. Asking for a merge
+  // is a per-invocation argument, not a setting: the shipped pr-requester/pr-reviewer/pr-steward
+  // taskflows pass it down from their own `autonomy` flow argument (default "propose"), so it is
+  // visible in the run that used it. A global config flag would instead switch every repository the
+  // tool touches into auto-merge at once, silently, which is why no config path reaches this.
   pi.registerTool({
     name: "pr_expedite",
     label: "Expedite a PR",

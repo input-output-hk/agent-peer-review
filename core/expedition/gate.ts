@@ -1,11 +1,13 @@
 import type { ChangeClassification } from "./classify.js";
 
-// The one central safety gate for taskflow auto-merge decisions (ADR 0009). Every input needed to
-// decide "auto" vs "propose" is threaded through explicitly as plain data. This module does no
-// I/O, reads no clock, and calls no gateway; callers compute each field from real GitHub/config
-// state and act on the decision. autonomy defaults to "propose" everywhere: the "auto" branch is
-// reachable only when a caller explicitly passes autonomy "auto" on a single call (today: the pi
-// pr_expedite / pr_approve_dep_upgrade tools). No config or env path can produce it.
+// The one central safety gate for taskflow auto-merge decisions. The rails it evaluates, and why
+// each one is a rail, are documented as the safety model in docs/taskflows.md; the feature is
+// tracked in issue #39. Every input needed to decide "auto" vs "propose" is threaded through
+// explicitly as plain data. This module does no I/O, reads no clock, and calls no gateway; callers
+// compute each field from real GitHub/config state and act on the decision. autonomy defaults to
+// "propose" everywhere: the "auto" branch is reachable only when a caller explicitly passes autonomy
+// "auto" on a single call (today: the pi pr_expedite / pr_approve_dep_upgrade tools). No config or
+// env path can produce it.
 //
 // Conservative by default: `evaluateGates` returns "auto" only when EVERY rail passes. A rail that
 // cannot be proven safe, including one added later but not wired into this function, simply never
@@ -22,7 +24,7 @@ export interface GateInput {
   branchProtectionSatisfied: boolean; // required reviews/checks/conversations/enforce_admins all met (computed elsewhere)
   hasNewSecurityAlert: boolean;
   humanReviewInFlight: boolean;
-  autonomy: "auto" | "propose"; // per-repo/per-class setting; v1 default propose
+  autonomy: "auto" | "propose"; // per-invocation argument, never configuration; v1 default propose
   headShaGuardPassed: boolean; // the SHA we evaluated still equals the head we would act on
   actingLogin: string;
   author: string;
@@ -95,7 +97,8 @@ export function evaluateGates(input: GateInput): GateDecision {
   // 7. No human review in flight; never race a human reviewer.
   if (input.humanReviewInFlight) reasons.push("a human review is in flight");
 
-  // 8. The per-repo/per-class autonomy setting must itself be "auto". This alone forces propose.
+  // 8. The autonomy passed on THIS call must itself be "auto". It is a per-invocation argument, not
+  // a setting anything can persist, and it alone forces propose.
   if (input.autonomy !== "auto") reasons.push(`autonomy is "${input.autonomy}", not "auto"`);
 
   // 9. Head SHA guard: the SHA evaluated must still equal the head we would act on.

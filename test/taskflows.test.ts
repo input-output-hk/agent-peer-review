@@ -240,21 +240,29 @@ describe("taskflow summarize.mjs", () => {
 
   it("pr-requester counts each action, and a blocked item is not treated as stopped", () => {
     const out = summarize("pr-requester", [
-      item(1, 5, ['{"repo": "o/r", "number": 1, "stabilize": "updated", "expedite": "proposed", "requested": "skipped"}']),
-      item(2, 5, ["this line is not JSON at all", '{"repo": "o/r", "number": 2, "stabilize": "up-to-date", "expedite": "merged", "requested": "skipped"}']),
-      item(3, 5, ['{"repo": "o/r", "number": 3, "stabilize": "conflict", "expedite": "escalate-human", "requested": "skipped"}']),
-      item(4, 5, ['{"repo": "o/r", "number": 4, "stabilize": "blocked", "expedite": "proposed", "requested": "requested"}']),
-      item(5, 5, [], true),
+      item(1, 7, ['{"repo": "o/r", "number": 1, "stabilize": "updated", "expedite": "proposed", "requested": "skipped"}']),
+      item(2, 7, ["this line is not JSON at all", '{"repo": "o/r", "number": 2, "stabilize": "up-to-date", "expedite": "merged", "requested": "skipped"}']),
+      item(3, 7, ['{"repo": "o/r", "number": 3, "stabilize": "conflict", "expedite": "escalate-human", "requested": "skipped"}']),
+      item(4, 7, ['{"repo": "o/r", "number": 4, "stabilize": "blocked", "expedite": "proposed", "requested": "requested"}']),
+      item(5, 7, ['{"repo": "o/r", "number": 5, "stabilize": "gone", "expedite": "skipped", "requested": "skipped"}']),
+      item(6, 7, ['{"repo": "o/r", "number": 6, "stabilize": "up-to-date", "expedite": "blocked", "requested": "skipped"}']),
+      item(7, 7, [], true),
     ].join("\n"));
 
     const lines = out.trimEnd().split("\n");
-    expect(lines[0]).toBe("pr-requester: 5 pull request(s). stabilized=1 proposed=2 merged=1 review-requested=1 escalated=1 failed=1");
+    expect(lines[0]).toBe("pr-requester: 7 pull request(s). stabilized=1 proposed=2 merged=1 review-requested=1 escalated=1 failed=1");
     expect(lines.slice(1)).toEqual([
       "- o/r #3: needs a human (stabilize reported conflict)",
-      "- item 5 of 5: the agent did not report a result", // a failed item is named by its position
+      "- o/r #5: stopped at stabilize; the pull request is closed or merged",
+      "- o/r #6: the merge was refused",
+      "- item 7 of 7: the agent did not report a result", // a failed item is named by its position
     ]);
-    // The blocked item is counted as proposed and gets no attention line: "blocked" does not stop an
-    // item, and a summary that flagged it would train a reader to expect the opposite.
+    // Items 5 and 6 contribute to no counter at all, only to the attention list: a pull request the
+    // flow walked away from, or one whose merge GitHub refused, is never invisible, and neither is
+    // silently filed as a failure.
+    // The blocked-at-stabilize item (4) is the mirror image: counted as proposed, with no attention
+    // line, because "blocked" does not stop an item and a summary that flagged it would train a
+    // reader to expect the opposite.
     expect(out).not.toContain("#4");
   });
 
@@ -334,6 +342,19 @@ describe("taskflow instructions and the code they drive", () => {
         }
       });
     }
+  }
+
+  // The token pins below cannot see MEANING, and the regression they exist for was a meaning: an
+  // instruction that named `blocked` correctly and told the executor to stop on it. The sentences
+  // that carry the fix are therefore pinned literally. They are load-bearing prose, not phrasing:
+  // deleting either one restores the deadlock while every token assertion still passes.
+  for (const { label, dir } of bothDirs) {
+    it(`${label}: pr-requester keeps telling the executor to continue through blocked`, () => {
+      const instructions = readFileSync(path.join(dir, "pr-requester", "instructions.md"), "utf8");
+      expect(instructions).toContain("`up-to-date`, `updated`, or `blocked`: continue");
+      expect(instructions).toContain("`blocked` does **not** mean the pull request is finished.");
+      expect(instructions).toContain("Never stop the item here.");
+    });
   }
 
   // The outcome words each flow branches on, and where each one is defined. The table is the
