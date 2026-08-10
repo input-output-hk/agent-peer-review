@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
-const cfg = (skillsDir: string | null) => ({ githubLogin: null, skillsDir, runChecks: false, captureMetadata: false, reviewers: [] });
+const cfg = (skillsDir: string | null) => ({ githubLogin: null, skillsDir, runChecks: false, captureMetadata: false, reviewers: [], knownAgentLogins: [] });
 
 describe("paths", () => {
   afterEach(() => {

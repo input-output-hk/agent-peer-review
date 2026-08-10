@@ -16,7 +16,7 @@ function skillsDir(): string {
   writeFileSync(path.join(d, "lang", "solidity.md"), "# solidity");
   return d;
 }
-const cfg = (dir: string) => ({ githubLogin: null, skillsDir: dir, runChecks: false, captureMetadata: false, reviewers: [] });
+const cfg = (dir: string) => ({ githubLogin: null, skillsDir: dir, runChecks: false, captureMetadata: false, reviewers: [], knownAgentLogins: [] });
 const deps = (gh: FakeGitHubGateway, dir: string, machine = "mbp-01", now = "t1") => ({ gh, config: cfg(dir), machine, now });
 
 describe("claimReview", () => {

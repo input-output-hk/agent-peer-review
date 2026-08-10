@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { serializeMarker, PRIMARY_MARKER } from "@input-output-hk/agent-review";
+import { serializeMarker, PRIMARY_MARKER, DEFAULT_GATE_POLICY } from "@input-output-hk/agent-review";
 import { registerTools } from "./extension.js";
 
 function fakePi() {
@@ -18,12 +18,118 @@ function skillsDir(): string {
   return d;
 }
 
+const HEAD = "sha0001";
+
+// A minimal fake covering exactly the GitHubGateway surface expedite reads for a green,
+// docs-only, protection-free, alert-free pull request with no other reviewers: every rail
+// clears except autonomy. Rebuilt locally (rather than importing core's test/fakes) so this
+// package's tests exercise only its own public dependency, @input-output-hk/agent-review.
+function fakeExpeditableGh(overrides: {
+  author?: string;
+  files?: Array<{ filename: string; status: string; additions: number; deletions: number; patch?: string }>;
+} = {}) {
+  const pr = {
+    number: 1, title: "docs: fix a typo", author: overrides.author ?? "human-author",
+    headSha: HEAD, baseSha: "base", url: "u", state: "open" as "open" | "closed" | "merged", labels: [] as string[],
+  };
+  const comments: Array<{ id: number; body: string; author: string }> = [];
+  const merges: Array<{ repo: string; pr: number; sha: string; method?: string }> = [];
+  let commentId = 1;
+  return {
+    comments, merges,
+    async getAuthenticatedLogin() { return "me"; },
+    async getPullRequest() { return { ...pr }; },
+    async getMergeability() { return { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: pr.headSha }; },
+    async listPullFilesDetailed() {
+      return overrides.files ?? [{ filename: "README.md", status: "modified", additions: 2, deletions: 1, patch: "@@\n-a\n+b" }];
+    },
+    async getChecks() { return [{ name: "build", status: "success" }]; },
+    async getBranchProtection() { return "none" as const; },
+    async getReviews() { return []; },
+    async listRequestedReviewers() { return { users: [], teams: [] }; },
+    async listOpenSecurityAlertCount() { return 0; },
+    async listComments() { return comments; },
+    async createComment(_repo: string, _pr: number, body: string) {
+      const c = { id: commentId++, body, author: "me" };
+      comments.push(c);
+      return c;
+    },
+    async deleteComment(_repo: string, id: number) {
+      const i = comments.findIndex((c) => c.id === id);
+      if (i >= 0) comments.splice(i, 1);
+    },
+    async mergePull(repo: string, prNum: number, opts: { sha: string; method?: string }) {
+      merges.push({ repo, pr: prNum, sha: opts.sha, method: opts.method });
+      pr.state = "merged";
+      return { merged: true, sha: `merge-${opts.sha}`, message: "merged", reason: null };
+    },
+  };
+}
+
+const BOT = "dependabot[bot]";
+const bumpPatch = (name: string, from: string, to: string): string =>
+  ["@@ -12,7 +12,7 @@", '   "dependencies": {', `-    "${name}": "${from}",`, `+    "${name}": "${to}",`, '     "zod": "^3.23.0"'].join("\n");
+
+// Mirrors core/operations/approve-dependency-upgrade.test.ts's seedBotBump fixture: a bot-authored,
+// version-only patch bump (manifest + lockfile) that clears every rail except autonomy.
+function fakeDepUpgradeGh() {
+  const pr = {
+    number: 2, title: "chore(deps): bump left-pad", author: BOT,
+    headSha: HEAD, baseSha: "base", url: "u", state: "open" as "open" | "closed" | "merged", labels: [] as string[],
+  };
+  const comments: Array<{ id: number; body: string; author: string }> = [];
+  const merges: Array<{ repo: string; pr: number; sha: string; method?: string }> = [];
+  const reviews: Array<{ id: number; author: string; state: string; body: string; commitId: string; submittedAt: string }> = [];
+  let commentId = 1;
+  let reviewId = 1;
+  return {
+    comments, merges, reviews,
+    async getAuthenticatedLogin() { return "me"; },
+    async getPullRequest() { return { ...pr }; },
+    async getActorType(login: string) { return login === BOT ? "Bot" as const : "User" as const; },
+    async getMergeability() { return { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: pr.headSha }; },
+    async listPullFilesDetailed() {
+      return [
+        { filename: "package.json", status: "modified", additions: 1, deletions: 1, patch: bumpPatch("left-pad", "^1.0.0", "^1.0.1") },
+        { filename: "package-lock.json", status: "modified", additions: 12, deletions: 12, patch: "@@ -1 +1 @@\n-a\n+b" },
+      ];
+    },
+    async getChecks() { return [{ name: "build", status: "success" }]; },
+    async getBranchProtection() { return "none" as const; },
+    async getReviews() { return reviews; },
+    async listRequestedReviewers() { return { users: [], teams: [] }; },
+    async listOpenSecurityAlertCount() { return 0; },
+    async listComments() { return comments; },
+    async createComment(_repo: string, _pr: number, body: string) {
+      const c = { id: commentId++, body, author: "me" };
+      comments.push(c);
+      return c;
+    },
+    async deleteComment(_repo: string, id: number) {
+      const i = comments.findIndex((c) => c.id === id);
+      if (i >= 0) comments.splice(i, 1);
+    },
+    async submitReview(_repo: string, _pr: number, review: { commitId: string; event: string; body: string }) {
+      const r = { id: reviewId++, author: "me", state: "APPROVED", body: review.body, commitId: review.commitId, submittedAt: `t${reviewId}` };
+      reviews.push(r);
+      return { url: "https://example.com/review/1" };
+    },
+    async mergePull(repo: string, prNum: number, opts: { sha: string; method?: string }) {
+      merges.push({ repo, pr: prNum, sha: opts.sha, method: opts.method });
+      pr.state = "merged";
+      return { merged: true, sha: `merge-${opts.sha}`, message: "merged", reason: null };
+    },
+  };
+}
+
 describe("pi extension", () => {
-  it("registers the six review tools", () => {
+  it("registers the six review tools plus the five expedition tools", () => {
     const pi = fakePi();
     registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false }) as any });
-    expect(pi.tools.map((t) => t.name).sort()).toEqual(
-      ["labels_bootstrap", "review_claim", "review_complete", "review_create", "review_enrich", "review_list"]);
+    expect(pi.tools.map((t) => t.name).sort()).toEqual([
+      "labels_bootstrap", "pr_approve_dep_upgrade", "pr_expedite", "pr_request_review", "pr_stabilize", "pr_watch",
+      "review_claim", "review_complete", "review_create", "review_enrich", "review_list",
+    ]);
   });
   it("review_create falls back to config.reviewers when the call omits reviewers", async () => {
     const pi = fakePi();
@@ -134,5 +240,174 @@ describe("pi extension", () => {
     expect(calls.submit.event).toBe("COMMENT");     // enricher posts a COMMENT review
     expect(calls.submit.commitId).toBe("cafe1234"); // at the primary review's commit
     expect(calls.submit.body).toContain("agree");   // p.verdict -> overallVerdict in the body
+  });
+
+  it("pr_stabilize reports updated when the branch is behind its base", async () => {
+    const pi = fakePi();
+    const gh = {
+      getPullRequest: async () => ({ number: 1, title: "t", author: "a", headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
+      getMergeability: async () => ({ state: "behind" as const, mergeable: false, draft: false, baseRef: "main", headSha: HEAD }),
+      updateBranch: async () => "updated" as const,
+    } as any;
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false }) as any });
+    const stabilizeTool = pi.tools.find((t) => t.name === "pr_stabilize");
+    const res = await stabilizeTool.execute("id-s1", { repo: "o/r", pr: 1 }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).status).toBe("updated");
+  });
+
+  it('pr_expedite with no autonomy proposes and merges nothing (propose is the adapter-layer default)', async () => {
+    const pi = fakePi();
+    const gh = fakeExpeditableGh();
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    const expediteTool = pi.tools.find((t) => t.name === "pr_expedite");
+    const res = await expediteTool.execute("id-e1", { repo: "o/r", pr: 1 }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).action).toBe("proposed");
+    expect(gh.merges).toEqual([]); // no autonomy given: never auto-merges
+  });
+
+  it('pr_expedite with an explicit autonomy: "auto" merges the same pull request', async () => {
+    const pi = fakePi();
+    const gh = fakeExpeditableGh();
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    const expediteTool = pi.tools.find((t) => t.name === "pr_expedite");
+    const res = await expediteTool.execute("id-e2", { repo: "o/r", pr: 1, autonomy: "auto" }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).action).toBe("merged");
+    // The merge lands at the evaluated head, with the default method: nothing else is a valid merge here.
+    expect(gh.merges).toEqual([{ repo: "o/r", pr: 1, sha: HEAD, method: "merge" }]);
+  });
+
+  it('pr_expedite passes an explicit mergeMethod "squash" through to the merge', async () => {
+    const pi = fakePi();
+    const gh = fakeExpeditableGh();
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    const expediteTool = pi.tools.find((t) => t.name === "pr_expedite");
+    const res = await expediteTool.execute("id-e5", { repo: "o/r", pr: 1, autonomy: "auto", mergeMethod: "squash" }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).action).toBe("merged");
+    expect(gh.merges).toEqual([{ repo: "o/r", pr: 1, sha: HEAD, method: "squash" }]);
+  });
+
+  it("pr_expedite cannot widen the size rail past the default cap: a large maxLines still fails it", async () => {
+    const pi = fakePi();
+    // Single docs file, but well over the default max-lines cap regardless of what maxLines the
+    // caller asks for.
+    const gh = fakeExpeditableGh({
+      files: [{ filename: "README.md", status: "modified", additions: DEFAULT_GATE_POLICY.maxLines + 100, deletions: 0, patch: "@@" }],
+    });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    const expediteTool = pi.tools.find((t) => t.name === "pr_expedite");
+    const res = await expediteTool.execute("id-e6", { repo: "o/r", pr: 1, autonomy: "auto", maxLines: 999999 }, undefined, undefined, undefined);
+    const result = JSON.parse(res.content[0].text);
+    expect(result.action).toBe("proposed"); // the default cap still applies; 999999 cannot widen it
+    expect(result.reasons.some((r: string) => r.includes("too many changed lines"))).toBe(true);
+    expect(gh.merges).toEqual([]);
+  });
+
+  it("pr_request_review throws the same clear error as review_create when reviewers are empty everywhere", async () => {
+    const pi = fakePi();
+    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, reviewers: [] }) as any });
+    const requestReview = pi.tools.find((t) => t.name === "pr_request_review");
+    await expect(requestReview.execute("id-r1", { repo: "o/r", pr: 7 }, undefined, undefined, undefined))
+      .rejects.toThrow(/no reviewers/i);
+  });
+
+  it("pr_request_review falls back to config.reviewers when the call omits reviewers", async () => {
+    const pi = fakePi();
+    const calls: any = {};
+    const gh = {
+      getPullRequest: async () => ({ number: 7, title: "t", author: "a", headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
+      addLabels: async () => {},
+      requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
+    } as any;
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    const requestReview = pi.tools.find((t) => t.name === "pr_request_review");
+    const res = await requestReview.execute("id-r2", { repo: "o/r", pr: 7 }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).reviewers).toEqual(["patextreme"]);
+    expect(calls.reviewers).toEqual(["patextreme"]); // config default reached the gateway
+  });
+
+  it("pr_approve_dep_upgrade reports not-eligible for a non-bot author", async () => {
+    const pi = fakePi();
+    const gh = {
+      getAuthenticatedLogin: async () => "me",
+      getPullRequest: async () => ({ number: 9, title: "t", author: "human-author", headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
+    } as any;
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
+    const res = await approveDep.execute("id-d1", { repo: "o/r", pr: 9 }, undefined, undefined, undefined);
+    const result = JSON.parse(res.content[0].text);
+    expect(result.action).toBe("not-eligible");
+    expect(result.reasons[0]).toContain("not an allowlisted dependency bot");
+  });
+
+  it("pr_approve_dep_upgrade with no autonomy proposes a bot version bump and approves/merges nothing", async () => {
+    const pi = fakePi();
+    const gh = fakeDepUpgradeGh();
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
+    const res = await approveDep.execute("id-d2", { repo: "o/r", pr: 2 }, undefined, undefined, undefined);
+    const result = JSON.parse(res.content[0].text);
+    expect(result.action).toBe("proposed");
+    expect(gh.merges).toEqual([]);
+    expect(gh.reviews).toEqual([]);
+  });
+
+  it('pr_approve_dep_upgrade with an explicit autonomy: "auto" approves and merges the same bot bump', async () => {
+    const pi = fakePi();
+    const gh = fakeDepUpgradeGh();
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
+    const res = await approveDep.execute("id-d3", { repo: "o/r", pr: 2, autonomy: "auto" }, undefined, undefined, undefined);
+    const result = JSON.parse(res.content[0].text);
+    expect(result.action).toBe("approved-and-merged");
+    expect(gh.merges).toEqual([{ repo: "o/r", pr: 2, sha: HEAD, method: "merge" }]);
+    expect(gh.reviews).toHaveLength(1);
+    expect(gh.reviews[0]).toMatchObject({ author: "me", state: "APPROVED", commitId: HEAD });
+  });
+
+  it("pr_watch resolves the acting login from the token when config has none, and returns a decision", async () => {
+    const pi = fakePi();
+    const gh = {
+      getAuthenticatedLogin: async () => "me",
+      getPullRequest: async () => ({ number: 3, title: "t", author: "human-author", headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
+      getReviews: async () => [{ id: 1, author: "me", state: "CHANGES_REQUESTED", body: "", commitId: HEAD, submittedAt: "t1" }],
+    } as any;
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    const watch = pi.tools.find((t) => t.name === "pr_watch");
+    const res = await watch.execute("id-w1", { repo: "o/r", pr: 3 }, undefined, undefined, undefined);
+    const result = JSON.parse(res.content[0].text);
+    expect(result.action).toBe("wait"); // no push since "me" requested changes at the current head
+  });
+
+  it("pr_watch's knownAgentLogins from config reaches the human-review rail", async () => {
+    // "me" requested changes at an older head, the author pushed since, and "peer-bot" left a
+    // COMMENT review in between. Whether that comment counts as a human in flight depends
+    // entirely on whether config lists "peer-bot" as a known agent.
+    //
+    // getAuthenticatedLogin deliberately returns a login that is NEITHER "me" nor "peer-bot":
+    // config.githubLogin ("me") must win over the token for myLogin resolution. If precedence
+    // were inverted, myLogin would resolve to "someone-else", watchAndReReview would find no
+    // review authored by "someone-else", and both assertions below (hold-for-human / re-review)
+    // would fail with "none" instead.
+    const gh = {
+      getAuthenticatedLogin: async () => "someone-else",
+      getPullRequest: async () => ({ number: 4, title: "t", author: "human-author", headSha: "sha0002", baseSha: "base", url: "u", state: "open" as const, labels: [] }),
+      getReviews: async () => [
+        { id: 1, author: "me", state: "CHANGES_REQUESTED", body: "", commitId: "sha0001", submittedAt: "t1" },
+        { id: 2, author: "peer-bot", state: "COMMENTED", body: "", commitId: "sha0001", submittedAt: "t2" },
+      ],
+      listRequestedReviewers: async () => ({ users: [], teams: [] }),
+    } as any;
+
+    const piWithoutKnownAgents = fakePi();
+    registerTools(piWithoutKnownAgents as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    const watchWithout = piWithoutKnownAgents.tools.find((t) => t.name === "pr_watch");
+    const resWithout = await watchWithout.execute("id-k1", { repo: "o/r", pr: 4 }, undefined, undefined, undefined);
+    expect(JSON.parse(resWithout.content[0].text).action).toBe("hold-for-human"); // peer-bot unknown: reads as human
+
+    const piWithKnownAgents = fakePi();
+    registerTools(piWithKnownAgents as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: ["peer-bot"] }) as any });
+    const watchWith = piWithKnownAgents.tools.find((t) => t.name === "pr_watch");
+    const resWith = await watchWith.execute("id-k2", { repo: "o/r", pr: 4 }, undefined, undefined, undefined);
+    expect(JSON.parse(resWith.content[0].text).action).toBe("re-review"); // known agent: does not trip the human rail
   });
 });

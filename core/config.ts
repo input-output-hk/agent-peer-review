@@ -44,6 +44,7 @@ function applyEnvOverrides(cfg: Config): Config {
       ? isTruthy(process.env.AGENT_REVIEW_CAPTURE_METADATA)
       : cfg.captureMetadata,
     reviewers: fromEnvList(process.env.AGENT_REVIEW_REVIEWERS) ?? cfg.reviewers,
+    knownAgentLogins: fromEnvList(process.env.AGENT_REVIEW_KNOWN_AGENTS) ?? cfg.knownAgentLogins,
   };
 }
 

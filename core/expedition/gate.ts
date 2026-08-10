@@ -2,10 +2,10 @@ import type { ChangeClassification } from "./classify.js";
 
 // The one central safety gate for taskflow auto-merge decisions (ADR 0009). Every input needed to
 // decide "auto" vs "propose" is threaded through explicitly as plain data. This module does no
-// I/O, reads no clock, and calls no gateway; callers (later PRs) compute each field from real
-// GitHub/config state and act on the decision. v1 wires autonomy to default "propose" everywhere,
-// so in production today this gate's "auto" branch never fires; it is exercised here in tests so
-// the logic is provable in isolation ahead of that wiring.
+// I/O, reads no clock, and calls no gateway; callers compute each field from real GitHub/config
+// state and act on the decision. autonomy defaults to "propose" everywhere: the "auto" branch is
+// reachable only when a caller explicitly passes autonomy "auto" on a single call (today: the pi
+// pr_expedite / pr_approve_dep_upgrade tools). No config or env path can produce it.
 //
 // Conservative by default: `evaluateGates` returns "auto" only when EVERY rail passes. A rail that
 // cannot be proven safe, including one added later but not wired into this function, simply never
