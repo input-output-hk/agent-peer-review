@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 
 // Structural tests for the three expedition taskflows. They are hand-authored JSON that a
@@ -224,6 +225,179 @@ describe("taskflow files", () => {
   });
 });
 
+// The summary script is the one flow asset with behavior of its own: it is executed by the runtime
+// with the map phase's combined output on stdin, and its counts are all a maintainer reads after a
+// run. It is run here exactly as the runtime runs it (a real `node` process, real stdin), against
+// fixtures shaped like the runtime's output. Only the shipped copy is executed: the test above proves
+// the dogfood copy is byte-identical.
+describe("taskflow summarize.mjs", () => {
+  const summarize = (flow: string, input: string): string =>
+    execFileSync(process.execPath, [path.join(TEMPLATE_DIR, flow, "summarize.mjs")], { input, encoding: "utf8" });
+
+  /** A map-phase item: the runtime's header, then whatever the agent printed under it. */
+  const item = (index: number, total: number, lines: string[], failed = false): string =>
+    [`### [${index}/${total}] executor${failed ? " (failed)" : ""}`, ...lines].join("\n");
+
+  it("pr-requester counts each action, and a blocked item is not treated as stopped", () => {
+    const out = summarize("pr-requester", [
+      item(1, 5, ['{"repo": "o/r", "number": 1, "stabilize": "updated", "expedite": "proposed", "requested": "skipped"}']),
+      item(2, 5, ["this line is not JSON at all", '{"repo": "o/r", "number": 2, "stabilize": "up-to-date", "expedite": "merged", "requested": "skipped"}']),
+      item(3, 5, ['{"repo": "o/r", "number": 3, "stabilize": "conflict", "expedite": "escalate-human", "requested": "skipped"}']),
+      item(4, 5, ['{"repo": "o/r", "number": 4, "stabilize": "blocked", "expedite": "proposed", "requested": "requested"}']),
+      item(5, 5, [], true),
+    ].join("\n"));
+
+    const lines = out.trimEnd().split("\n");
+    expect(lines[0]).toBe("pr-requester: 5 pull request(s). stabilized=1 proposed=2 merged=1 review-requested=1 escalated=1 failed=1");
+    expect(lines.slice(1)).toEqual([
+      "- o/r #3: needs a human (stabilize reported conflict)",
+      "- item 5 of 5: the agent did not report a result", // a failed item is named by its position
+    ]);
+    // The blocked item is counted as proposed and gets no attention line: "blocked" does not stop an
+    // item, and a summary that flagged it would train a reader to expect the opposite.
+    expect(out).not.toContain("#4");
+  });
+
+  it("pr-reviewer counts all six watch outcomes plus the two review actions", () => {
+    const out = summarize("pr-reviewer", [
+      item(1, 8, ['{"repo": "o/r", "number": 1, "kind": "requested", "action": "reviewed", "verdict": "request-changes"}']),
+      item(2, 8, ['{"repo": "o/r", "number": 2, "kind": "watching", "action": "re-reviewed", "verdict": "approve"}']),
+      item(3, 8, ['{"repo": "o/r", "number": 3, "kind": "watching", "action": "wait", "verdict": "none"}']),
+      item(4, 8, ['{"repo": "o/r", "number": 4, "kind": "watching", "action": "hold-for-human", "verdict": "none"}']),
+      item(5, 8, ['{"repo": "o/r", "number": 5, "kind": "watching", "action": "abandoned", "verdict": "none"}']),
+      item(6, 8, ["{not json}", '{"repo": "o/r", "number": 6, "kind": "watching", "action": "approved", "verdict": "none"}']),
+      item(7, 8, ['{"repo": "o/r", "number": 7, "kind": "watching", "action": "none", "verdict": "none"}']),
+      item(8, 8, [], true),
+    ].join("\n"));
+
+    const lines = out.trimEnd().split("\n");
+    expect(lines[0]).toBe(
+      "pr-reviewer: 8 pull request(s). reviewed=1 re-reviewed=1 waiting=1 held-for-human=1 abandoned=1 approved=1 no-verdict=1 failed=1",
+    );
+    expect(lines.slice(1)).toEqual([
+      "- o/r #1: changes requested",
+      "- o/r #4: handed to a human",
+      "- item 8 of 8: the agent did not report a result",
+    ]);
+  });
+
+  it("pr-steward counts each verdict and quotes the reason behind a refused merge", () => {
+    const out = summarize("pr-steward", [
+      item(1, 6, ['{"repo": "o/r", "number": 1, "action": "proposed", "reasons": ["autonomy is propose, not auto"]}']),
+      item(2, 6, ['{"repo": "o/r", "number": 2, "action": "already-proposed", "reasons": []}']),
+      item(3, 6, ['{"repo": "o/r", "number": 3, "action": "approved-and-merged", "reasons": []}']),
+      item(4, 6, ['{"repo": "o/r", "number": 4, "action": "not-eligible", "reasons": ["semver level is major"]}']),
+      item(5, 6, ["oops, not JSON", '{"repo": "o/r", "number": 5, "action": "blocked", "reasons": ["merge refused: the \\"head\\" moved"]}']),
+      item(6, 6, [], true),
+    ].join("\n"));
+
+    const lines = out.trimEnd().split("\n");
+    expect(lines[0]).toBe("pr-steward: 6 pull request(s). proposed=2 approved-and-merged=1 not-eligible=1 blocked=1 failed=1");
+    expect(lines.slice(1)).toEqual([
+      '- o/r #5: the merge was refused (merge refused: the "head" moved)', // JSON escapes survive
+      "- item 6 of 6: the agent did not report a result",
+    ]);
+  });
+
+  it.each([
+    ["pr-requester", "pr-requester: no candidate pull requests."],
+    ["pr-reviewer", "pr-reviewer: no review requests and nothing to follow up on."],
+    ["pr-steward", "pr-steward: no open bot dependency upgrades."],
+  ])("%s says so plainly when the map phase produced nothing", (flow, expected) => {
+    expect(summarize(flow, "").trimEnd()).toBe(expected);
+  });
+});
+
+// Drift guards between the instructions the executor is handed and the code it drives. Both halves
+// are prose to a taskflow host: nothing validates them until a model reads them mid-run and calls a
+// tool that does not exist, or branches on a status an operation cannot return. A rename in either
+// place has to break the build here instead.
+describe("taskflow instructions and the code they drive", () => {
+  const EXTENSION = readFileSync(path.join(REPO_ROOT, "pi", "src", "extension.ts"), "utf8");
+  const REGISTERED_TOOLS = registeredToolNames(EXTENSION);
+
+  it("finds the registered tool names in the extension at all", () => {
+    // A guard on the scan itself: if registerTool's shape ever changes, the assertions below would
+    // pass vacuously against an empty list.
+    expect(REGISTERED_TOOLS.length).toBeGreaterThanOrEqual(11);
+    expect(REGISTERED_TOOLS).toContain("pr_expedite");
+  });
+
+  for (const { label, dir } of bothDirs) {
+    for (const name of FLOW_NAMES) {
+      it(`${label}: ${name} names only tools the extension registers`, () => {
+        const spans = codeSpans(readFileSync(path.join(dir, name, "instructions.md"), "utf8"));
+        const mentioned = [...spans].filter(isToolToken).sort();
+        expect(mentioned.length).toBeGreaterThan(0); // every flow drives at least one tool
+        for (const tool of mentioned) {
+          expect(REGISTERED_TOOLS, `${name} instructions name "${tool}"`).toContain(tool);
+        }
+      });
+    }
+  }
+
+  // The outcome words each flow branches on, and where each one is defined. The table is the
+  // contract, asserted in both directions below: the operation's own union must hold exactly these
+  // members, and the instructions must name every one of them. So renaming a status, splitting one
+  // in two, or adding a new one fails here rather than in a live run, which is how the Task 2 fix
+  // (stabilize's "gone" / "blocked" split) has to stay pinned.
+  const OUTCOME_CONTRACTS: Array<{ what: string; file: string; field: string; end: string; flow: string; outcomes: string[] }> = [
+    {
+      what: "stabilize status", file: "core/operations/stabilize.ts", field: "status:", end: ";", flow: "pr-requester",
+      outcomes: ["up-to-date", "updated", "conflict", "blocked", "draft", "gone"],
+    },
+    {
+      what: "expedite action", file: "core/operations/expedite.ts", field: "action:", end: ";", flow: "pr-requester",
+      outcomes: ["merged", "proposed", "already-proposed", "not-eligible", "blocked"],
+    },
+    {
+      what: "requestPeerReview status", file: "core/operations/request-peer-review.ts", field: "status:", end: ";", flow: "pr-requester",
+      outcomes: ["requested", "already-requested"],
+    },
+    {
+      what: "watchAndReReview action", file: "core/operations/watch-and-re-review.ts", field: "action:", end: ";", flow: "pr-reviewer",
+      outcomes: ["re-review", "wait", "hold-for-human", "abandoned", "approved", "none"],
+    },
+    {
+      what: "enrichReview status", file: "core/operations/enrich.ts", field: "status:", end: ";", flow: "pr-reviewer",
+      outcomes: ["enriched", "waiting", "promote"],
+    },
+    {
+      what: "claim role", file: "core/model.ts", field: "export type Role =", end: ";", flow: "pr-reviewer",
+      outcomes: ["anchor", "enricher"],
+    },
+    {
+      what: "completeReview event", file: "core/model.ts", field: "event: z.enum([", end: "]", flow: "pr-reviewer",
+      outcomes: ["approve", "request-changes", "comment"],
+    },
+    {
+      what: "enrichReview verdict", file: "core/model.ts", field: "overallVerdict: z.enum([", end: "]", flow: "pr-reviewer",
+      outcomes: ["agree", "disagree", "mixed"],
+    },
+    {
+      what: "approveDependencyUpgrade action", file: "core/operations/approve-dependency-upgrade.ts", field: "action:", end: ";", flow: "pr-steward",
+      outcomes: ["approved-and-merged", "proposed", "already-proposed", "not-eligible", "blocked"],
+    },
+  ];
+
+  for (const contract of OUTCOME_CONTRACTS) {
+    it(`${contract.what} is exactly what ${contract.flow} branches on`, () => {
+      const source = readFileSync(path.join(REPO_ROOT, contract.file), "utf8");
+      const declared = literalsAfter(source, contract.field, contract.end);
+      // Set equality, not containment: an operation that GAINS an outcome no instruction handles is
+      // as much a drift as one that renames an outcome the instructions still expect.
+      expect([...declared].sort(), contract.file).toEqual([...contract.outcomes].sort());
+
+      for (const { label, dir } of bothDirs) {
+        const spans = codeSpans(readFileSync(path.join(dir, contract.flow, "instructions.md"), "utf8"));
+        for (const outcome of contract.outcomes) {
+          expect(spans.has(outcome), `${label}/${contract.flow} does not name \`${outcome}\``).toBe(true);
+        }
+      }
+    });
+  }
+});
+
 /** Phase ids referenced as `{steps.<id>.…}`, found by a linear scan of the template text. */
 function stepRefs(text: string): string[] {
   const marker = "{steps.";
@@ -238,6 +412,79 @@ function stepRefs(text: string): string[] {
     from = start + marker.length;
   }
   return Array.from(refs);
+}
+
+/**
+ * Tool names registered in the pi extension, found by a linear scan for `name: "..."`.
+ *
+ * A scan, not a regex or a real parse: every registration is hand-written in one shape, and the only
+ * thing this needs to be is obviously correct. Extra matches would be harmless (the assertions ask
+ * whether a name IS registered), so the risk is a missed one, which the sanity check above catches.
+ */
+function registeredToolNames(source: string): string[] {
+  const marker = 'name: "';
+  const names: string[] = [];
+  let from = 0;
+  for (;;) {
+    const start = source.indexOf(marker, from);
+    if (start === -1) break;
+    const valueStart = start + marker.length;
+    const end = source.indexOf('"', valueStart);
+    if (end === -1) break;
+    names.push(source.slice(valueStart, end));
+    from = end + 1;
+  }
+  return names;
+}
+
+/** True for a bare tool identifier, e.g. `pr_expedite`, and false for prose that merely starts with one. */
+function isToolToken(span: string): boolean {
+  if (!["pr_", "review_", "labels_"].some((prefix) => span.startsWith(prefix))) return false;
+  for (const ch of span) {
+    const ok = (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "_";
+    if (!ok) return false;
+  }
+  return true;
+}
+
+/**
+ * Every backtick-delimited span in a markdown file.
+ *
+ * Split on the delimiter and keep every piece, rather than trusting index parity: a fenced code block
+ * carries three backticks at a time and flips the parity of everything after it. The pieces from
+ * outside a span are prose runs that still carry their surrounding whitespace and punctuation, so they
+ * cannot be mistaken for one of the bare identifiers or outcome words looked up here.
+ */
+function codeSpans(markdown: string): Set<string> {
+  return new Set(markdown.split("`"));
+}
+
+/**
+ * The string literals of a union or enum declared right after `field`, up to the first `end`.
+ *
+ * Reads the declaration out of the TypeScript source itself (`status: "a" | "b";`, or
+ * `event: z.enum(["a", "b"])`) so the outcome contract is checked against the code rather than
+ * against a second copy of it. Throws rather than returning nothing when the field cannot be found,
+ * because a silent empty result would make every assertion built on it pass for the wrong reason.
+ */
+function literalsAfter(source: string, field: string, end: string): string[] {
+  const start = source.indexOf(field);
+  if (start === -1) throw new Error(`could not find "${field}" in the source`);
+  const stop = source.indexOf(end, start + field.length);
+  if (stop === -1) throw new Error(`could not find "${end}" after "${field}"`);
+  const declaration = source.slice(start + field.length, stop);
+  const literals: string[] = [];
+  let from = 0;
+  for (;;) {
+    const open = declaration.indexOf('"', from);
+    if (open === -1) break;
+    const close = declaration.indexOf('"', open + 1);
+    if (close === -1) break;
+    literals.push(declaration.slice(open + 1, close));
+    from = close + 1;
+  }
+  if (literals.length === 0) throw new Error(`no string literals follow "${field}"`);
+  return literals;
 }
 
 /** Every file under a directory, recursively, sorted for a stable failure message. */
