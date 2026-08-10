@@ -27,6 +27,19 @@ async function seededDb(): Promise<DB> {
   return db;
 }
 
+/** Seed a second repo ("o/other") with its own pull/review, to exercise the `?repo=` filter across two repos. */
+async function seededTwoRepos(): Promise<DB> {
+  const gw = new FakeSyncGateway();
+  gw.seedPull("o/r", { pull: pull(), reviews: [primary()] });
+  gw.seedPull("o/other", {
+    pull: pull({ number: 9, author: "zoe" }),
+    reviews: [{ id: 300, author: "other-bot", state: "COMMENTED", body: "no meta here", commitId: "head123", submittedAt: "2026-01-02T02:00:00Z" }],
+  });
+  const db = openDb(":memory:");
+  await sync(gw, db, ["o/r", "o/other"]);
+  return db;
+}
+
 describe("registerApiRoutes", () => {
   let app: FastifyInstance | undefined;
   afterEach(async () => {
@@ -88,5 +101,107 @@ describe("registerApiRoutes", () => {
     const res = await app.inject({ method: "GET", url: "/api/sync-runs", headers: HOST });
     expect(res.statusCode).toBe(200);
     expect(res.json()[0].ok).toBe(true);
+  });
+
+  it("GET /api/agents wraps listAgents in an { agents } envelope", async () => {
+    app = buildServer({ db: await seededDb() });
+    const res = await app.inject({ method: "GET", url: "/api/agents", headers: HOST });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.agents).toEqual([
+      expect.objectContaining({ agent: "claude-code", model: "claude-opus-4-8", reviews: 1, primaries: 1, enrichments: 0 }),
+    ]);
+  });
+
+  it("GET /api/collaborators wraps listCollaborators in a { collaborators } envelope", async () => {
+    app = buildServer({ db: await seededDb() });
+    const res = await app.inject({ method: "GET", url: "/api/collaborators", headers: HOST });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.collaborators).toEqual([
+      expect.objectContaining({ login: "alice", pullsAuthored: 1, reviewsReceived: 1 }),
+    ]);
+  });
+
+  it("GET /api/agents on an empty database returns an empty array, not an error", async () => {
+    app = buildServer({ db: openDb(":memory:") });
+    const res = await app.inject({ method: "GET", url: "/api/agents", headers: HOST });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ agents: [] });
+  });
+
+  it("GET /api/collaborators on an empty database returns an empty array, not an error", async () => {
+    app = buildServer({ db: openDb(":memory:") });
+    const res = await app.inject({ method: "GET", url: "/api/collaborators", headers: HOST });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ collaborators: [] });
+  });
+
+  it("GET /api/agents?repo=o/r narrows to that repo", async () => {
+    app = buildServer({ db: await seededTwoRepos() });
+    const all = await app.inject({ method: "GET", url: "/api/agents", headers: HOST });
+    expect(all.json().agents).toHaveLength(2); // claude-code/claude-opus-4-8 (o/r) + unknown (o/other)
+
+    const scoped = await app.inject({ method: "GET", url: "/api/agents?repo=o/r", headers: HOST });
+    expect(scoped.statusCode).toBe(200);
+    expect(scoped.json().agents).toEqual([
+      expect.objectContaining({ agent: "claude-code", model: "claude-opus-4-8", repos: 1 }),
+    ]);
+  });
+
+  it("GET /api/collaborators?repo=o/other narrows to that repo", async () => {
+    app = buildServer({ db: await seededTwoRepos() });
+    const res = await app.inject({ method: "GET", url: "/api/collaborators?repo=o/other", headers: HOST });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().collaborators).toEqual([expect.objectContaining({ login: "zoe", pullsAuthored: 1 })]);
+  });
+
+  it("GET /api/agents?repo=<well-formed but nonexistent repo> returns an empty array, not an error", async () => {
+    app = buildServer({ db: await seededDb() });
+    const res = await app.inject({ method: "GET", url: "/api/agents?repo=o/nonexistent", headers: HOST });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ agents: [] });
+  });
+
+  it("GET /api/agents?repo=<empty string> is unfiltered (200), not 400", async () => {
+    app = buildServer({ db: await seededTwoRepos() });
+    const res = await app.inject({ method: "GET", url: "/api/agents?repo=", headers: HOST });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().agents).toHaveLength(2); // same as no ?repo= at all
+  });
+
+  it("GET /api/collaborators?repo=<empty string> is unfiltered (200), not 400", async () => {
+    app = buildServer({ db: await seededTwoRepos() });
+    const res = await app.inject({ method: "GET", url: "/api/collaborators?repo=", headers: HOST });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().collaborators.map((c: { login: string }) => c.login).sort()).toEqual(["alice", "zoe"]);
+  });
+
+  it("GET /api/agents?repo=a&repo=/b (duplicated key, parsed as an array by Fastify) returns 400, not 500", async () => {
+    app = buildServer({ db: await seededDb() });
+    const res = await app.inject({ method: "GET", url: "/api/agents?repo=a&repo=/b", headers: HOST });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBeTruthy();
+  });
+
+  it("GET /api/collaborators?repo=a&repo=/b (duplicated key) returns 400, not 500", async () => {
+    app = buildServer({ db: await seededDb() });
+    const res = await app.inject({ method: "GET", url: "/api/collaborators?repo=a&repo=/b", headers: HOST });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBeTruthy();
+  });
+
+  it("GET /api/agents?repo=<bad shape> returns 400 JSON", async () => {
+    app = buildServer({ db: await seededDb() });
+    const res = await app.inject({ method: "GET", url: "/api/agents?repo=noslash", headers: HOST });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBeTruthy();
+  });
+
+  it("GET /api/collaborators?repo=<bad shape> returns 400 JSON", async () => {
+    app = buildServer({ db: await seededDb() });
+    const res = await app.inject({ method: "GET", url: "/api/collaborators?repo=" + encodeURIComponent("/name"), headers: HOST });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBeTruthy();
   });
 });
