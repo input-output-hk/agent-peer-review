@@ -39,8 +39,9 @@ It is read-only and localhost-only by design:
   first instead of failing with a raw database error.
 
 The HTTP API (`/api/overview`, `/api/repos`, `/api/repos/:owner/:name/pulls`,
-`/api/repos/:owner/:name/pulls/:number`, `/api/sync-runs`) backs the dashboard user interface that
-`serve` hosts at `/`.
+`/api/repos/:owner/:name/pulls/:number`, `/api/agents`, `/api/collaborators`, `/api/sync-runs`)
+backs the dashboard user interface that `serve` hosts at `/`. `/api/agents` and `/api/collaborators`
+both accept an optional `?repo=owner/name` filter.
 
 ## User interface
 
