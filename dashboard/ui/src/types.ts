@@ -81,3 +81,31 @@ export interface SyncRun {
   repos: string[];
   counts: Record<string, number>;
 }
+
+export interface AgentAgreement {
+  agree: number;
+  disagree: number;
+  mixed: number;
+}
+
+export interface AgentSummary {
+  agent: string | null;
+  model: string | null;
+  reviews: number;
+  primaries: number;
+  enrichments: number;
+  verdicts: Record<string, number>;
+  agreement: AgentAgreement | null;
+  avgTurnaroundSeconds: number | null;
+  lastActiveAt: string;
+  repos: number;
+}
+
+export interface CollaboratorSummary {
+  login: string;
+  pullsAuthored: number;
+  reviewsReceived: number;
+  verdicts: Record<string, number>;
+  agentsSeen: number;
+  lastActivityAt: string;
+}

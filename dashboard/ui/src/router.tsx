@@ -10,6 +10,8 @@ import type { AnchorHTMLAttributes, MouseEvent, ReactNode } from "react";
 export type Route =
   | { page: "overview"; params: Record<string, never> }
   | { page: "repos"; params: Record<string, never> }
+  | { page: "agents"; params: Record<string, never> }
+  | { page: "collaborators"; params: Record<string, never> }
   | { page: "repoPulls"; params: { owner: string; name: string } }
   | { page: "pullDetail"; params: { owner: string; name: string; number: number } };
 
@@ -40,6 +42,14 @@ export function matchRoute(pathname: string): Route {
 
   if (segments.length === 0) {
     return { page: "overview", params: {} };
+  }
+
+  if (segments.length === 1 && segments[0] === "agents") {
+    return { page: "agents", params: {} };
+  }
+
+  if (segments.length === 1 && segments[0] === "collaborators") {
+    return { page: "collaborators", params: {} };
   }
 
   if (segments[0] === "repos") {

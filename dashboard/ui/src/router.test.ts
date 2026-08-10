@@ -12,6 +12,20 @@ describe("matchRoute", () => {
     expect(matchRoute("/repos/")).toEqual({ page: "repos", params: {} });
   });
 
+  it("maps /agents and /collaborators to their pages", () => {
+    expect(matchRoute("/agents")).toEqual({ page: "agents", params: {} });
+    expect(matchRoute("/collaborators")).toEqual({ page: "collaborators", params: {} });
+    // a trailing slash is tolerated, as for /repos
+    expect(matchRoute("/agents/")).toEqual({ page: "agents", params: {} });
+    expect(matchRoute("/collaborators/")).toEqual({ page: "collaborators", params: {} });
+  });
+
+  it("falls back to overview for extra segments under the flat pages", () => {
+    // These pages take no params, so anything deeper is not a route.
+    expect(matchRoute("/agents/claude-code")).toEqual({ page: "overview", params: {} });
+    expect(matchRoute("/collaborators/alice")).toEqual({ page: "overview", params: {} });
+  });
+
   it("maps /repos/:owner/:name to the repoPulls page", () => {
     expect(matchRoute("/repos/acme/widgets")).toEqual({
       page: "repoPulls",

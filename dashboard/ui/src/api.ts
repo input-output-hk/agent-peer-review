@@ -1,4 +1,4 @@
-import type { Overview, RepoSummary, PullSummary, PullDetail, SyncRun } from "./types";
+import type { Overview, RepoSummary, PullSummary, PullDetail, SyncRun, AgentSummary, CollaboratorSummary } from "./types";
 
 /** Fetch `path` (same-origin) and parse the JSON body; throws on a non-2xx response. */
 async function get<T>(path: string): Promise<T> {
@@ -7,6 +7,15 @@ async function get<T>(path: string): Promise<T> {
     throw new Error(`GET ${path} failed with status ${res.status}`);
   }
   return (await res.json()) as T;
+}
+
+/**
+ * Builds the optional `?repo=` query suffix for `/api/agents` and `/api/collaborators`.
+ * Omitted entirely when `repo` is undefined -- that is the "All repositories" contract (the
+ * route also tolerates an empty value, but omitting the param is what the UI sends).
+ */
+function repoQuery(repo: string | undefined): string {
+  return repo !== undefined ? `?repo=${encodeURIComponent(repo)}` : "";
 }
 
 export function getOverview(): Promise<Overview> {
@@ -28,4 +37,16 @@ export function getPullDetail(owner: string, name: string, number: number): Prom
 
 export function listSyncRuns(): Promise<SyncRun[]> {
   return get<SyncRun[]>("/api/sync-runs");
+}
+
+/** Agent identities aggregated across reviews, optionally scoped to one repo ("owner/name"). */
+export function listAgents(repo?: string): Promise<AgentSummary[]> {
+  return get<{ agents: AgentSummary[] }>(`/api/agents${repoQuery(repo)}`).then((body) => body.agents);
+}
+
+/** Human collaborators (pull request authors), optionally scoped to one repo ("owner/name"). */
+export function listCollaborators(repo?: string): Promise<CollaboratorSummary[]> {
+  return get<{ collaborators: CollaboratorSummary[] }>(`/api/collaborators${repoQuery(repo)}`).then(
+    (body) => body.collaborators,
+  );
 }

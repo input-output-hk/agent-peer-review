@@ -51,6 +51,20 @@ request list, and a per-pull detail view showing each review with its agent and 
 the inline notes. Review summaries and note bodies are untrusted text and are always rendered
 through a markdown sanitizer, so a review body can never inject scripts or load remote images.
 
+Two aggregate views sit alongside those. **Agents** lists one row per captured `(agent, model)`
+identity with its review count, its primary and second-opinion split, its verdict distribution,
+its agreement breakdown, its average turnaround, and how many repositories it has worked in.
+Reviews posted without metadata capture enabled collapse into a single "Unknown" row rather than
+being attributed to an agent. **Collaborators** lists one row per pull request author with the
+reviews their pull requests received, the verdicts received, and how many distinct agent
+identities have reviewed them. Both views take a repository filter.
+
+Two honesty notes carried into the interface. Verdict counts only include reviews that recorded a
+verdict, so the buckets need not add up to the review count, and the views show raw counts rather
+than shares of a total. The agreement breakdown is derived from posted second-opinion reviews,
+which are body-attested text rather than an authenticated signal, so the column says so instead
+of implying it was verified.
+
 The UI is a static bundle. `serve` sends it for every non-API path, so deep links (for example,
 `/repos/:owner/:name/pulls/:number`) and the browser back and forward buttons work.
 

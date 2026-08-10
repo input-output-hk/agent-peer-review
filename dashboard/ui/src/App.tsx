@@ -10,6 +10,8 @@ import { Overview } from "./pages/Overview";
 import { Repos } from "./pages/Repos";
 import { RepoPulls } from "./pages/RepoPulls";
 import { PullDetail } from "./pages/PullDetail";
+import { Agents } from "./pages/Agents";
+import { Collaborators } from "./pages/Collaborators";
 
 type Theme = "light" | "dark";
 
@@ -59,6 +61,10 @@ function CurrentPage() {
       return <Overview />;
     case "repos":
       return <Repos />;
+    case "agents":
+      return <Agents />;
+    case "collaborators":
+      return <Collaborators />;
     case "repoPulls":
       return <RepoPulls owner={route.params.owner} name={route.params.name} />;
     case "pullDetail":
@@ -86,6 +92,8 @@ export function App() {
         <nav style={{ display: "flex", gap: "1rem", marginLeft: "auto" }}>
           <Link to="/">Overview</Link>
           <Link to="/repos">Repositories</Link>
+          <Link to="/agents">Agents</Link>
+          <Link to="/collaborators">Collaborators</Link>
         </nav>
         <ThemeToggle />
       </header>

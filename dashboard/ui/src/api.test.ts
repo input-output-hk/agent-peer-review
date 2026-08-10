@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { getOverview, listRepos, listPulls, getPullDetail, listSyncRuns } from "./api";
-import type { Overview, RepoSummary, PullSummary, PullDetail, SyncRun } from "./types";
+import { getOverview, listRepos, listPulls, getPullDetail, listSyncRuns, listAgents, listCollaborators } from "./api";
+import type { Overview, RepoSummary, PullSummary, PullDetail, SyncRun, AgentSummary, CollaboratorSummary } from "./types";
 
 /** Stubs the global `fetch` to resolve with the given body and status. */
 function stubFetch(body: unknown, ok = true, status = 200) {
@@ -111,6 +111,70 @@ describe("listSyncRuns", () => {
 
     expect(fetchMock).toHaveBeenCalledWith("/api/sync-runs");
     expect(result).toEqual(fixture);
+  });
+});
+
+describe("listAgents", () => {
+  const fixture: AgentSummary[] = [
+    {
+      agent: "claude-code",
+      model: "claude-opus-4-8",
+      reviews: 5,
+      primaries: 3,
+      enrichments: 2,
+      verdicts: { approve: 3, agree: 1 },
+      agreement: { agree: 1, disagree: 0, mixed: 0 },
+      avgTurnaroundSeconds: 125,
+      lastActiveAt: "2026-01-05T00:00:00Z",
+      repos: 2,
+    },
+  ];
+
+  it("fetches /api/agents with no query when repo is omitted and unwraps the envelope", async () => {
+    const fetchMock = stubFetch({ agents: fixture });
+
+    const result = await listAgents();
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/agents");
+    expect(result).toEqual(fixture);
+  });
+
+  it("appends an encoded ?repo= when a repo is given", async () => {
+    const fetchMock = stubFetch({ agents: fixture });
+
+    await listAgents("my org/repo name+extra");
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/agents?repo=my%20org%2Frepo%20name%2Bextra");
+  });
+});
+
+describe("listCollaborators", () => {
+  const fixture: CollaboratorSummary[] = [
+    {
+      login: "octocat",
+      pullsAuthored: 4,
+      reviewsReceived: 6,
+      verdicts: { approve: 4, "request-changes": 2 },
+      agentsSeen: 2,
+      lastActivityAt: "2026-01-05T00:00:00Z",
+    },
+  ];
+
+  it("fetches /api/collaborators with no query when repo is omitted and unwraps the envelope", async () => {
+    const fetchMock = stubFetch({ collaborators: fixture });
+
+    const result = await listCollaborators();
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/collaborators");
+    expect(result).toEqual(fixture);
+  });
+
+  it("appends an encoded ?repo= when a repo is given", async () => {
+    const fetchMock = stubFetch({ collaborators: fixture });
+
+    await listCollaborators("acme/widgets");
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/collaborators?repo=acme%2Fwidgets");
   });
 });
 
