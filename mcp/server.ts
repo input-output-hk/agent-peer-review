@@ -9,7 +9,7 @@ import {
 const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] });
 
 export function buildServer(deps: { gh?: () => GitHubGateway; config?: () => Config } = {}): McpServer {
-  const server = new McpServer({ name: "agent-review", version: "0.4.0" });
+  const server = new McpServer({ name: "agent-review", version: "0.5.0" });
   const gh = deps.gh ?? (() => new OctokitGateway());
   const cfg = deps.config ?? (() => loadConfig(process.env.AGENT_REVIEW_CONFIG));
 
