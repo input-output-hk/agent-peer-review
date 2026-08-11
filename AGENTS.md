@@ -69,6 +69,35 @@ agent-review init --repo owner/name [--repo owner/other] \
 - **Skill**: `skills/orchestration.md` (printed as an absolute path by `init`). It drives the
   claim -> review -> complete loop for Claude Code, Codex, and pi.dev. See
   [`docs/skills.mdx`](docs/skills.mdx) and [`docs/pi.md`](docs/pi.md) for how each host enables it.
+- **Expedition taskflows** (pi.dev only, optional): three scheduled sweeps that go looking for work
+  instead of reacting to a request, plus five `pr_*` tools they call. Set up separately, see below.
+
+## Expedition taskflows (optional)
+
+Only if the user wants the scheduled sweeps: `pr-requester` (their own open pull requests),
+`pr-reviewer` (reviews requested from them, and pull requests they are already watching), and
+`pr-steward` (bot dependency upgrades). Everything they can do is **propose-only** by default: the
+agent posts one comment explaining what it would do, and changes nothing else.
+
+1. Install the engine explicitly, it is an optional peer dependency and is not installed for you:
+   `pi install npm:pi-taskflow` (needs Node.js 22.19.0 or newer).
+2. Copy a flow into the target repository at `.pi/taskflows/<name>/`. The templates ship inside the
+   installed package under `@input-output-hk/agent-review-pi/taskflows/`. Paths inside each flow
+   definition are repository-relative and already point at `.pi/taskflows/<name>/`, so copy the
+   whole directory and nothing needs editing.
+3. Rename that flow's `config.example.json` to `config.json` and list the repositories to sweep.
+4. Make sure the per-repository setup is in place: labels bootstrapped on every repository swept,
+   `reviewers` set in `~/.agent-peer-review/config.json` (`pr_request_review` errors without it),
+   and `knownAgentLogins` listing the peer agents. That last one is the easy thing to miss: any
+   login not listed counts as a human, so an unlisted peer agent's review makes the safety gate
+   hold for a human who was never involved.
+5. Run one with `/tf:<name>` in a Pi host, or the `taskflow` MCP tool with `action: "run"`. There is
+   no scheduler; recurrence is an external cron or a host-side loop.
+
+**Never enable `autonomy=auto` on the user's behalf.** It is a per-invocation argument, it defaults
+to `propose`, no config file can turn it up, and the open questions that gate it are tracked in
+issue #39. Merging or approving on someone's repository is their decision to make explicitly.
+See [`docs/taskflows.md`](docs/taskflows.md).
 
 ## What to confirm with the user
 

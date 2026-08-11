@@ -38,7 +38,7 @@ Both are best-effort. The repo context is size-bounded (a capped set of files); 
 
 ## Rules
 
-- Never merge. Humans own merge decisions.
+- Never merge as part of a review. Reviewing and deciding to merge are separate jobs, and this loop is only the first. Merge and approve decisions belong to the separate expedition tools (`pr_expedite`, `pr_approve_dep_upgrade`), which default to proposing rather than acting and take an explicit per-invocation opt-in to do anything else. If a repository has those set up, see `docs/taskflows.md`; from inside this loop, post your verdict and stop.
 - `claim` never refuses across logins; it always returns a `role` (anchor or enricher) instead, see Panel review above.
 - If you crash mid-review, re-`claim`: your existing claim resumes on the same pinned SHA.
 - Ignore labels you don't recognize as skills.
