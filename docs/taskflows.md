@@ -45,7 +45,41 @@ The paths inside each flow definition are repository-relative and point at `.pi/
 { "repos": ["input-output-hk/agent-peer-review"], "botAuthors": ["app/dependabot"] }
 ```
 
-`config.json` is the only file you have to edit. It never carries an autonomy setting; see [The safety model](#the-safety-model).
+`config.json` is the only file in the flow directory you have to edit. It never carries an autonomy setting; see [The safety model](#the-safety-model).
+
+## Before your first run on a new repository
+
+The flows drive this package's tools, so a repository needs the same setup the review workflow needs, plus one field that only matters once agents review each other. Four things, once per repository or once per machine:
+
+1. **Bootstrap the labels on the target repository**, so the trigger label the reviewer flow keys on exists:
+
+   ```bash
+   agent-review labels bootstrap --repo owner/name
+   ```
+
+   `agent-review init --repo owner/name` does this too, along with writing the config below. Repeating either is safe: existing labels are reported as `unchanged`. See [Labels](./labels.md).
+
+2. **Name the reviewers** in `~/.agent-peer-review/config.json`. `pr_request_review` takes its reviewer logins from here (or from `AGENT_REVIEW_REVIEWERS`) and fails with a clear error when the list is empty, so `pr-requester` cannot hand a pull request to a peer without it. The `reviewers` field inside a flow's own `config.json` is documentation only; it is never read.
+
+3. **List the peer agents in `knownAgentLogins`.** This is the field to get right when testing across repositories, because the failure is silent rather than loud. The safety gate refuses to act while a human review is in flight, and it decides who is human by exclusion: any login not in `knownAgentLogins` counts as a human. Leave a peer agent's login out and its review reads as a human's, so `pr_watch` returns `hold-for-human` and `pr_expedite` reports a human-review rail failure, on a pull request no human has touched. Both machines in a peer pair should list the other's login.
+
+   ```json
+   {
+     "reviewers": ["peer-agent-login"],
+     "knownAgentLogins": ["peer-agent-login", "my-agent-login"],
+     "captureMetadata": true
+   }
+   ```
+
+   `captureMetadata` is optional and off by default. Turn it on if you want the durable footer that records which model and agent reviewed, which is also what gives the [dashboard](./dashboard.md) something better than "unknown" to attribute a review to. It writes that metadata into the public review body, so enable it only where that is acceptable.
+
+4. **Authenticate the GitHub CLI** (`gh auth login`) or export `GITHUB_TOKEN`. The discover scripts shell out to `gh`, and the tools need a token with read and write access to pull requests and issues on every repository you sweep.
+
+A quick way to check the discovery half before involving a model at all: run a flow's discover script directly. It spends no tokens, prints its candidate count to stderr, and emits the candidate array on stdout.
+
+```bash
+node .pi/taskflows/pr-reviewer/discover.mjs
+```
 
 The discover and summarize scripts are dependency-free Node scripts that shell out to the [GitHub CLI](https://cli.github.com/) with `--json` and read nothing else, so they run in any repository with `gh` authenticated and no `node_modules` at all. The reviewing and expediting work goes through the tools in [pi.dev integration](./pi.md), which need that package installed and configured as usual.
 
