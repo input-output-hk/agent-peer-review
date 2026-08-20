@@ -5,26 +5,91 @@ import { classifyDependencyUpgrade } from "../expedition/dep-upgrade.js";
 import { gatherRails, postProposal, resolveActingLogin } from "./expedition-shared.js";
 
 // The bots whose dependency pull requests this operation will look at. An allowlist, not a
-// heuristic: "looks like a bot" is not a security boundary, and every entry here is additionally
-// confirmed against GitHub's own actor type below.
+// heuristic: "looks like a bot" is not a security boundary, and a listed author has to be confirmed
+// a bot on top of being listed (see confirmsBotAuthor).
 //
 // These are REST logins, which is what GitHub's pulls API reports (`user.login`). The same App shows
 // up as `app/renovate` through GitHub's GraphQL API, which is what the `gh` CLI prints and therefore
-// what a discover script matches on; that name lives in the taskflow's own botAuthors list. The two
-// surfaces are kept as two explicit lists rather than one fuzzy rule, so nothing has to guess.
+// what a discover script matches on. Both spellings reach this package, so membership is decided on
+// the folded identity below rather than on the string, and one entry covers both surfaces.
 export const DEFAULT_BOT_ALLOWLIST = ["dependabot[bot]", "renovate[bot]"] as const;
+
+// The two affixes a bot's name carries, and the only two. `[bot]` is the suffix GitHub gives a bot
+// USER account; `app/` is the prefix GraphQL gives an App integration. Neither character set is
+// legal in a human login, which is what makes either one evidence (see confirmsBotAuthor).
+const APP_PREFIX = "app/";
+const BOT_SUFFIX = "[bot]";
+
+/**
+ * The identity behind a bot's name, with the surface it arrived on folded away.
+ *
+ * One bot reaches this package under two different names: `pulls.get` reports `renovate[bot]` and
+ * GraphQL reports `app/renovate`, for the same App. An allowlist written in one spelling therefore
+ * refused every pull request that arrived in the other, on every tick, writing nothing (issue #50).
+ * Folding both to `renovate` is what makes the allowlist a list of BOTS rather than of strings.
+ *
+ * The fold is: lowercase (neither shape is a name GitHub compares case-sensitively), then strip one
+ * `app/` prefix and one `[bot]` suffix. A fold that would leave nothing behind (`app/`, `[bot]`,
+ * `app/[bot]`) is not applied at all: a name that is only an affix identifies no bot, and two of
+ * them must not compare equal to each other.
+ *
+ * Exported because it is the single definition every question below is answered from, so a name
+ * shape can only ever be understood one way. A linear scan, no regex: the value comes straight from
+ * a pull request.
+ */
+export function normalizeBotAuthor(author: string): string {
+  const lower = author.toLowerCase();
+  const start = lower.startsWith(APP_PREFIX) ? APP_PREFIX.length : 0;
+  const end = lower.endsWith(BOT_SUFFIX) ? lower.length - BOT_SUFFIX.length : lower.length;
+  return start < end ? lower.slice(start, end) : lower;
+}
+
+/**
+ * Whether a name carries a marker only a bot can carry.
+ *
+ * Derived from the fold rather than restated, which is the point: this is true exactly when
+ * normalizeBotAuthor removed an affix. Teaching the fold a third name shape teaches this at the
+ * same time, so the two cannot drift apart the way they had (issue #50: the `app/` branch of the
+ * previous copy of this check was unreachable dead code, because the allowlist comparison it sat
+ * behind could never match an `app/` name in the first place).
+ *
+ * Not a security boundary on its own, and never used as one: see confirmsBotAuthor.
+ */
+function looksLikeBotAuthor(author: string): boolean {
+  return normalizeBotAuthor(author) !== author.toLowerCase();
+}
+
+/**
+ * Whether `author` is really a bot, given GitHub's own answer about the login.
+ *
+ * GitHub's answer wins whenever it has one: a login it reports as a User or an Organization is not
+ * a bot, whatever the name looks like, so an allowlisted NAME taken by a human account cannot walk
+ * into an automated path. The name shape is consulted only for "unknown", which is what the users
+ * API returns for an App integration: `GET /users/app/renovate` is a 404, so requiring a positive
+ * `Bot` there would refuse every `app/`-named author forever, which is the same deadlock one rail
+ * further along. `[bot]` and `app/` are safe evidence in that gap because neither `[` nor `/` is
+ * legal in a GitHub username, so no human account can present either shape.
+ *
+ * Exported so `requestPeerReview` asks this exact question. The two operations have to agree: a
+ * pull request the requester refuses because "the steward owns it" and the steward then declines as
+ * not-a-bot would get less attention than one nobody special-cased at all.
+ */
+export function confirmsBotAuthor(author: string, actorType: "User" | "Bot" | "Organization" | "unknown"): boolean {
+  if (actorType === "Bot") return true;
+  if (actorType !== "unknown") return false;
+  return looksLikeBotAuthor(author);
+}
 
 /**
  * Whether `author` is one of the dependency bots this path handles.
  *
  * Exported so `requestPeerReview` can ask the SAME question with the same rule. The two have to
- * agree exactly: a pull request the requester refuses because "the steward owns it" and the steward
- * then declines as not-allowlisted would get less attention than one nobody special-cased at all.
- * An exact comparison, deliberately: a looser rule here than the one used to accept the change would
- * recreate that gap from the other side.
+ * agree exactly, for the reason given on confirmsBotAuthor. Both sides of the comparison are folded,
+ * so an allowlist may be written in either spelling and a caller never has to list a bot twice.
  */
 export function isAllowlistedDependencyBot(author: string, allowlist: readonly string[]): boolean {
-  return allowlist.includes(author);
+  const identity = normalizeBotAuthor(author);
+  return allowlist.some((entry) => normalizeBotAuthor(entry) === identity);
 }
 
 // At most this many package bumps are spelled out in the approving review body; the rest are
@@ -42,6 +107,13 @@ const MAX_LISTED_PACKAGES = 10;
  */
 function renderApprovalBody(input: {
   author: string;
+  /**
+   * How the author was confirmed to be a bot, in the body's own words. Stated rather than fixed:
+   * for an `app/`-named App integration GitHub's users API resolves nothing at all, so a sentence
+   * claiming GitHub confirmed the account would be false on exactly the pull requests issue #50 was
+   * about.
+   */
+  authorConfirmation: string;
   semverLevel: "patch" | "minor";
   bumps: string[];
   manifests: string[];
@@ -67,7 +139,7 @@ function renderApprovalBody(input: {
     `- Verdict: approve and merge this ${input.semverLevel} dependency upgrade`,
     "- Change class: deps",
     `- Semver level: ${input.semverLevel}`,
-    `- Author: ${input.author} (confirmed a Bot account by GitHub)`,
+    `- Author: ${input.author} (${input.authorConfirmation})`,
     `- Size: ${input.changedFiles} file(s), ${input.changedLines} changed line(s), within the dependency policy of ${input.maxFiles} files and ${input.maxLines} lines`,
     `- Manifests: ${input.manifests.length > 0 ? input.manifests.join(", ") : "none (lockfiles only)"}`,
     `- Head commit: \`${input.headSha}\``,
@@ -157,14 +229,25 @@ export async function approveDependencyUpgrade(
   }
   const headSha = pull.headSha;
 
-  if (!allowlist.includes(pull.author)) {
+  // Folded, not compared literally: the same bot arrives as `renovate[bot]` from the pulls API and
+  // as `app/renovate` from GraphQL, and refusing the second spelling refused it on every tick
+  // forever (issue #50).
+  if (!isAllowlistedDependencyBot(pull.author, allowlist)) {
     return { action: "not-eligible", reasons: [`author "${pull.author}" is not an allowlisted dependency bot (${allowlist.join(", ")})`] };
   }
-  // The allowlist is a list of names, and a name can be taken by a human account. Confirming the
-  // actor type with GitHub is what makes the allowlist mean "that bot" rather than "that string".
+  // The allowlist is a list of identities, and a name can be taken by a human account. Confirming
+  // with GitHub is what makes the allowlist mean "that bot" rather than "that string".
   const actorType = await gh.getActorType(pull.author);
-  if (actorType !== "Bot") {
-    return { action: "not-eligible", reasons: [`author "${pull.author}" is a ${actorType} account, not a Bot`] };
+  if (!confirmsBotAuthor(pull.author, actorType)) {
+    // Two different refusals, because they are two different facts. GitHub naming the author a User
+    // or an Organization is a positive answer that the name shape may not override. "unknown" means
+    // GitHub could not tell us at all, and the name carried no marker to fall back on.
+    return {
+      action: "not-eligible",
+      reasons: [actorType === "unknown"
+        ? `GitHub cannot resolve the author "${pull.author}", and the name carries no bot marker ("[bot]" or "app/") to confirm it with`
+        : `author "${pull.author}" is a ${actorType} account, not a Bot`],
+    };
   }
 
   const mergeability = await gh.getMergeability(repo, pr);
@@ -285,6 +368,9 @@ export async function approveDependencyUpgrade(
         event: "APPROVE",
         body: renderApprovalBody({
           author: pull.author,
+          authorConfirmation: actorType === "Bot"
+            ? "confirmed a Bot account by GitHub"
+            : 'a name only a bot can carry ("[bot]" or "app/"); GitHub\'s users API does not resolve it',
           semverLevel: dep.semverLevel,
           bumps,
           manifests: dep.manifests,

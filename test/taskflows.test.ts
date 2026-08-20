@@ -305,6 +305,10 @@ describe("taskflow summarize.mjs", () => {
     const lines = out.trimEnd().split("\n");
     expect(lines[0]).toBe("pr-steward: 7 pull request(s). proposed=2 approved=1 approved-and-merged=1 not-eligible=1 blocked=1 failed=1");
     expect(lines.slice(1)).toEqual([
+      // A not-eligible upgrade (item 4) is a hand-off, and it writes nothing at all on the pull
+      // request, so the summary is the only place it can be seen. Silence there left the flow's
+      // refusals invisible and permanent on exactly the pull requests it exists for (issue #50).
+      "- o/r #4: not eligible for the automated path, so a human decides it (semver level is major)",
       '- o/r #5: the merge was refused (merge refused: the "head" moved)', // JSON escapes survive
       "- item 6 of 7: the agent did not report a result",
       "- o/r #7: approved, not merged (branch protection still not satisfied after approving)",
