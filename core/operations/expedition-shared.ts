@@ -28,6 +28,15 @@ export interface RailInputs {
    * never asked, because only an operation that intends to approve has an approver to ask about.
    */
   actorHasStandingApproval: boolean;
+  /**
+   * Whether the pending approval was actually NEEDED: it was granted (see willApproveAs) and the
+   * base branch really does require at least one approving review. False on an unprotected branch,
+   * or one whose protection asks for zero approvals, where the approval changes no arithmetic.
+   *
+   * Reported so a caller can describe its own decision honestly rather than claiming, on every
+   * repository alike, that its approval was counted toward a rule that may not exist.
+   */
+  pendingApprovalCounted: boolean;
   branchProtectionSatisfied: boolean;
   hasNewSecurityAlert: boolean;
   /** The specific cause behind `hasNewSecurityAlert`, so a caller can say which one it is. Null when the rail passes. */
@@ -145,6 +154,10 @@ export async function gatherRails(
     approvalsByOthers,
     reviews,
     actorHasStandingApproval,
+    pendingApprovalCounted: pendingApprovalFromActor
+      && typeof protection === "object"
+      && protection.requiresPullRequestReviews
+      && protection.requiredApprovingReviewCount > 0,
     branchProtectionSatisfied: protectionSatisfied(protection, { approvalsByOthers, checksSummary, pendingApprovalFromActor }),
     hasNewSecurityAlert: securityDetail !== null,
     securityDetail,

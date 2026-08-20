@@ -220,6 +220,19 @@ describe("hasStandingApproval", () => {
     expect(hasStandingApproval([withdrawn, approved], "me")).toBe(false);
   });
 
+  // The one comparison in this loosening that could fail OPEN. countApprovalsByOthers counts
+  // whatever login the API returned, so an exact match here would answer "no approval yet" for an
+  // approval already inside that count, and rail 5 would add a second one for the same person.
+  // GitHub logins are unique case-insensitively, so the two spellings are one account.
+  it("matches a login whose case differs from the review's, so one approval is never counted twice", () => {
+    const approved: Review = { id: 1, author: "Me", state: "APPROVED", body: "", commitId: "c", submittedAt: "2026-08-07T09:00:00Z" };
+    expect(hasStandingApproval([approved], "me")).toBe(true);
+    expect(countApprovalsByOthers([approved], "the-author")).toBe(1); // the same approval, once
+    // The same insensitivity excludes the pull request author's own approval however it was spelled,
+    // which is the conservative direction: a lower count, never a higher one.
+    expect(countApprovalsByOthers([approved], "mE")).toBe(0);
+  });
+
   // An approval left on an earlier commit still counts toward branch protection, and
   // countApprovalsByOthers counts it too, so this must agree with it or the pending-approval
   // increment would count the same approval twice.

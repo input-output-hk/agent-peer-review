@@ -7,7 +7,25 @@ import { gatherRails, postProposal, resolveActingLogin } from "./expedition-shar
 // The bots whose dependency pull requests this operation will look at. An allowlist, not a
 // heuristic: "looks like a bot" is not a security boundary, and every entry here is additionally
 // confirmed against GitHub's own actor type below.
+//
+// These are REST logins, which is what GitHub's pulls API reports (`user.login`). The same App shows
+// up as `app/renovate` through GitHub's GraphQL API, which is what the `gh` CLI prints and therefore
+// what a discover script matches on; that name lives in the taskflow's own botAuthors list. The two
+// surfaces are kept as two explicit lists rather than one fuzzy rule, so nothing has to guess.
 export const DEFAULT_BOT_ALLOWLIST = ["dependabot[bot]", "renovate[bot]"] as const;
+
+/**
+ * Whether `author` is one of the dependency bots this path handles.
+ *
+ * Exported so `requestPeerReview` can ask the SAME question with the same rule. The two have to
+ * agree exactly: a pull request the requester refuses because "the steward owns it" and the steward
+ * then declines as not-allowlisted would get less attention than one nobody special-cased at all.
+ * An exact comparison, deliberately: a looser rule here than the one used to accept the change would
+ * recreate that gap from the other side.
+ */
+export function isAllowlistedDependencyBot(author: string, allowlist: readonly string[]): boolean {
+  return allowlist.includes(author);
+}
 
 // At most this many package bumps are spelled out in the approving review body; the rest are
 // counted. The body is read by a human, and a bot upgrade sweeping a whole transitive tree would
@@ -32,6 +50,8 @@ function renderApprovalBody(input: {
   maxFiles: number;
   maxLines: number;
   headSha: string;
+  /** True only when this approval actually satisfied a required-approvals rule; see RailInputs. */
+  pendingApprovalCounted: boolean;
 }): string {
   const listed = input.bumps.slice(0, MAX_LISTED_PACKAGES);
   const remaining = input.bumps.length - listed.length;
@@ -56,7 +76,10 @@ function renderApprovalBody(input: {
     "",
     ...packages,
     "",
-    "Rails that passed: the diff is a version-only dependency change (every changed manifest line is a paired dependency version edit, every other changed file a lockfile); it fits the dependency size policy; required checks are green; GitHub reports a clean mergeable state; branch protection is satisfied, counting this approval toward its required-approvals rule; the security-alert rail is clear; no human review is in flight; autonomy \"auto\" was passed explicitly on this call; the head has not moved since the evaluation; and the approving login is not the author.",
+    // The protection clause is conditional because the honest statement differs: on a branch with no
+    // protection, or none that requires an approving review, this approval was counted toward
+    // nothing at all, and a fixed sentence claiming otherwise would be false on most repositories.
+    `Rails that passed: the diff is a version-only dependency change (every changed manifest line is a paired dependency version edit, every other changed file a lockfile); it fits the dependency size policy; required checks are green; GitHub reports a clean mergeable state; ${input.pendingApprovalCounted ? "branch protection is satisfied, counting this approval toward its required-approvals rule (the merge is judged separately, without it)" : "branch protection is satisfied"}; the security-alert rail is clear; no human review is in flight; autonomy "auto" was passed explicitly on this call; the head has not moved since the evaluation; and the approving login is not the author.`,
   ].join("\n");
 }
 
@@ -72,9 +95,10 @@ export interface ApproveDependencyUpgradeInput {
   autonomy?: "auto" | "propose";
   /**
    * Size caps for the gate's size rail. Each field defaults, independently, to DEPS_GATE_POLICY
-   * rather than to the general DEFAULT_GATE_POLICY: a lockfile's line count is mechanical churn, not
-   * reviewable surface (see DEPS_GATE_POLICY for the full reasoning). A caller may still pass either
-   * field, and the pi tool that exposes them clamps both so a caller can only tighten them.
+   * rather than to the general DEFAULT_GATE_POLICY, because for this class of change the authorship
+   * and content rails are what bound the risk and a lockfile's line count never was evidence either
+   * way (see DEPS_GATE_POLICY, which states plainly what that trade gives up). A caller may still
+   * pass either field, and the pi tool that exposes them clamps both so a caller can only tighten.
    */
   policy?: { maxFiles?: number; maxLines?: number };
   mergeMethod?: "merge" | "squash" | "rebase";
@@ -92,6 +116,10 @@ export interface ApproveDependencyUpgradeResult {
    * - `not-eligible`: this path does not handle the change (closed, draft, non-bot author, not a
    *   version-only diff, a major or unreadable bump).
    * - `blocked`: a merge was refused and this agent has no approval standing on the pull request.
+   *   Today's auto path cannot produce it: every exit below happens after an approval stands, so
+   *   there is no code path to hunt for. It is kept as the fail-safe answer to "the merge failed and
+   *   nothing was approved", so that a future branch which merges without approving reports that
+   *   truthfully instead of claiming an approval it never made.
    */
   action: "approved-and-merged" | "approved" | "proposed" | "already-proposed" | "not-eligible" | "blocked";
   reasons: string[];
@@ -210,19 +238,38 @@ export async function approveDependencyUpgrade(
     policy,
   };
   const decision = evaluateGates(gateInput);
-  const reasons = rails.securityDetail !== null ? [...decision.reasons, rails.securityDetail] : [...decision.reasons];
+
+  // A DISMISSED review by this agent at THIS commit is a maintainer saying no to this exact approval,
+  // in the loudest way GitHub offers. Nothing else can see it: dismissing creates no review by the
+  // dismisser, so rail 7 finds no human in flight, and the dismissal clears the standing approval,
+  // which would otherwise make this operation re-approve the very verdict a human just struck down.
+  // So it is a hard stop on the auto path. Head-specific on purpose: once the bot force-pushes, the
+  // dismissed verdict was about a different diff.
+  const dismissedAtHead = rails.reviews.some((r) =>
+    r.author.toLowerCase() === actingLogin.toLowerCase() && r.state === "DISMISSED" && r.commitId === headSha);
+
+  const reasons = [
+    ...decision.reasons,
+    ...(dismissedAtHead ? ["this agent's own approval of this commit was dismissed; re-approving would override an explicit human refusal"] : []),
+    ...(rails.securityDetail !== null ? [rails.securityDetail] : []),
+  ];
   const bumps = dep.changedPackages.map((p) => `\`${p.name}\`: ${p.from} -> ${p.to}`);
 
-  if (decision.action === "auto") {
+  if (decision.action === "auto" && !dismissedAtHead) {
     // Approving is idempotent per head: a tick whose merge was refused (say the pull request went
     // briefly unmergeable) re-runs everything above, and the standing approval at this exact commit
     // must not turn into a second one.
     //
-    // Note this is a HEAD-specific question, unlike rails.actorHasStandingApproval: protection
-    // counts a standing approval whatever commit it was left on, but an approval left on a commit
-    // the bot has since force-pushed past does not state a verdict on the diff being merged now, so
-    // a moved head earns a fresh one.
-    const alreadyApproved = rails.reviews.some((r) => r.author === actingLogin && r.state === "APPROVED" && r.commitId === headSha);
+    // Two conditions, and both are needed. The standing verdict has to BE an approval, which is the
+    // same question rail 5 asked when it granted the pending approval, so the two cannot disagree:
+    // an APPROVED row at this head followed by a CHANGES_REQUESTED at the same head leaves rail 5
+    // counting a pending approval that this guard would otherwise decide not to submit, and the
+    // operation would then report "approved" on every tick forever while its own outstanding
+    // CHANGES_REQUESTED kept the pull request blocked. And it has to be at THIS head, because
+    // protection counts a standing approval whatever commit it was left on, while an approval left on
+    // a commit the bot has since force-pushed past states no verdict on the diff being merged now.
+    const alreadyApproved = rails.actorHasStandingApproval
+      && rails.reviews.some((r) => r.author.toLowerCase() === actingLogin.toLowerCase() && r.state === "APPROVED" && r.commitId === headSha);
     // Tracked rather than assumed: every outcome below has to say whether an approval of ours is
     // standing on the pull request, and the two ways it gets there (submitted now, or submitted on
     // an earlier tick at this same head) must not be reported differently.
@@ -241,6 +288,7 @@ export async function approveDependencyUpgrade(
           maxFiles: policy.maxFiles,
           maxLines: policy.maxLines,
           headSha,
+          pendingApprovalCounted: rails.pendingApprovalCounted,
         }),
       });
       // The write is durable and independently useful: it unblocks the pull request for whoever
@@ -248,30 +296,58 @@ export async function approveDependencyUpgrade(
       approvalStands = true;
     }
 
-    // Re-read before merging, WITHOUT willApproveAs. The rails above counted the approval this
-    // operation was about to add, which is what makes the decision to approve possible on a
-    // protected repository, and it would be a different claim entirely to let that same arithmetic
-    // authorize the merge. So protection, mergeability, and the checks are read again and judged as
-    // they now really are: if GitHub does not agree that protection is satisfied once the approval
-    // is in (a second required approval, a required check that is not green yet), this stops.
+    // Re-read every rail before merging, WITHOUT willApproveAs. Two separate reasons, and both
+    // matter:
+    //
+    //   1. The rails above counted the approval this operation was about to add, which is what makes
+    //      the decision to APPROVE possible on a protected repository. Letting that same arithmetic
+    //      authorize the MERGE would be a different claim entirely, so the +1 is dropped here and
+    //      protection is judged as it now really is.
+    //   2. Approving is a write, and writes take time. Anything can have changed in that window: a
+    //      human can post CHANGES_REQUESTED or be asked to review, a security alert can appear, a
+    //      check can go red, the head can move.
+    //
+    // So the decision is the GATE's again, on the after-state, rather than a hand-written list of
+    // the rails someone thought worth re-checking. That is the point: a rail added to evaluateGates
+    // later is re-checked here automatically, and the failure mode of forgetting one (a merge that
+    // proceeds through a rail that has since flipped) cannot be reintroduced by omission.
+    // isApproving is false because the remaining action is the merge, not an approval.
     const afterMergeability = await gh.getMergeability(repo, pr);
     const after = await gatherRails(gh, {
       repo, pr, headSha, author: pull.author, actingLogin,
       mergeability: afterMergeability, files, knownAgentLogins: input.knownAgentLogins,
     });
 
+    // A draft is resolved here rather than folded into the gate, exactly as on the way in:
+    // GateInput.mergeableState has no "draft" member, so this narrows it out first.
     const blockers: string[] = [];
-    if (!after.branchProtectionSatisfied) {
-      blockers.push("branch protection still not satisfied after approving; a required check or a second approval is outstanding");
-    }
-    if (afterMergeability.draft || afterMergeability.state !== "clean") {
-      blockers.push(`mergeable state is ${afterMergeability.draft ? "draft" : afterMergeability.state} (need clean) after approving`);
-    }
-    if (!after.headShaGuardPassed) {
-      blockers.push("the head moved after the approval; the next tick re-evaluates the new commit");
+    if (afterMergeability.draft || afterMergeability.state === "draft") {
+      blockers.push("the pull request became a draft after the approval");
+    } else {
+      const afterDecision = evaluateGates({
+        ...gateInput,
+        changedFiles: after.changedFiles,
+        changedLines: after.changedLines,
+        checks: after.checksSummary,
+        mergeableState: afterMergeability.state,
+        branchProtectionSatisfied: after.branchProtectionSatisfied,
+        hasNewSecurityAlert: after.hasNewSecurityAlert,
+        humanReviewInFlight: after.humanReviewInFlight,
+        headShaGuardPassed: after.headShaGuardPassed,
+        isApproving: false,
+      });
+      if (afterDecision.action !== "auto") {
+        blockers.push(...afterDecision.reasons, ...(after.securityDetail !== null ? [after.securityDetail] : []));
+      }
     }
     if (blockers.length > 0) {
-      return { action: approvalStands ? "approved" : "blocked", reasons: blockers };
+      // The leading line is what makes the rest readable: on its own, "branch protection requirements
+      // are not satisfied" would look like the verdict that stopped an approval, when in fact the
+      // approval is already in and this is what stopped the merge that followed it.
+      return {
+        action: approvalStands ? "approved" : "blocked",
+        reasons: [`the approval stands at ${headSha}, but the merge did not happen: re-checking every rail after approving found`, ...blockers],
+      };
     }
 
     // As in expedite: a THROWN error here means the outcome is unknown, not that nothing happened.

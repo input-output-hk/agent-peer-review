@@ -141,6 +141,11 @@ describe("Flow C (pr-steward): approve a bot dependency upgrade", () => {
     expect(gh.reviews[0].body).toContain("`pnpm`: 10.34.3 -> 10.34.4");
     expect(gh.reviews[0].body).toContain("Semver level: patch");
     expect(gh.reviews[0].body).toContain(HEAD);
+    // This repository really does require an approving review, so the body says the approval was
+    // counted toward it, and says the merge was judged separately. Both halves are load-bearing for
+    // a maintainer auditing how an agent-only approval satisfied protection.
+    expect(gh.reviews[0].body).toContain("counting this approval toward its required-approvals rule");
+    expect(gh.reviews[0].body).toContain("the merge is judged separately, without it");
     expect(gh.merges).toEqual([{ repo: REPO, pr: PR, sha: HEAD, method: "merge", commitTitle: undefined }]);
     expect((await gh.getPullRequest(REPO, PR)).state).toBe("merged");
     expect(await gh.listComments(REPO, PR)).toEqual([]); // the auto path posts no proposal

@@ -282,6 +282,26 @@ describe("approveDependencyUpgrade", () => {
       expect(gh.merges).toEqual([]);
     });
 
+    // The same double count, reached through a case difference rather than through a SHA filter. The
+    // fake records the review under the login that submitted it, so this is exactly what a gateway
+    // returning "Me" for an agent configured as "me" would produce.
+    it("does not double count its own standing approval when the API spells the login differently", async () => {
+      const gh = seedBotBump();
+      gh.setBranchProtection(REPO, "main", requiresApprovals(2));
+      gh.login = "Me";
+      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "approved on an earlier tick" });
+      gh.login = ME;
+
+      // "Me" is listed as an agent so rail 7 stays quiet and the protection arithmetic is the only
+      // thing deciding. (Left unlisted, human-review.ts reads the differently-cased login as a human
+      // and holds the pull request anyway, which its own comment calls the safe direction.)
+      const result = await run(gh, { autonomy: "auto", knownAgentLogins: ["Me"] });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons).toEqual(["branch protection requirements are not satisfied"]);
+      expect(gh.reviews).toHaveLength(1);
+      expect(gh.merges).toEqual([]);
+    });
+
     it("reaches a two-approval requirement alongside another reviewer's approval", async () => {
       const gh = seedBotBump();
       gh.setBranchProtection(REPO, "main", requiresApprovals(2));
@@ -326,7 +346,9 @@ describe("approveDependencyUpgrade", () => {
   });
 
   // The merge is judged against state read AFTER the approval landed, never on the strength of the
-  // pending-approval arithmetic that authorized the approval itself.
+  // pending-approval arithmetic that authorized the approval itself. And it is judged by the GATE, on
+  // every rail, because approving is a write and the window it opens is long enough for a human to
+  // arrive: a hand-picked list of rails worth re-reading is a list someone can forget to extend.
   describe("the re-check between approving and merging", () => {
     /** Green on the first read, failing afterwards: a required check that started a new run. */
     class ChecksTurnRed extends FakeGitHubGateway {
@@ -337,18 +359,90 @@ describe("approveDependencyUpgrade", () => {
       }
     }
 
+    /**
+     * Runs `mutate` at the moment the approval lands: the window every case below exercises.
+     *
+     * `mutate` writes to the fake's own state directly rather than calling a gateway method, because
+     * it runs INSIDE the overridden submitReview and calling that again would recurse.
+     */
+    function inTheWindow(mutate: (gh: FakeGitHubGateway) => void): FakeGitHubGateway {
+      class DuringApproval extends FakeGitHubGateway {
+        async submitReview(...args: Parameters<FakeGitHubGateway["submitReview"]>): Promise<{ url: string }> {
+          const result = await super.submitReview(...args);
+          mutate(this);
+          return result;
+        }
+      }
+      return seedBotBump(undefined, new DuringApproval());
+    }
+
+    /** A review row landing on the pull request from someone else, as the fake stores them. */
+    const pushReview = (gh: FakeGitHubGateway, author: string, state: string): void => {
+      gh.reviews.push({ repo: REPO, pr: PR, id: 900 + gh.reviews.length, author, state, event: state, body: "", commitId: HEAD, submittedAt: "t900" });
+    };
+
+    /** The approval landed, nothing merged, and the reasons say the re-check is what stopped it. */
+    async function expectApprovedNotMerged(gh: FakeGitHubGateway, blocker: string): Promise<void> {
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved");
+      expect(result.reasons[0]).toContain("the merge did not happen: re-checking every rail after approving");
+      expect(result.reasons.some((r) => r.includes(blocker)), result.reasons.join(" | ")).toBe(true);
+      // Exactly one approval of ours, at the commit that was evaluated, and no merge at all.
+      const mine = gh.reviews.filter((r) => r.author === ME);
+      expect(mine).toHaveLength(1);
+      expect(mine[0]).toMatchObject({ event: "APPROVE", state: "APPROVED", commitId: HEAD });
+      expect(gh.merges).toEqual([]);
+      expect((await gh.getPullRequest(REPO, PR)).state).toBe("open");
+    }
+
     it("returns approved with the approval recorded and no merge when protection is still unsatisfied", async () => {
       const gh = seedBotBump(undefined, new ChecksTurnRed());
       gh.setBranchProtection(REPO, "main", { ...requiresApprovals(1), requiredChecks: ["build"] });
 
       const result = await run(gh, { autonomy: "auto" });
       expect(result.action).toBe("approved");
-      expect(result.reasons).toEqual(["branch protection still not satisfied after approving; a required check or a second approval is outstanding"]);
+      expect(result.reasons).toContain("branch protection requirements are not satisfied");
       // The approval is durable and did happen; the merge did not.
       expect(gh.reviews).toHaveLength(1);
       expect(gh.reviews[0]).toMatchObject({ author: ME, event: "APPROVE", commitId: HEAD });
       expect(gh.merges).toEqual([]);
       expect((await gh.getPullRequest(REPO, PR)).state).toBe("open");
+    });
+
+    // Four rails that the first evaluation passed and the after-state does not. Each one used to
+    // merge anyway, because the re-check looked at protection, mergeability, and the head only.
+    it("refuses the merge when a human posts CHANGES_REQUESTED while the approval is landing", async () => {
+      const gh = inTheWindow((self) => pushReview(self, "alice", "CHANGES_REQUESTED"));
+      await expectApprovedNotMerged(gh, "a human review is in flight");
+    });
+
+    it("refuses the merge when a human is asked to review while the approval is landing", async () => {
+      const gh = inTheWindow((self) => self.setRequestedReviewers(REPO, PR, { users: ["alice"], teams: [] }));
+      await expectApprovedNotMerged(gh, "a human review is in flight");
+    });
+
+    it("refuses the merge when a security alert appears while the approval is landing", async () => {
+      const gh = inTheWindow((self) => self.setAlertCount(REPO, 2));
+      await expectApprovedNotMerged(gh, "the security alert rail is not satisfied");
+      // and the specific cause is quoted, not just the rail
+      const result = await run(seedBotBump(), { autonomy: "auto" }); // sanity: a clean run still merges
+      expect(result.action).toBe("approved-and-merged");
+    });
+
+    // The rollup goes red on a repository whose protection declares no required checks, so
+    // protectionSatisfied has nothing to say about it and only rail 3 catches it.
+    it("refuses the merge when the checks go red with no required checks declared", async () => {
+      const gh = seedBotBump(undefined, new ChecksTurnRed());
+      gh.setBranchProtection(REPO, "main", requiresApprovals(1)); // requiredChecks: []
+      await expectApprovedNotMerged(gh, "required checks are failing (need green)");
+    });
+
+    it("quotes the security cause, not only the rail, when the alert count appears in the window", async () => {
+      const gh = inTheWindow((self) => self.setAlertCount(REPO, null));
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved");
+      expect(result.reasons.some((r) => r.includes("failing closed"))).toBe(true);
+      expect(gh.merges).toEqual([]);
     });
 
     /** The bot force-pushes in the moment between the approval and the merge. */
@@ -366,7 +460,7 @@ describe("approveDependencyUpgrade", () => {
 
       const result = await run(gh, { autonomy: "auto" });
       expect(result.action).toBe("approved");
-      expect(result.reasons.some((r) => r.includes("the head moved after the approval"))).toBe(true);
+      expect(result.reasons.some((r) => r.includes("head SHA guard failed"))).toBe(true);
       expect(gh.reviews[0].commitId).toBe(HEAD); // the approval names the commit it judged
       expect(gh.merges).toEqual([]);
     });
@@ -403,6 +497,24 @@ describe("approveDependencyUpgrade", () => {
       expect(gh.reviews).toHaveLength(1);
     });
 
+    // The standing verdict and the "did I already approve at this head" guard have to agree. An
+    // APPROVED row at this head followed by a CHANGES_REQUESTED at the same head satisfies a naive
+    // row scan while the STANDING verdict is a refusal, so rail 5 grants a pending approval that the
+    // guard then declines to submit: the tool would report "approved" on every tick forever while its
+    // own outstanding CHANGES_REQUESTED kept the pull request blocked.
+    it("submits a fresh approval when its own standing verdict at this head is no longer an approval", async () => {
+      const gh = seedBotBump();
+      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "approved earlier" });
+      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "REQUEST_CHANGES", body: "then found a problem" });
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved-and-merged"); // not a permanent "approved" loop
+      expect(gh.reviews).toHaveLength(3);
+      expect(gh.reviews[2]).toMatchObject({ author: ME, event: "APPROVE", commitId: HEAD });
+      expect(gh.merges).toHaveLength(1);
+    });
+
     it("re-checks even when the approval was submitted on an earlier tick", async () => {
       const gh = seedBotBump(undefined, new ChecksTurnRed());
       gh.setBranchProtection(REPO, "main", { ...requiresApprovals(1), requiredChecks: ["build"] });
@@ -416,9 +528,52 @@ describe("approveDependencyUpgrade", () => {
     });
   });
 
-  // A dependency upgrade is judged on the content check (version-only manifest lines plus
-  // lockfiles), so the line cap is a sanity bound rather than the safety mechanism. See
-  // DEPS_GATE_POLICY.
+  // A dismissal is a maintainer overruling this agent's approval, in the loudest way GitHub offers,
+  // and it is invisible to every other rail: dismissing creates no review by the dismisser, so rail 7
+  // sees no human in flight, and it clears the standing approval, which is what would otherwise make
+  // this operation re-approve the verdict a human just struck down.
+  describe("an approval a human dismissed", () => {
+    /** Submit an approval at `commitId`, then have a maintainer dismiss it. */
+    async function dismissedApproval(gh: FakeGitHubGateway, commitId: string): Promise<void> {
+      await gh.submitReview(REPO, PR, { commitId, event: "APPROVE", body: "approved on an earlier tick" });
+      gh.reviews[gh.reviews.length - 1].state = "DISMISSED"; // what a maintainer's dismissal leaves behind
+    }
+
+    it("is a hard stop on the auto path: it proposes, approves nothing, and merges nothing", async () => {
+      const gh = seedBotBump();
+      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+      await dismissedApproval(gh, HEAD);
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons.some((r) => r.includes("dismissed"))).toBe(true);
+      expect(gh.reviews).toHaveLength(1); // the dismissed one, and no replacement
+      expect(gh.merges).toEqual([]);
+      // The reason reaches the maintainer, not just the return value.
+      expect((await gh.listComments(REPO, PR))[0].body).toContain("dismissed");
+    });
+
+    it("stops even where protection would not have needed the approval at all", async () => {
+      const gh = seedBotBump(); // no protection: rail 5 was never the obstacle
+      await dismissedApproval(gh, HEAD);
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(gh.merges).toEqual([]);
+    });
+
+    it("does not stop on a dismissal left at an earlier head: that verdict was about another diff", async () => {
+      const gh = seedBotBump();
+      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+      await dismissedApproval(gh, "sha0000");
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved-and-merged");
+      expect(gh.merges).toHaveLength(1);
+    });
+  });
+
+  // A dependency upgrade is judged on the content and authorship rails, not on its line count: the
+  // manifest lines are verified and lockfile content is never read at all. See DEPS_GATE_POLICY.
   describe("the dependency size policy", () => {
     const bigLockfile = (lines: number): DetailedPullFile => ({
       filename: "package-lock.json", status: "modified", additions: lines, deletions: 0, patch: "@@ -1 +1 @@\n-a\n+b",
@@ -492,7 +647,23 @@ describe("approveDependencyUpgrade", () => {
       expect(body).toContain(`Author: ${BOT}`);
       expect(body).toContain("2 file(s), 26 changed line(s)");
       expect(body).toContain("Manifests: package.json");
-      expect(body).toContain("branch protection is satisfied, counting this approval");
+      // This repository has no protection at all, so the approval was counted toward nothing and the
+      // body must not claim otherwise. The protected case is asserted in the steward flow test.
+      expect(body).toContain("branch protection is satisfied;");
+      expect(body).not.toContain("counting this approval");
+    });
+
+    it("claims the approval was counted only where a required-approvals rule actually exists", async () => {
+      const counted = seedBotBump();
+      counted.setBranchProtection(REPO, "main", requiresApprovals(1));
+      await run(counted, { autonomy: "auto" });
+      expect(counted.reviews[0].body).toContain("counting this approval toward its required-approvals rule");
+
+      // Protection exists but asks for zero approvals: the pending approval changed no arithmetic.
+      const vacuous = seedBotBump();
+      vacuous.setBranchProtection(REPO, "main", { ...requiresApprovals(0), requiresPullRequestReviews: true });
+      await run(vacuous, { autonomy: "auto" });
+      expect(vacuous.reviews[0].body).not.toContain("counting this approval");
     });
 
     it("caps the package list and counts the rest", async () => {

@@ -110,12 +110,19 @@ export function sortReviews(reviews: Review[]): Review[] {
  * One implementation, because both questions asked below ("how many others approve" and "does this
  * one login approve") have to be answered the same way or the pending-approval increment would
  * double-count an approval already in the total.
+ *
+ * Keyed by the LOWERCASED login, and every comparison against it lowercases too. GitHub logins are
+ * unique case-insensitively, so two rows differing only in case are one account, and an exact
+ * comparison here would fail OPEN in the one place it matters: `hasStandingApproval("Me")` would
+ * report "no approval yet" for an approval `countApprovalsByOthers` is already counting, and the
+ * single approval would be counted twice. It also means the pull request author's own approval is
+ * excluded whatever case the API reported it in, which is the conservative direction.
  */
 function standingVerdicts(reviews: Review[]): Map<string, string> {
   const latestVerdict = new Map<string, string>();
   for (const r of sortReviews(reviews)) {
     if (!VERDICT_STATES.has(r.state)) continue;
-    latestVerdict.set(r.author, r.state);
+    latestVerdict.set(r.author.toLowerCase(), r.state);
   }
   return latestVerdict;
 }
@@ -130,9 +137,10 @@ function standingVerdicts(reviews: Review[]): Map<string, string> {
  * accept it toward a required-approvals rule.
  */
 export function countApprovalsByOthers(reviews: Review[], author: string): number {
+  const excluded = author.toLowerCase();
   let count = 0;
   for (const [login, state] of standingVerdicts(reviews)) {
-    if (login === author) continue;
+    if (login === excluded) continue;
     if (state === "APPROVED") count++;
   }
   return count;
@@ -147,8 +155,9 @@ export function countApprovalsByOthers(reviews: Review[], author: string): numbe
  * approval that is already in the total. Deliberately NOT filtered by commit SHA: protection counts
  * standing approvals whatever commit they were left on, countApprovalsByOthers does not filter
  * either, and filtering here would report "no approval yet" for one that protection is already
- * counting, which is precisely the double count this answers.
+ * counting, which is precisely the double count this answers. Logins are compared
+ * case-insensitively for the same reason; see standingVerdicts.
  */
 export function hasStandingApproval(reviews: Review[], login: string): boolean {
-  return standingVerdicts(reviews).get(login) === "APPROVED";
+  return standingVerdicts(reviews).get(login.toLowerCase()) === "APPROVED";
 }

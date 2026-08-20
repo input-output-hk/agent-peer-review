@@ -183,15 +183,16 @@ describe("Flow A (pr-requester): stabilize, expedite, request a peer review", ()
     });
   });
 
-  // Issue #48: a bot-authored pull request is not a peer's to review. GitHub only forbids approving
-  // your OWN pull request, so this agent may review and approve a bot's itself, which is the steward
-  // flow's job. Handing it to another engineer's agent adds a round trip and a person's queue for
-  // nothing.
-  describe("a bot-authored pull request", () => {
+  // Issue #48: a dependency bot's pull request is not a peer's to review. GitHub only forbids
+  // approving your OWN pull request, so this agent may review and approve such a change itself, which
+  // is the steward flow's job. Handing it to another engineer's agent adds a round trip and a person's
+  // queue for nothing.
+  describe("a pull request from a dependency bot", () => {
     it("is never handed to a peer, even when the gate asks for a review", async () => {
       const gh = new FakeGitHubGateway();
       seedPr(gh, HEAD, [DOCS_FILE, SOURCE_FILE]);
-      gh.prs.get(`${REPO}#${PR}`)!.author = "app/renovate"; // the author string from issue #48
+      gh.prs.get(`${REPO}#${PR}`)!.author = "renovate[bot]"; // the REST login behind issue #48
+      gh.setActorType("renovate[bot]", "Bot");
       seedClean(gh, HEAD);
 
       // Steps 1 and 2 are unchanged: a real open pull request, and a gate verdict that names the
@@ -216,6 +217,24 @@ describe("Flow A (pr-requester): stabilize, expedite, request a peer review", ()
       expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
       // The only durable trace of the tick is the proposal comment step 2 posted.
       expect((await soleMarker(gh)).marker.kind).toBe("expedite-proposal");
+    });
+
+    // The refusal is only as wide as the steward's allowlist. A bot outside it would be declined
+    // there too, so this flow has to keep handling it or the pull request gets no attention at all.
+    it("still hands a bot the steward cannot take to a peer, source changes and all", async () => {
+      const gh = new FakeGitHubGateway();
+      seedPr(gh, HEAD, [DOCS_FILE, SOURCE_FILE]);
+      gh.prs.get(`${REPO}#${PR}`)!.author = "github-actions[bot]";
+      gh.setActorType("github-actions[bot]", "Bot");
+      seedClean(gh, HEAD);
+
+      const proposed = await runExpedite(gh, tick(1));
+      expect(proposed.reasons.some((r) => r.startsWith("not auto-eligible:") && r.includes("source"))).toBe(true);
+
+      const requested = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] });
+      expect(requested.status).toBe("requested");
+      expect((await gh.getPullRequest(REPO, PR)).labels).toEqual([TRIGGER]);
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [PEER], teams: [] });
     });
   });
 

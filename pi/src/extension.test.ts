@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { serializeMarker, PRIMARY_MARKER, DEFAULT_GATE_POLICY, DEPS_GATE_POLICY } from "@input-output-hk/agent-review";
+import { serializeMarker, PRIMARY_MARKER, DEFAULT_GATE_POLICY, DEPS_GATE_POLICY, DEFAULT_BOT_ALLOWLIST } from "@input-output-hk/agent-review";
 import { registerTools } from "./extension.js";
 
 function fakePi() {
@@ -365,12 +365,13 @@ describe("pi extension", () => {
     expect(gh.reviews[0]).toMatchObject({ author: "me", state: "APPROVED", commitId: HEAD });
   });
 
-  it("pr_request_review reports bot-authored and requests nothing for a bot's pull request", async () => {
+  it("pr_request_review reports bot-authored and requests nothing for a dependency bot's pull request", async () => {
     const pi = fakePi();
     const calls: any = {};
+    const author = DEFAULT_BOT_ALLOWLIST[1]; // renovate[bot], the REST login behind issue #48
     const gh = {
-      getPullRequest: async () => ({ number: 7, title: "t", author: "app/renovate", headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
-      getActorType: async () => "unknown" as const, // an App integration; the name is what catches it
+      getPullRequest: async () => ({ number: 7, title: "t", author, headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
+      getActorType: async () => "Bot" as const,
       addLabels: async () => { calls.labeled = true; },
       requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
     } as any;
@@ -382,6 +383,22 @@ describe("pi extension", () => {
     expect(result.reason).toContain("steward");
     expect(calls.reviewers).toBeUndefined(); // nobody was asked
     expect(calls.labeled).toBeUndefined();   // nothing was labeled
+  });
+
+  it("pr_request_review still requests a review for a bot outside the dependency allowlist", async () => {
+    const pi = fakePi();
+    const calls: any = {};
+    const gh = {
+      getPullRequest: async () => ({ number: 8, title: "t", author: "github-actions[bot]", headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
+      getActorType: async () => "Bot" as const, // a bot, but not one the steward path can take
+      addLabels: async () => { calls.labeled = true; },
+      requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
+    } as any;
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    const requestReview = pi.tools.find((t) => t.name === "pr_request_review");
+    const res = await requestReview.execute("id-r4", { repo: "o/r", pr: 8 }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).status).toBe("requested");
+    expect(calls.reviewers).toEqual(["patextreme"]);
   });
 
   it("pr_approve_dep_upgrade cannot widen the size rail past the deps policy cap", async () => {
