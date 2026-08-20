@@ -340,13 +340,16 @@ describe("expedite", () => {
       expect((await run(agent, { autonomy: "auto", knownAgentLogins: ["peer-bot"] })).action).toBe("merged");
     });
 
-    // The regression guard for the bug itself: a standing approval must never again be read as a
-    // review in flight. Stated over every login it could come from, so no future change can quietly
-    // restore the conflation for one of them.
-    it.each(["alice", "peer-bot", ME])("never reports a standing approval by %s as a human review in flight", async (approver) => {
-      const { result } = await approvedBy(approver);
-      expect(result.reasons).not.toContain("a human review is in flight");
-      expect(result.reasons.some((r) => r.includes("in flight"))).toBe(false);
+    // The regression guard for the bug itself: a standing approval must never again be read as
+    // anything a rail can refuse. Stated over every login it could come from, so no future change can
+    // quietly restore the conflation for one of them, and asserted on the ACTION as well as on the
+    // wording, so re-labelling the old boolean as some other kind of human obstacle fails here too.
+    it.each(["alice", "peer-bot", ME])("never treats a standing approval by %s as an obstacle", async (approver) => {
+      const { gh, result } = await approvedBy(approver);
+      expect(result.action).toBe("merged");
+      expect(result.reasons).toEqual([]);
+      expect(result.reasons.some((r) => r.includes("human") || r.includes("in flight"))).toBe(false);
+      expect(gh.merges).toHaveLength(1);
     });
   });
 
