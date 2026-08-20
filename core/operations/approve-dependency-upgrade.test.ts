@@ -20,6 +20,34 @@ const requiresApprovals = (count: number): BranchProtectionSummary => ({
   requiresConversationResolution: false,
 });
 
+const mergeable = (state: Mergeability["state"]): Mergeability =>
+  ({ state, mergeable: state === "clean", draft: false, baseRef: "main", headSha: HEAD });
+
+/**
+ * A protected base branch as GitHub really presents it while the required review is missing:
+ * protection asking for `count` approvals AND a mergeable state of "blocked".
+ *
+ * The pairing is the point. Seeding protection while leaving the mergeable state clean describes a
+ * pull request GitHub cannot produce, and that impossible combination is what hid the rail 4 deadlock
+ * from two review passes.
+ */
+function seedProtectedAwaitingReview(gh: FakeGitHubGateway, count: number, over: Partial<BranchProtectionSummary> = {}): void {
+  gh.setBranchProtection(REPO, "main", { ...requiresApprovals(count), ...over });
+  gh.setMergeability(REPO, PR, mergeable("blocked"));
+}
+
+/**
+ * What GitHub does once the approval it was waiting for arrives: mergeStateStatus is recomputed, and
+ * a pull request blocked only by the missing review becomes clean.
+ */
+class RecomputesOnApproval extends FakeGitHubGateway {
+  async submitReview(...args: Parameters<FakeGitHubGateway["submitReview"]>): Promise<{ url: string }> {
+    const result = await super.submitReview(...args);
+    this.setMergeability(REPO, PR, mergeable("clean"));
+    return result;
+  }
+}
+
 const bumpPatch = (name: string, from: string, to: string): string =>
   ["@@ -12,7 +12,7 @@", '   "dependencies": {', `-    "${name}": "${from}",`, `+    "${name}": "${to}",`, '     "zod": "^3.23.0"'].join("\n");
 
@@ -37,6 +65,9 @@ function seedBotBump<T extends FakeGitHubGateway = FakeGitHubGateway>(
   gh.setActorType(BOT, "Bot");
   gh.setDetailedFiles(REPO, PR, files);
   gh.setChecks(REPO, HEAD, [{ name: "build", status: "success" }]);
+  // Stated explicitly, because the fake's unseeded default is "unknown" and fails rail 4. "clean" is
+  // the honest value for this fixture: no protection, so nothing is waiting on a review.
+  gh.setMergeability(REPO, PR, mergeable("clean"));
   return gh;
 }
 
@@ -242,13 +273,18 @@ describe("approveDependencyUpgrade", () => {
     });
   });
 
-  // Issue #48: on a repository that requires an approving review, rail 5 was unsatisfiable for the
-  // operation whose own approval is the thing that would satisfy it, so the auto path was
-  // unreachable on exactly the repositories that need it.
+  // Issue #48: on a repository that requires an approving review, the operation whose own approval is
+  // the thing that would satisfy the requirement could not get past the rails that were failing
+  // BECAUSE the approval was missing. Two rails, discovered one after the other: rail 5 (branch
+  // protection counts the required approvals) and rail 4 (GitHub reports the pull request as
+  // "blocked" the whole time it waits for that review). Every fixture here therefore seeds both
+  // facts, because GitHub always reports them together.
   describe("a repository that requires an approving review", () => {
     it("approves and merges when one approval is required and none stands yet", async () => {
-      const gh = seedBotBump();
-      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+      // The production sequence end to end: blocked and unapproved, this agent approves, GitHub
+      // recomputes the mergeable state, the re-check sees a genuinely clean state, and it merges.
+      const gh = seedBotBump(undefined, new RecomputesOnApproval());
+      seedProtectedAwaitingReview(gh, 1);
 
       const result = await run(gh, { autonomy: "auto" });
       expect(result).toEqual({ action: "approved-and-merged", reasons: [] });
@@ -257,9 +293,23 @@ describe("approveDependencyUpgrade", () => {
       expect(gh.merges).toEqual([{ repo: REPO, pr: PR, sha: HEAD, method: "merge", commitTitle: undefined }]);
     });
 
+    // The same repository, with a gateway that never recomputes: the approval lands and the merge
+    // does not, because the only thing rail 4's tolerance ever buys is the approval itself.
+    it("approves but does not merge while GitHub still reports blocked afterwards", async () => {
+      const gh = seedBotBump();
+      seedProtectedAwaitingReview(gh, 1);
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved");
+      expect(result.reasons.some((r) => r.includes("mergeable state is blocked (need clean)"))).toBe(true);
+      expect(gh.reviews).toHaveLength(1); // the approval is real and durable
+      expect(gh.merges).toEqual([]);      // and nothing was merged on a state we cannot verify
+      expect((await gh.getPullRequest(REPO, PR)).state).toBe("open");
+    });
+
     it("proposes instead when two approvals are required and none stands: the pending one adds exactly one", async () => {
       const gh = seedBotBump();
-      gh.setBranchProtection(REPO, "main", requiresApprovals(2));
+      seedProtectedAwaitingReview(gh, 2);
 
       const result = await run(gh, { autonomy: "auto" });
       expect(result.action).toBe("proposed");
@@ -270,14 +320,17 @@ describe("approveDependencyUpgrade", () => {
 
     it("does not count its own standing approval twice toward a two-approval requirement", async () => {
       const gh = seedBotBump();
-      gh.setBranchProtection(REPO, "main", requiresApprovals(2));
+      seedProtectedAwaitingReview(gh, 2);
       // One approval by this agent already stands, so it is already inside approvalsByOthers. Adding
       // a pending one on top would reach two and merge on a single approval.
       await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "approved on an earlier tick" });
 
       const result = await run(gh, { autonomy: "auto" });
       expect(result.action).toBe("proposed");
-      expect(result.reasons).toEqual(["branch protection requirements are not satisfied"]);
+      expect(result.reasons).toContain("branch protection requirements are not satisfied");
+      // A standing approval also withholds the rail 4 allowance, so GitHub's own "blocked" is a
+      // second, equally correct reason. Both say the same thing: one approval is not two.
+      expect(result.reasons).toContain("mergeable state is blocked (need clean)");
       expect(gh.reviews).toHaveLength(1); // the standing one, unchanged
       expect(gh.merges).toEqual([]);
     });
@@ -287,7 +340,7 @@ describe("approveDependencyUpgrade", () => {
     // returning "Me" for an agent configured as "me" would produce.
     it("does not double count its own standing approval when the API spells the login differently", async () => {
       const gh = seedBotBump();
-      gh.setBranchProtection(REPO, "main", requiresApprovals(2));
+      seedProtectedAwaitingReview(gh, 2);
       gh.login = "Me";
       await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "approved on an earlier tick" });
       gh.login = ME;
@@ -297,14 +350,14 @@ describe("approveDependencyUpgrade", () => {
       // and holds the pull request anyway, which its own comment calls the safe direction.)
       const result = await run(gh, { autonomy: "auto", knownAgentLogins: ["Me"] });
       expect(result.action).toBe("proposed");
-      expect(result.reasons).toEqual(["branch protection requirements are not satisfied"]);
+      expect(result.reasons).toContain("branch protection requirements are not satisfied");
       expect(gh.reviews).toHaveLength(1);
       expect(gh.merges).toEqual([]);
     });
 
     it("reaches a two-approval requirement alongside another reviewer's approval", async () => {
-      const gh = seedBotBump();
-      gh.setBranchProtection(REPO, "main", requiresApprovals(2));
+      const gh = seedBotBump(undefined, new RecomputesOnApproval());
+      seedProtectedAwaitingReview(gh, 2);
       gh.login = "peer-agent"; // someone else's approval, submitted as that login
       await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "looks fine" });
       gh.login = ME;
@@ -319,7 +372,7 @@ describe("approveDependencyUpgrade", () => {
 
     it("holds off when the other standing approval is a human's, even at two of two", async () => {
       const gh = seedBotBump();
-      gh.setBranchProtection(REPO, "main", requiresApprovals(2));
+      seedProtectedAwaitingReview(gh, 2);
       gh.login = "alice";
       await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "looks fine" });
       gh.login = ME;
@@ -330,9 +383,24 @@ describe("approveDependencyUpgrade", () => {
       expect(gh.merges).toEqual([]);
     });
 
-    it("gives the acting agent no credit when it is the author itself", async () => {
+    // The tolerance is for "blocked" alone, and only because a missing required review is a blocker
+    // this call is about to remove. No other state has that property: a conflict, a failing
+    // non-required check, or a state GitHub will not tell us about are not fixed by approving.
+    it.each(["dirty", "unstable", "unknown", "behind"] as const)("still refuses a %s mergeable state", async (state) => {
       const gh = seedBotBump();
       gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+      gh.setMergeability(REPO, PR, { state, mergeable: false, draft: false, baseRef: "main", headSha: HEAD });
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons).toContain(`mergeable state is ${state} (need clean)`);
+      expect(gh.reviews).toEqual([]); // nothing is approved to find out
+      expect(gh.merges).toEqual([]);
+    });
+
+    it("gives the acting agent no credit when it is the author itself", async () => {
+      const gh = seedBotBump();
+      seedProtectedAwaitingReview(gh, 1);
       gh.login = BOT; // the token really is the bot's, so the identity check passes
 
       const result = await run(gh, { autonomy: "auto", actingLogin: BOT });
@@ -433,7 +501,9 @@ describe("approveDependencyUpgrade", () => {
     // protectionSatisfied has nothing to say about it and only rail 3 catches it.
     it("refuses the merge when the checks go red with no required checks declared", async () => {
       const gh = seedBotBump(undefined, new ChecksTurnRed());
-      gh.setBranchProtection(REPO, "main", requiresApprovals(1)); // requiredChecks: []
+      // Zero required approvals, so nothing is waiting on a review and the clean state this fixture
+      // starts from is one GitHub can really report. requiredChecks stays empty, which is the point.
+      gh.setBranchProtection(REPO, "main", requiresApprovals(0));
       await expectApprovedNotMerged(gh, "required checks are failing (need green)");
     });
 
@@ -456,7 +526,7 @@ describe("approveDependencyUpgrade", () => {
 
     it("returns approved without attempting a merge when the head moved after the approval", async () => {
       const gh = seedBotBump(undefined, new HeadMovesOnApproval());
-      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+      seedProtectedAwaitingReview(gh, 1);
 
       const result = await run(gh, { autonomy: "auto" });
       expect(result.action).toBe("approved");
@@ -476,7 +546,7 @@ describe("approveDependencyUpgrade", () => {
 
     it("returns approved when the mergeable state stops being clean after the approval", async () => {
       const gh = seedBotBump(undefined, new MergeabilityTurnsBlocked());
-      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+      gh.setBranchProtection(REPO, "main", requiresApprovals(0)); // clean at the first read is real
 
       const result = await run(gh, { autonomy: "auto" });
       expect(result.action).toBe("approved");
@@ -486,9 +556,9 @@ describe("approveDependencyUpgrade", () => {
     });
 
     it("reports approved rather than blocked when the merge itself is refused", async () => {
-      const gh = seedBotBump();
-      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
-      // Every read says clean, and the merge call is the thing that refuses.
+      const gh = seedBotBump(undefined, new RecomputesOnApproval());
+      seedProtectedAwaitingReview(gh, 1);
+      // The re-check after approving is satisfied, and the merge call is the thing that refuses.
       gh.mergePull = async () => ({ merged: false, sha: null, message: "not mergeable", reason: "not-mergeable" });
 
       const result = await run(gh, { autonomy: "auto" });
@@ -503,8 +573,8 @@ describe("approveDependencyUpgrade", () => {
     // guard then declines to submit: the tool would report "approved" on every tick forever while its
     // own outstanding CHANGES_REQUESTED kept the pull request blocked.
     it("submits a fresh approval when its own standing verdict at this head is no longer an approval", async () => {
-      const gh = seedBotBump();
-      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+      const gh = seedBotBump(undefined, new RecomputesOnApproval());
+      seedProtectedAwaitingReview(gh, 1);
       await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "approved earlier" });
       await gh.submitReview(REPO, PR, { commitId: HEAD, event: "REQUEST_CHANGES", body: "then found a problem" });
 
@@ -541,7 +611,7 @@ describe("approveDependencyUpgrade", () => {
 
     it("is a hard stop on the auto path: it proposes, approves nothing, and merges nothing", async () => {
       const gh = seedBotBump();
-      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+      seedProtectedAwaitingReview(gh, 1);
       await dismissedApproval(gh, HEAD);
 
       const result = await run(gh, { autonomy: "auto" });
@@ -562,8 +632,8 @@ describe("approveDependencyUpgrade", () => {
     });
 
     it("does not stop on a dismissal left at an earlier head: that verdict was about another diff", async () => {
-      const gh = seedBotBump();
-      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+      const gh = seedBotBump(undefined, new RecomputesOnApproval());
+      seedProtectedAwaitingReview(gh, 1);
       await dismissedApproval(gh, "sha0000");
 
       const result = await run(gh, { autonomy: "auto" });
@@ -654,8 +724,8 @@ describe("approveDependencyUpgrade", () => {
     });
 
     it("claims the approval was counted only where a required-approvals rule actually exists", async () => {
-      const counted = seedBotBump();
-      counted.setBranchProtection(REPO, "main", requiresApprovals(1));
+      const counted = seedBotBump(undefined, new RecomputesOnApproval());
+      seedProtectedAwaitingReview(counted, 1);
       await run(counted, { autonomy: "auto" });
       expect(counted.reviews[0].body).toContain("counting this approval toward its required-approvals rule");
 

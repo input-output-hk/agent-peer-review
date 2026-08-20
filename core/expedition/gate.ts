@@ -29,6 +29,13 @@ export interface GateInput {
   actingLogin: string;
   author: string;
   isApproving: boolean;
+  /**
+   * True when this call is about to submit an approving review of its own that no standing approval
+   * already covers: the same allowance ProtectionState.pendingApprovalFromActor grants rail 5, passed
+   * here because rail 4 needs it for the same reason (see the rail itself). Only ever set by an
+   * operation that really approves, and only honored together with `isApproving`.
+   */
+  pendingApprovalFromActor?: boolean;
   policy?: { maxFiles?: number; maxLines?: number };
 }
 
@@ -108,8 +115,29 @@ export function evaluateGates(input: GateInput): GateDecision {
   // 3. Required checks must be green; pending or failing both fail. Never merge on red or unknown.
   if (input.checks !== "green") reasons.push(`required checks are ${input.checks} (need green)`);
 
-  // 4. GitHub's own mergeable state must be clean.
-  if (input.mergeableState !== "clean") reasons.push(`mergeable state is ${input.mergeableState} (need clean)`);
+  // 4. GitHub's own mergeable state must be clean, with one narrow exception: "blocked" is tolerated
+  // when this decision is the approval that is about to remove the block.
+  //
+  // Why the exception has to exist. GitHub reports "blocked" for an open pull request whose base
+  // branch requires an approving review while none stands (the same fact stabilize.ts reports as its
+  // own "blocked" status, and the everyday state of a pull request waiting for review). So on a
+  // protected repository this rail is unsatisfiable before the approval, for the same reason rail 5
+  // was: the operation that supplies the missing review cannot pass a rail that is failing because
+  // the review is missing. Tolerating it only for the approver keeps the deadlock fixed without
+  // widening the rail for anything else.
+  //
+  // Be honest about the limit of what is known here: mergeStateStatus does not say WHY it is blocked.
+  // A missing required review is the common cause and the one this call is about to fix, but a
+  // repository ruleset or some other requirement this package cannot read could be the real reason.
+  // That is why the tolerance buys only the APPROVAL, never the merge: the caller re-reads state
+  // after approving, without this allowance, and a state that is still "blocked" then is the honest
+  // answer that no merge may happen (see approveDependencyUpgrade, which reports "approved").
+  //
+  // Every other state still fails, including "dirty" (conflicts), "unstable" (a failing
+  // non-required check), "behind", and "unknown" (nothing is known, so nothing is assumed).
+  const mergeableStateOk = input.mergeableState === "clean"
+    || (input.mergeableState === "blocked" && input.isApproving && input.pendingApprovalFromActor === true);
+  if (!mergeableStateOk) reasons.push(`mergeable state is ${input.mergeableState} (need clean)`);
 
   // 5. Branch protection (required reviews/checks/conversations/enforce_admins) must be satisfied.
   // The input is computed by protectionSatisfied, which accounts for an approving review the caller

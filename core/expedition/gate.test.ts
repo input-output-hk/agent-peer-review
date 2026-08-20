@@ -145,6 +145,48 @@ describe("evaluateGates", () => {
       expect(decision.reasons).toHaveLength(1);
       expect(decision.reasons[0]).toContain(mergeableState);
     });
+
+    // The narrow exception. GitHub reports "blocked" for an open pull request whose base branch
+    // requires an approving review while none stands, so without this the operation that supplies the
+    // missing review cannot pass a rail that is failing because the review is missing: the same
+    // deadlock rail 5 had, one rail over.
+    describe('"blocked" and the approval that is about to remove the block', () => {
+      const approving = { isApproving: true, pendingApprovalFromActor: true, author: "someone-else" } as const;
+
+      it("passes for the approver that is about to supply the missing review", () => {
+        expect(evaluateGates(baseInput({ mergeableState: "blocked", ...approving })).action).toBe("auto");
+      });
+
+      it("still fails when nobody is supplying an approval", () => {
+        // What expedite passes: it merges rather than approves, so it never claims this.
+        const merging = evaluateGates(baseInput({ mergeableState: "blocked", isApproving: false }));
+        expect(merging.action).toBe("propose");
+        expect(merging.reasons).toEqual(["mergeable state is blocked (need clean)"]);
+      });
+
+      it("still fails when the claim is made without approving, or approving without the claim", () => {
+        // Both halves are required, so neither field alone can unlock the rail.
+        expect(evaluateGates(baseInput({ mergeableState: "blocked", isApproving: false, pendingApprovalFromActor: true })).action).toBe("propose");
+        expect(evaluateGates(baseInput({ mergeableState: "blocked", isApproving: true, pendingApprovalFromActor: false, author: "someone-else" })).action).toBe("propose");
+      });
+
+      // The tolerance is for one state and one cause. Everything else GitHub can report still fails,
+      // including "unknown", where nothing is known and so nothing is assumed.
+      it.each(["dirty", "behind", "unstable", "unknown"] as const)("does not extend to mergeableState:%s", (mergeableState) => {
+        const decision = evaluateGates(baseInput({ mergeableState, ...approving }));
+        expect(decision.action).toBe("propose");
+        expect(decision.reasons).toEqual([`mergeable state is ${mergeableState} (need clean)`]);
+      });
+
+      it("does not rescue a self-approval: rail 10 still fires and the change still proposes", () => {
+        const decision = evaluateGates(baseInput({
+          mergeableState: "blocked", isApproving: true, pendingApprovalFromActor: true,
+          actingLogin: "me", author: "me",
+        }));
+        expect(decision.action).toBe("propose");
+        expect(decision.reasons.some((r) => r.includes("self-approval"))).toBe(true);
+      });
+    });
   });
 
   describe("rail 5: branchProtectionSatisfied", () => {

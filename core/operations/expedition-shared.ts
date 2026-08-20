@@ -29,6 +29,17 @@ export interface RailInputs {
    */
   actorHasStandingApproval: boolean;
   /**
+   * Whether this call may count an approving review it is about to submit: `willApproveAs` was given,
+   * it is not the pull request's author, and it holds no standing approval already.
+   *
+   * Reported because two rails need it, and they must not disagree. Rail 5 (branch protection) gets
+   * it through protectionSatisfied, computed here; rail 4 (GitHub's mergeable state) needs the same
+   * answer, because a branch requiring a review that nobody has given yet reads as "blocked", and the
+   * caller passes it into GateInput. False for every non-approving caller, which leaves both rails
+   * exactly as they were.
+   */
+  pendingApprovalFromActor: boolean;
+  /**
    * Whether the pending approval was actually NEEDED: it was granted (see willApproveAs) and the
    * base branch really does require at least one approving review. False on an unprotected branch,
    * or one whose protection asks for zero approvals, where the approval changes no arithmetic.
@@ -154,6 +165,7 @@ export async function gatherRails(
     approvalsByOthers,
     reviews,
     actorHasStandingApproval,
+    pendingApprovalFromActor,
     pendingApprovalCounted: pendingApprovalFromActor
       && typeof protection === "object"
       && protection.requiresPullRequestReviews

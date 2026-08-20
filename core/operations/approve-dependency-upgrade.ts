@@ -224,7 +224,12 @@ export async function approveDependencyUpgrade(
     checks: rails.checksSummary,
     // Assignable only because the draft short-circuit above narrowed "draft" out of the union; see
     // the same note in expedite.ts.
+    //
+    // On a protected repository this is "blocked" until the required review exists, so rail 4 needs
+    // the same pending-approval allowance rail 5 does or the deadlock simply moves one rail over.
+    // Rail 4 honors it only alongside isApproving, and only for "blocked".
     mergeableState: mergeability.state,
+    pendingApprovalFromActor: rails.pendingApprovalFromActor,
     branchProtectionSatisfied: rails.branchProtectionSatisfied,
     hasNewSecurityAlert: rails.hasNewSecurityAlert,
     humanReviewInFlight: rails.humanReviewInFlight,
@@ -335,6 +340,12 @@ export async function approveDependencyUpgrade(
         humanReviewInFlight: after.humanReviewInFlight,
         headShaGuardPassed: after.headShaGuardPassed,
         isApproving: false,
+        // Both allowances are off here, stated explicitly rather than left to follow from isApproving.
+        // This is the evaluation that decides whether to MERGE, and neither rail 4 nor rail 5 may take
+        // anything on credit any more: the approval has landed, so if protection is still unsatisfied
+        // or GitHub still says "blocked", that is the real state and the merge does not happen. The
+        // after-gather passes no willApproveAs, so `after.branchProtectionSatisfied` carries no +1.
+        pendingApprovalFromActor: false,
       });
       if (afterDecision.action !== "auto") {
         blockers.push(...afterDecision.reasons, ...(after.securityDetail !== null ? [after.securityDetail] : []));

@@ -12,7 +12,7 @@ import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "../fakes/fake-github.js";
 import { approveDependencyUpgrade } from "../../core/operations/approve-dependency-upgrade.js";
 import { findActionMarkers } from "../../core/expedition/action-marker.js";
-import type { DetailedPullFile } from "../../core/github.js";
+import type { BranchProtectionSummary, DetailedPullFile } from "../../core/github.js";
 
 const REPO = "o/r";
 const PR = 4;
@@ -50,12 +50,21 @@ class RecordingGateway extends FakeGitHubGateway {
   }
 }
 
-/** A bot-authored, version-only bump with green checks and no protection: every rail clears but autonomy. */
+/**
+ * A bot-authored, version-only bump with green checks and no protection: every rail clears but
+ * autonomy.
+ *
+ * The mergeable state is seeded explicitly (the fake's unseeded default is "unknown", which fails rail
+ * 4), and "clean" is the honest value here because this base branch has no protection waiting on a
+ * review. The protected-repository test below seeds "blocked" instead, which is what GitHub really
+ * reports while the required review is missing.
+ */
 function seedBotBump<T extends FakeGitHubGateway>(gh: T, files: DetailedPullFile[] = PATCH_BUMP): T {
   gh.seedPr({ number: PR, title: "chore(deps): bump left-pad", author: BOT, headSha: HEAD, baseSha: "base", url: "u", state: "open", labels: [] });
   gh.setActorType(BOT, "Bot");
   gh.setDetailedFiles(REPO, PR, files);
   gh.setChecks(REPO, HEAD, [{ name: "build", status: "success" }]);
+  gh.setMergeability(REPO, PR, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: HEAD });
   return gh;
 }
 
@@ -113,21 +122,43 @@ describe("Flow C (pr-steward): approve a bot dependency upgrade", () => {
     expect(gh.writes).toHaveLength(2);
   });
 
+  /**
+   * A protected base branch exactly as GitHub presents one, in both of its states.
+   *
+   * While the required review is missing, mergeStateStatus is "blocked"; once the approval lands,
+   * GitHub recomputes it and a pull request blocked only by that review becomes "clean". Seeding the
+   * first without the second describes a pull request that can never merge, and seeding "clean" from
+   * the start describes one GitHub cannot produce, which is how the rail 4 deadlock stayed hidden.
+   */
+  const PROTECTED_ONE_APPROVAL: BranchProtectionSummary = {
+    requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
+    requiredChecks: ["build"], enforceAdmins: false, requiresConversationResolution: false,
+  };
+  const blockedState = { state: "blocked" as const, mergeable: false, draft: false, baseRef: "main", headSha: HEAD };
+
+  class RecomputesOnApproval extends RecordingGateway {
+    async submitReview(...args: Parameters<FakeGitHubGateway["submitReview"]>): Promise<{ url: string }> {
+      const result = await super.submitReview(...args);
+      this.setMergeability(REPO, PR, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: HEAD });
+      return result;
+    }
+  }
+
+  const DEPS_DIFF: DetailedPullFile[] = [
+    manifest(bumpPatch("pnpm", "10.34.3", "10.34.4")),
+    // A realistic lockfile bump: far past the general 200-line cap, well inside the deps policy.
+    { filename: "pnpm-lock.yaml", status: "modified", additions: 900, deletions: 300, patch: "@@ -1 +1 @@\n-a\n+b" },
+  ];
+
   // The protected repository from issue #48, end to end: a Renovate-shaped bot pull request on a
-  // repository that requires an approving review, with a lockfile-sized diff. Every one of those
-  // three properties used to make the auto path unreachable, and the durable order below is the
-  // contract: the approval that makes the pull request eligible goes in BEFORE the merge, both at
-  // the commit the rails were read at, by a login that is not the author.
+  // repository that requires an approving review, reported by GitHub as "blocked" for exactly that
+  // reason, with a lockfile-sized diff. All three used to make the auto path unreachable, and the
+  // durable order below is the contract: the approval that makes the pull request eligible goes in
+  // BEFORE the merge, both at the commit the rails were read at, by a login that is not the author.
   it("approves and merges a bot upgrade on a repository that requires an approving review", async () => {
-    const gh = seedBotBump(new RecordingGateway(), [
-      manifest(bumpPatch("pnpm", "10.34.3", "10.34.4")),
-      // A realistic lockfile bump: far past the general 200-line cap, well inside the deps policy.
-      { filename: "pnpm-lock.yaml", status: "modified", additions: 900, deletions: 300, patch: "@@ -1 +1 @@\n-a\n+b" },
-    ]);
-    gh.setBranchProtection(REPO, "main", {
-      requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
-      requiredChecks: ["build"], enforceAdmins: false, requiresConversationResolution: false,
-    });
+    const gh = seedBotBump(new RecomputesOnApproval(), DEPS_DIFF);
+    gh.setBranchProtection(REPO, "main", PROTECTED_ONE_APPROVAL);
+    gh.setMergeability(REPO, PR, blockedState);
 
     const result = await steward(gh, tick(1), { autonomy: "auto" });
     expect(result).toEqual({ action: "approved-and-merged", reasons: [] });
@@ -155,12 +186,35 @@ describe("Flow C (pr-steward): approve a bot dependency upgrade", () => {
     expect(gh.writes).toHaveLength(2);
   });
 
+  // The same repository, with a GitHub that has not recomputed the mergeable state by the time the
+  // merge is attempted. The approval is still real and still useful; the merge waits for a tick that
+  // can see a state it is allowed to act on. This is what the rail 4 tolerance does NOT buy.
+  it("approves without merging while that repository still reports blocked after the approval", async () => {
+    const gh = seedBotBump(new RecordingGateway(), DEPS_DIFF);
+    gh.setBranchProtection(REPO, "main", PROTECTED_ONE_APPROVAL);
+    gh.setMergeability(REPO, PR, blockedState);
+
+    const result = await steward(gh, tick(1), { autonomy: "auto" });
+    expect(result.action).toBe("approved");
+    expect(result.reasons.some((r) => r.includes("mergeable state is blocked (need clean)"))).toBe(true);
+    expect(gh.writes).toEqual([`review:APPROVE@${HEAD}`]); // the approval, and nothing else
+    expect(gh.merges).toEqual([]);
+    expect((await gh.getPullRequest(REPO, PR)).state).toBe("open");
+
+    // A later tick, once GitHub has caught up, merges without approving twice.
+    gh.setMergeability(REPO, PR, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: HEAD });
+    expect((await steward(gh, tick(2), { autonomy: "auto" })).action).toBe("approved-and-merged");
+    expect(gh.writes).toEqual([`review:APPROVE@${HEAD}`, `merge@${HEAD}`]);
+    expect(gh.reviews).toHaveLength(1);
+  });
+
   it("proposes on that same repository when it requires two approvals, and writes no approval", async () => {
     const gh = seedBotBump(new RecordingGateway());
     gh.setBranchProtection(REPO, "main", {
       requiresPullRequestReviews: true, requiredApprovingReviewCount: 2,
       requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
     });
+    gh.setMergeability(REPO, PR, blockedState);
 
     const result = await steward(gh, tick(1), { autonomy: "auto" });
     expect(result.action).toBe("proposed");

@@ -1,6 +1,24 @@
 import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "./fake-github.js";
+import { evaluateGates, type GateInput } from "../../core/expedition/gate.js";
 import type { Mergeability } from "../../core/github.js";
+
+/** Gate input where every rail passes, so a single field can be varied to see what that field costs. */
+const GATE_INPUT_ALL_PASSING: GateInput = {
+  classification: { categories: ["docs"], autoEligible: true, sawSourceOrTest: false, byFile: [{ file: "README.md", category: "docs" }] },
+  changedFiles: 1,
+  changedLines: 2,
+  checks: "green",
+  mergeableState: "clean",
+  branchProtectionSatisfied: true,
+  hasNewSecurityAlert: false,
+  humanReviewInFlight: false,
+  autonomy: "auto",
+  headShaGuardPassed: true,
+  actingLogin: "me",
+  author: "someone-else",
+  isApproving: false,
+};
 
 describe("FakeGitHubGateway", () => {
   it("clears the review request when a review is submitted", async () => {
@@ -72,10 +90,28 @@ describe("FakeGitHubGateway", () => {
 });
 
 describe("FakeGitHubGateway expedition methods (PR 3)", () => {
-  it("getMergeability defaults to clean/not-draft with the seeded PR's headSha, and setMergeability overrides it", async () => {
+  // A guard on the fake itself, not on the code under test. The default used to be "clean", which let
+  // a test seed branch protection requiring an approving review AND be handed a clean mergeable
+  // state: a combination GitHub cannot produce (it reports "blocked" while the review is missing).
+  // Tests asserted that impossible world and passed, which hid a production deadlock on gate rail 4
+  // through two review passes. The default must therefore stay a state that FAILS the gate, so a test
+  // that cares has to say which state it means.
+  it("getMergeability defaults to a state that fails the gate, and setMergeability overrides it", async () => {
     const gh = new FakeGitHubGateway();
     gh.seedPr({ number: 1, title: "t", author: "a", headSha: "headsha1", baseSha: "b", url: "u", state: "open", labels: [] });
-    expect(await gh.getMergeability("o/r", 1)).toEqual({ state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: "headsha1" });
+
+    const unseeded = await gh.getMergeability("o/r", 1);
+    expect(unseeded).toEqual({ state: "unknown", mergeable: null, draft: false, baseRef: "main", headSha: "headsha1" });
+    // Stated as the property that matters, so this fails if the default ever silently becomes a
+    // passing state again. "clean" is the only state rail 4 accepts outright, and "blocked" is the one
+    // it accepts from an approver, so neither may be the default.
+    expect(unseeded.state).not.toBe("clean");
+    expect(unseeded.state).not.toBe("blocked");
+    // The cast is the assertion's point rather than a shortcut: Mergeability carries a "draft" member
+    // the gate deliberately does not model, and this test is about the state the fake actually
+    // returned, which is not that one.
+    expect(unseeded.state).not.toBe("draft");
+    expect(evaluateGates({ ...GATE_INPUT_ALL_PASSING, mergeableState: unseeded.state as GateInput["mergeableState"] }).action).toBe("propose");
 
     gh.setMergeability("o/r", 1, { state: "dirty", mergeable: false, draft: false, baseRef: "main", headSha: "headsha1" });
     expect((await gh.getMergeability("o/r", 1)).state).toBe("dirty");
@@ -171,6 +207,9 @@ describe("FakeGitHubGateway expedition methods (PR 3)", () => {
   it("mergePull's sha guard: a mismatched sha fails without merging or recording; a matching sha merges, marks the PR merged, and records it", async () => {
     const gh = new FakeGitHubGateway();
     gh.seedPr({ number: 3, title: "t", author: "a", headSha: "currentsha", baseSha: "b", url: "u", state: "open", labels: [] });
+    // mergePull consults getMergeability, whose unseeded default now fails, so a test about the sha
+    // guard has to say that the pull request is otherwise mergeable.
+    gh.setMergeability("o/r", 3, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: "currentsha" });
 
     const mismatched = await gh.mergePull("o/r", 3, { sha: "stalesha" });
     expect(mismatched).toEqual({ merged: false, sha: null, message: "head sha mismatch", reason: "head-moved" });
@@ -188,6 +227,7 @@ describe("FakeGitHubGateway expedition methods (PR 3)", () => {
   it("mergePull defaults method to merge when omitted", async () => {
     const gh = new FakeGitHubGateway();
     gh.seedPr({ number: 4, title: "t", author: "a", headSha: "s", baseSha: "b", url: "u", state: "open", labels: [] });
+    gh.setMergeability("o/r", 4, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: "s" });
     await gh.mergePull("o/r", 4, { sha: "s" });
     expect(gh.merges[0]).toMatchObject({ method: "merge" });
   });
@@ -206,9 +246,10 @@ describe("FakeGitHubGateway expedition methods (PR 3)", () => {
     expect(gh.merges).toHaveLength(0);
   });
 
-  it("getMergeability stops reporting clean once mergePull has merged the PR", async () => {
+  it("getMergeability stops reporting clean once mergePull has merged the PR, even when clean was seeded", async () => {
     const gh = new FakeGitHubGateway();
     gh.seedPr({ number: 12, title: "t", author: "a", headSha: "s12", baseSha: "b", url: "u", state: "open", labels: [] });
+    gh.setMergeability("o/r", 12, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: "s12" });
     expect((await gh.getMergeability("o/r", 12)).state).toBe("clean");
 
     await gh.mergePull("o/r", 12, { sha: "s12" });
