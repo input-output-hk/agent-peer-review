@@ -174,6 +174,16 @@ describe("PR-state protocol invariants", () => {
   });
 
   describe("a human arriving mid-sequence", () => {
+    /** A review left by someone else, recorded under their own login as GitHub records it. */
+    async function reviewBy(gh: FakeGitHubGateway, author: string, event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT", body: string) {
+      gh.login = author;
+      try {
+        await gh.submitReview(REPO, PR, { commitId: HEAD, event, body });
+      } finally {
+        gh.login = ME;
+      }
+    }
+
     it("stops the auto path on the next tick without disturbing the standing proposal", async () => {
       const gh = new FakeGitHubGateway();
       seedDocsPr(gh);
@@ -182,15 +192,13 @@ describe("PR-state protocol invariants", () => {
       expect((await runExpedite(gh, tick(1))).action).toBe("proposed");
       const proposal = (await gh.listComments(REPO, PR))[0];
 
-      // Between the ticks a human reviews the pull request.
-      gh.login = "carol";
-      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "COMMENT", body: "taking a look" });
-      gh.login = ME;
+      // Between the ticks a human rules against the pull request.
+      await reviewBy(gh, "carol", "REQUEST_CHANGES", "not like this");
 
       // Tick 2, autonomy auto: the human rail alone is enough to refuse the merge.
       const result = await runExpedite(gh, tick(2), { autonomy: "auto" });
       expect(result.action).toBe("already-proposed");
-      expect(result.reasons.some((r) => r.includes("human review"))).toBe(true);
+      expect(result.reasons).toEqual(["a human has requested changes"]);
       expect(gh.merges).toEqual([]);
 
       // The proposal is neither duplicated nor rewritten by the flip.
@@ -198,6 +206,35 @@ describe("PR-state protocol invariants", () => {
       expect(after).toHaveLength(1);
       expect(after[0].id).toBe(proposal.id);
       expect(findActionMarkers(after)[0].marker.at).toBe(tick(1));
+    });
+
+    // Issue #57, across ticks, which is where the old rail hurt most: a GitHub review is permanent
+    // history, so the tick after a human had merely looked was the last tick that could ever merge
+    // this pull request, however the state changed afterwards.
+    it("does not stop the auto path for a human's finished review, whether it approved or only commented", async () => {
+      for (const event of ["APPROVE", "COMMENT"] as const) {
+        const gh = new FakeGitHubGateway();
+        seedDocsPr(gh);
+        expect((await runExpedite(gh, tick(1))).action).toBe("proposed");
+
+        await reviewBy(gh, "carol", event, "had a look");
+
+        const result = await runExpedite(gh, tick(2), { autonomy: "auto" });
+        expect(result.action, event).toBe("merged");
+        expect(gh.merges).toHaveLength(1);
+      }
+    });
+
+    it("still stops it while a human's review request is outstanding", async () => {
+      const gh = new FakeGitHubGateway();
+      seedDocsPr(gh);
+      expect((await runExpedite(gh, tick(1))).action).toBe("proposed");
+      gh.setRequestedReviewers(REPO, PR, { users: ["carol"], teams: [] });
+
+      const result = await runExpedite(gh, tick(2), { autonomy: "auto" });
+      expect(result.action).toBe("already-proposed");
+      expect(result.reasons).toEqual(["a human review is in flight"]);
+      expect(gh.merges).toEqual([]);
     });
   });
 

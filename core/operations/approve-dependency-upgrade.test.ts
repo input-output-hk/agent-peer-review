@@ -13,13 +13,20 @@ const ME = "me";
 const BOT = "dependabot[bot]";
 const HEAD = "sha0001";
 
-/** Branch protection that requires `count` approving reviews and nothing else. */
+/**
+ * Branch protection that requires `count` approving reviews and nothing else.
+ *
+ * `dismissesStaleReviews` is false, which is both GitHub's default and the case that matters: on such
+ * a branch an approval only counts for the commit it was left on (issue #53). The tests that are about
+ * the other setting say so.
+ */
 const requiresApprovals = (count: number): BranchProtectionSummary => ({
   requiresPullRequestReviews: true,
   requiredApprovingReviewCount: count,
   requiredChecks: [],
   enforceAdmins: false,
   requiresConversationResolution: false,
+  dismissesStaleReviews: false,
 });
 
 const mergeable = (state: Mergeability["state"]): Mergeability =>
@@ -454,25 +461,48 @@ describe("approveDependencyUpgrade", () => {
       await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "looks fine" });
       gh.login = ME;
 
-      // Listed as an agent, because a review by anyone who is NOT a known agent fails rail 7 as well
-      // (a human's approval holds the pull request for the human, which is stricter still).
       const result = await run(gh, { autonomy: "auto", knownAgentLogins: ["peer-agent"] });
       expect(result.action).toBe("approved-and-merged");
       expect(gh.reviews.map((r) => r.author)).toEqual(["peer-agent", ME]);
       expect(gh.merges).toHaveLength(1);
     });
 
-    it("holds off when the other standing approval is a human's, even at two of two", async () => {
-      const gh = seedBotBump();
+    // Issue #57, on this path. The other approval used to have to come from a login the caller had
+    // listed as an agent: a HUMAN maintainer supplying the first of two required approvals satisfied
+    // rail 5 and failed rail 7 with the very same review, so the steward proposed instead, forever.
+    // Now the approval counts, and counts for nothing else.
+    it("reaches a two-approval requirement alongside a HUMAN's approval, and no longer holds for it", async () => {
+      const gh = seedBotBump(undefined, new RecomputesOnApproval());
       seedProtectedAwaitingReview(gh, 2);
-      gh.login = "alice";
+      gh.login = "alice"; // a person, listed nowhere
       await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "looks fine" });
       gh.login = ME;
 
       const result = await run(gh, { autonomy: "auto" });
-      expect(result.action).toBe("proposed");
-      expect(result.reasons.some((r) => r.includes("human review"))).toBe(true);
-      expect(gh.merges).toEqual([]);
+      expect(result).toEqual({ action: "approved-and-merged", reasons: [] });
+      expect(result.reasons.some((r) => r.includes("human"))).toBe(false);
+      expect(gh.reviews.map((r) => r.author)).toEqual(["alice", ME]);
+      expect(gh.merges).toHaveLength(1);
+    });
+
+    it("still holds off when that human has an outstanding review request or a standing refusal", async () => {
+      const asked = seedBotBump();
+      seedProtectedAwaitingReview(asked, 1);
+      asked.setRequestedReviewers(REPO, PR, { users: ["alice"], teams: [] });
+      const pending = await run(asked, { autonomy: "auto" });
+      expect(pending.action).toBe("proposed");
+      expect(pending.reasons).toContain("a human review is in flight");
+      expect(asked.reviews).toEqual([]);
+
+      const refused = seedBotBump();
+      seedProtectedAwaitingReview(refused, 1);
+      refused.login = "alice";
+      await refused.submitReview(REPO, PR, { commitId: HEAD, event: "REQUEST_CHANGES", body: "not this one" });
+      refused.login = ME;
+      const held = await run(refused, { autonomy: "auto" });
+      expect(held.action).toBe("proposed");
+      expect(held.reasons).toContain("a human has requested changes");
+      expect(refused.reviews.map((r) => r.author)).toEqual(["alice"]); // it approved nothing over that
     });
 
     // The tolerance is for "blocked" alone, and only because a missing required review is a blocker
@@ -502,6 +532,70 @@ describe("approveDependencyUpgrade", () => {
       expect(result.reasons.some((r) => r.includes("self-approval"))).toBe(true);
       expect(gh.reviews).toEqual([]);
       expect(gh.merges).toEqual([]);
+    });
+
+    // Issue #53 meeting issue #48 on the one path that both approves and merges. A bot force-pushes
+    // often, so an approval left on the previous head is the normal case here rather than an edge one.
+    describe("an approval left on a commit the bot has pushed past", () => {
+      it("no longer reaches a two-approval requirement, so nothing is approved or merged", async () => {
+        const gh = seedBotBump();
+        seedProtectedAwaitingReview(gh, 2);
+        gh.login = "peer-agent";
+        await gh.submitReview(REPO, PR, { commitId: "sha0000", event: "APPROVE", body: "approved the previous head" });
+        gh.login = ME;
+
+        const result = await run(gh, { autonomy: "auto", knownAgentLogins: ["peer-agent"] });
+        expect(result.action).toBe("proposed");
+        expect(result.reasons).toContain("branch protection requirements are not satisfied");
+        expect(gh.reviews.map((r) => r.author)).toEqual(["peer-agent"]); // no approval of ours on top
+        expect(gh.merges).toEqual([]);
+      });
+
+      it("reaches it again on a branch that dismisses stale reviews, where GitHub retires them itself", async () => {
+        const gh = seedBotBump(undefined, new RecomputesOnApproval());
+        gh.setBranchProtection(REPO, "main", { ...requiresApprovals(2), dismissesStaleReviews: true });
+        gh.setMergeability(REPO, PR, mergeable("blocked"));
+        gh.login = "peer-agent";
+        await gh.submitReview(REPO, PR, { commitId: "sha0000", event: "APPROVE", body: "approved the previous head" });
+        gh.login = ME;
+
+        expect((await run(gh, { autonomy: "auto", knownAgentLogins: ["peer-agent"] })).action).toBe("approved-and-merged");
+        expect(gh.merges).toHaveLength(1);
+      });
+
+      // The interaction that must NOT become a new deadlock. This operation's own approval is by
+      // definition about the head it just evaluated, so it stays valid: a stale approval of its own
+      // must not make it withhold the pending one, or rail 5 would be unsatisfiable at every head
+      // after the first and issue #48's deadlock would be back through issue #53's fix.
+      it("does not stop this operation's own pending approval from counting", async () => {
+        const gh = seedBotBump(undefined, new RecomputesOnApproval());
+        seedProtectedAwaitingReview(gh, 1);
+        await gh.submitReview(REPO, PR, { commitId: "sha0000", event: "APPROVE", body: "approved the previous head" });
+
+        const result = await run(gh, { autonomy: "auto" });
+        expect(result).toEqual({ action: "approved-and-merged", reasons: [] });
+        // A fresh approval naming the current head, and the merge at that same head.
+        expect(gh.reviews).toHaveLength(2);
+        expect(gh.reviews[1]).toMatchObject({ author: ME, event: "APPROVE", commitId: HEAD });
+        expect(gh.merges).toEqual([{ repo: REPO, pr: PR, sha: HEAD, method: "merge", commitTitle: undefined }]);
+      });
+
+      // Where the branch dismisses stale reviews, protection is already satisfied by the standing
+      // approval, so no pending one is claimed and nothing is double counted. A fresh approval still
+      // goes in, because the verdict has to be about the diff being merged now.
+      it("is counted once, not twice, where such a branch counts it at all", async () => {
+        const gh = seedBotBump(undefined, new RecomputesOnApproval());
+        gh.setBranchProtection(REPO, "main", { ...requiresApprovals(1), dismissesStaleReviews: true });
+        gh.setMergeability(REPO, PR, mergeable("blocked"));
+        await gh.submitReview(REPO, PR, { commitId: "sha0000", event: "APPROVE", body: "approved the previous head" });
+
+        const result = await run(gh, { autonomy: "auto" });
+        expect(result.action).toBe("approved-and-merged");
+        expect(gh.reviews).toHaveLength(2);
+        expect(gh.reviews[1]).toMatchObject({ author: ME, event: "APPROVE", commitId: HEAD });
+        // The body must not claim an approval was counted toward a rule it did not have to satisfy.
+        expect(gh.reviews[1].body).not.toContain("counting this approval");
+      });
     });
   });
 
@@ -573,7 +667,15 @@ describe("approveDependencyUpgrade", () => {
     // merge anyway, because the re-check looked at protection, mergeability, and the head only.
     it("refuses the merge when a human posts CHANGES_REQUESTED while the approval is landing", async () => {
       const gh = inTheWindow((self) => pushReview(self, "alice", "CHANGES_REQUESTED"));
-      await expectApprovedNotMerged(gh, "a human review is in flight");
+      // Its own reason, not a claim that somebody is mid-review: the person has finished and said no.
+      await expectApprovedNotMerged(gh, "a human has requested changes");
+    });
+
+    it("does NOT refuse the merge when a human APPROVES while the approval is landing", async () => {
+      const gh = inTheWindow((self) => pushReview(self, "alice", "APPROVED"));
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved-and-merged"); // a second approval is not an obstacle
+      expect(gh.merges).toHaveLength(1);
     });
 
     it("refuses the merge when a human is asked to review while the approval is landing", async () => {

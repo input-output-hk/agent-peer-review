@@ -10,8 +10,8 @@
 import type { GitHubGateway, Mergeability, DetailedPullFile } from "../github.js";
 import type { Review } from "../model.js";
 import { summarizeChecks, type ChecksSummary } from "../expedition/checks.js";
-import { protectionSatisfied, countApprovalsByOthers, hasStandingApproval } from "../expedition/protection.js";
-import { humanReviewInFlight } from "../expedition/human-review.js";
+import { protectionSatisfied, countApprovalsByOthers, hasStandingApproval, type ApprovalScope } from "../expedition/protection.js";
+import { humanReviewStatus } from "../expedition/human-review.js";
 import { findActionMarkers, type ActionMarker } from "../expedition/action-marker.js";
 import { renderProposal } from "../expedition/proposal.js";
 
@@ -19,13 +19,19 @@ export interface RailInputs {
   changedFiles: number;
   changedLines: number;
   checksSummary: ChecksSummary;
+  /**
+   * Standing approvals by someone other than the author that count for this head: an approval of a
+   * commit the author has since pushed past is not an approval of the code that would merge, unless
+   * the branch dismisses stale reviews itself. See ApprovalScope in expedition/protection.ts.
+   */
   approvalsByOthers: number;
   /** Every review on the pull request, in GitHub's chronological order. Already fetched for the rails above. */
   reviews: Review[];
   /**
-   * Whether `willApproveAs`'s standing verdict is already an approval, so a caller can reuse the
-   * answer instead of recomputing it. `false` when no `willApproveAs` was given: the question was
-   * never asked, because only an operation that intends to approve has an approver to ask about.
+   * Whether `willApproveAs` already holds an approval that counts for this head, so a caller can
+   * reuse the answer instead of recomputing it. `false` when no `willApproveAs` was given: the
+   * question was never asked, because only an operation that intends to approve has an approver to
+   * ask about.
    */
   actorHasStandingApproval: boolean;
   /**
@@ -52,7 +58,9 @@ export interface RailInputs {
   hasNewSecurityAlert: boolean;
   /** The specific cause behind `hasNewSecurityAlert`, so a caller can say which one it is. Null when the rail passes. */
   securityDetail: string | null;
-  humanReviewInFlight: boolean;
+  /** Rail 7's two halves, kept separate so the gate can name the one that refused. */
+  humanReviewPending: boolean;
+  humanChangesRequested: boolean;
   headShaGuardPassed: boolean;
 }
 
@@ -120,7 +128,18 @@ export async function gatherRails(
 
   const requiredChecks = typeof protection === "object" ? protection.requiredChecks : undefined;
   const checksSummary = summarizeChecks(checks, requiredChecks);
-  const approvalsByOthers = countApprovalsByOthers(reviews, input.author);
+
+  // Which approvals may be counted at all. An approval of a commit the author has since pushed past
+  // is not an approval of the code an action would merge (issue #53), so it is not counted, unless the
+  // branch dismisses stale reviews itself and GitHub has therefore already handled staleness.
+  // "none" and "unknown" protection carry no such flag: false is both the honest and the conservative
+  // reading, and neither case can reach the approvals comparison anyway (one has no requirements, the
+  // other fails closed).
+  const approvalScope: ApprovalScope = {
+    headSha,
+    dismissesStaleReviews: typeof protection === "object" && protection.dismissesStaleReviews,
+  };
+  const approvalsByOthers = countApprovalsByOthers(reviews, input.author, approvalScope);
 
   // Whether the approval this caller is about to add counts toward the required-approvals rule.
   // Three conditions, all necessary:
@@ -128,14 +147,16 @@ export async function gatherRails(
   //   willApproveAs given      - only an operation that really submits an approval may claim one.
   //   not the pull's author    - GitHub refuses a self-approval, so it would never be counted
   //                              (rail 10 refuses the whole action too).
-  //   no standing approval     - one already there is already inside approvalsByOthers; adding it
-  //                              again would count a single approval twice.
+  //   no counted approval      - one already inside approvalsByOthers; adding it again would count a
+  //                              single approval twice.
   //
-  // The standing check is deliberately not filtered by commit SHA: protection counts a standing
-  // approval whatever commit it was left on, and countApprovalsByOthers does not filter either, so
-  // filtering here is what would produce the double count. Whether to POST a fresh approval at this
-  // head is a different question, and its caller answers it separately.
-  const actorHasStandingApproval = input.willApproveAs !== undefined && hasStandingApproval(reviews, input.willApproveAs);
+  // The standing check reads the SAME approvalScope the count reads, which is what keeps the two from
+  // disagreeing in either direction: an approval the count is ignoring as stale is reported as absent
+  // here too, so the operation about to approve the new head is not held back by an approval nothing
+  // is counting. Whether to POST a fresh approval at this head is a different question, and its
+  // caller answers it separately.
+  const actorHasStandingApproval = input.willApproveAs !== undefined
+    && hasStandingApproval(reviews, input.willApproveAs, approvalScope);
   const pendingApprovalFromActor = input.willApproveAs !== undefined
     && input.willApproveAs !== input.author
     && !actorHasStandingApproval;
@@ -152,6 +173,13 @@ export async function gatherRails(
     : alertCount > 0
       ? `${alertCount} open security alert(s) on this repository`
       : null;
+
+  const human = humanReviewStatus({
+    reviews,
+    requestedUsers: requestedReviewers.users,
+    actingLogin: input.actingLogin,
+    knownAgentLogins: input.knownAgentLogins,
+  });
 
   // Last read in the gather, on purpose: it closes the window opened by every read above. If the
   // head moved while the rails were being collected, they describe a commit that is no longer the
@@ -175,13 +203,10 @@ export async function gatherRails(
     securityDetail,
     // A requested TEAM is a human review in flight too. Its members cannot be enumerated from here
     // without another API call, and a team is a group of people until proven otherwise, so any
-    // outstanding team request counts. humanReviewInFlight itself only judges individual logins.
-    humanReviewInFlight: requestedReviewers.teams.length > 0 || humanReviewInFlight({
-      reviews,
-      requestedUsers: requestedReviewers.users,
-      actingLogin: input.actingLogin,
-      knownAgentLogins: input.knownAgentLogins,
-    }),
+    // outstanding team request counts as a pending human review. humanReviewStatus itself only judges
+    // individual logins.
+    humanReviewPending: requestedReviewers.teams.length > 0 || human.pendingRequest,
+    humanChangesRequested: human.changesRequested,
     headShaGuardPassed: fresh.headSha === headSha,
   };
 }

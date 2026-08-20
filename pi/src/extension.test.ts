@@ -450,8 +450,12 @@ describe("pi extension", () => {
 
   it("pr_watch's knownAgentLogins from config reaches the human-review rail", async () => {
     // "me" requested changes at an older head, the author pushed since, and "peer-bot" left a
-    // COMMENT review in between. Whether that comment counts as a human in flight depends
-    // entirely on whether config lists "peer-bot" as a known agent.
+    // CHANGES_REQUESTED review in between. Whether that standing verdict counts as a human's
+    // depends entirely on whether config lists "peer-bot" as a known agent.
+    //
+    // A verdict, not a COMMENTED review: since issue #57 a comment is not a position on the change
+    // and holds nothing, so a comment here would test the plumbing against a state that no longer
+    // separates the two configs.
     //
     // getAuthenticatedLogin deliberately returns a login that is NEITHER "me" nor "peer-bot":
     // config.githubLogin ("me") must win over the token for myLogin resolution. If precedence
@@ -463,7 +467,7 @@ describe("pi extension", () => {
       getPullRequest: async () => ({ number: 4, title: "t", author: "human-author", headSha: "sha0002", baseSha: "base", url: "u", state: "open" as const, labels: [] }),
       getReviews: async () => [
         { id: 1, author: "me", state: "CHANGES_REQUESTED", body: "", commitId: "sha0001", submittedAt: "t1" },
-        { id: 2, author: "peer-bot", state: "COMMENTED", body: "", commitId: "sha0001", submittedAt: "t2" },
+        { id: 2, author: "peer-bot", state: "CHANGES_REQUESTED", body: "", commitId: "sha0001", submittedAt: "t2" },
       ],
       listRequestedReviewers: async () => ({ users: [], teams: [] }),
     } as any;

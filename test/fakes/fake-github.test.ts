@@ -12,7 +12,8 @@ const GATE_INPUT_ALL_PASSING: GateInput = {
   mergeableState: "clean",
   branchProtectionSatisfied: true,
   hasNewSecurityAlert: false,
-  humanReviewInFlight: false,
+  humanReviewPending: false,
+  humanChangesRequested: false,
   autonomy: "auto",
   headShaGuardPassed: true,
   actingLogin: "me",
@@ -132,11 +133,25 @@ describe("FakeGitHubGateway expedition methods (PR 3)", () => {
     gh.setBranchProtection("o/r", "main", {
       requiresPullRequestReviews: true, requiredApprovingReviewCount: 0,
       requiredChecks: ["ci"], enforceAdmins: true, requiresConversationResolution: false,
+      dismissesStaleReviews: false,
     });
     expect(await gh.getBranchProtection("o/r", "main")).toEqual({
       requiresPullRequestReviews: true, requiredApprovingReviewCount: 0,
       requiredChecks: ["ci"], enforceAdmins: true, requiresConversationResolution: false,
+      dismissesStaleReviews: false,
     });
+  });
+
+  // Mirrored so a test can arrange the branch that retires stale approvals itself, which is the one
+  // case where rail 5 may count an approval of a commit that is no longer the head (issue #53).
+  it("round-trips dismissesStaleReviews", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.setBranchProtection("o/r", "main", {
+      requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
+      requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
+      dismissesStaleReviews: true,
+    });
+    expect(await gh.getBranchProtection("o/r", "main")).toMatchObject({ dismissesStaleReviews: true });
   });
 
   it("getBranchProtection returns a deep copy: mutating a returned requiredChecks array does not corrupt the stored state", async () => {
@@ -144,6 +159,7 @@ describe("FakeGitHubGateway expedition methods (PR 3)", () => {
     gh.setBranchProtection("o/r", "main", {
       requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
       requiredChecks: ["ci"], enforceAdmins: false, requiresConversationResolution: false,
+      dismissesStaleReviews: false,
     });
     const first = await gh.getBranchProtection("o/r", "main");
     if (typeof first === "string") throw new Error("expected a summary");

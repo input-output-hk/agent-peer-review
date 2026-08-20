@@ -9,7 +9,15 @@ import type { Review } from "../model.js";
 import type { ChecksSummary } from "./checks.js";
 
 export interface ProtectionState {
-  approvalsByOthers: number;      // approving reviews by logins other than the PR author
+  /**
+   * Approving reviews by logins other than the PR author that count for the commit being evaluated.
+   *
+   * "That count" is load-bearing: an approval of a commit the author has since pushed past is not an
+   * approval of the code that would merge (issue #53). The filtering happens in
+   * countApprovalsByOthers, which is given the head commit and the branch's `dismiss_stale_reviews`
+   * setting, so this number is already the countable one by the time it arrives here.
+   */
+  approvalsByOthers: number;
   checksSummary: ChecksSummary;   // the same rollup fed to gate rail 3 (see summarizeChecks)
   /**
    * True when the caller is an operation that is ABOUT to submit an approving review of its own, and
@@ -56,7 +64,8 @@ export interface ProtectionState {
  *
  * "Required approvals must be met" counts the approval the caller is about to submit, when the
  * caller told us it is about to submit one; see ProtectionState.pendingApprovalFromActor for why
- * that is sound and for everything it deliberately does not relax.
+ * that is sound and for everything it deliberately does not relax. It counts only approvals that are
+ * about the commit being evaluated; see countApprovalsByOthers and ApprovalScope.
  *
  * `requiresConversationResolution` fails closed because whether every review thread is resolved
  * cannot be answered cheaply over REST (it needs a GraphQL query per thread). Rather than guess,
@@ -104,60 +113,110 @@ export function sortReviews(reviews: Review[]): Review[] {
   return [...reviews].sort((a, b) => a.submittedAt.localeCompare(b.submittedAt) || a.id - b.id);
 }
 
+/** One login's latest verdict-bearing review: the position that login currently holds. */
+export interface StandingVerdict {
+  /** The login exactly as the API reported it on that review, for callers that compare logins. */
+  login: string;
+  /** One of VERDICT_STATES. */
+  state: string;
+  /** The commit the verdict was left on; "" when the API reported none. */
+  commitId: string;
+}
+
 /**
- * The standing verdict per login: the state of each login's LATEST verdict-bearing review.
+ * The standing verdict per login: each login's LATEST verdict-bearing review.
  *
- * One implementation, because both questions asked below ("how many others approve" and "does this
- * one login approve") have to be answered the same way or the pending-approval increment would
- * double-count an approval already in the total.
+ * One implementation, and the only definition of "standing" in this package. Every question about a
+ * standing position is answered from it, here and in human-review.ts, because a second notion of
+ * "standing" is a second thing to keep in step: the pending-approval increment would double-count an
+ * approval already in the total, or rail 7 would call a verdict standing that rail 5 had already
+ * treated as replaced.
  *
- * Keyed by the LOWERCASED login, and every comparison against it lowercases too. GitHub logins are
- * unique case-insensitively, so two rows differing only in case are one account, and an exact
- * comparison here would fail OPEN in the one place it matters: `hasStandingApproval("Me")` would
- * report "no approval yet" for an approval `countApprovalsByOthers` is already counting, and the
- * single approval would be counted twice. It also means the pull request author's own approval is
+ * Keyed by the LOWERCASED login, and every comparison against the KEY lowercases too. GitHub logins
+ * are unique case-insensitively, so two rows differing only in case are one account, and an exact
+ * comparison on the key would fail OPEN in the one place it matters: `hasStandingApproval("Me")`
+ * would report "no approval yet" for an approval `countApprovalsByOthers` is already counting, and
+ * the single approval would be counted twice. It also means the pull request author's own approval is
  * excluded whatever case the API reported it in, which is the conservative direction.
  */
-function standingVerdicts(reviews: Review[]): Map<string, string> {
-  const latestVerdict = new Map<string, string>();
+export function standingVerdicts(reviews: Review[]): Map<string, StandingVerdict> {
+  const latestVerdict = new Map<string, StandingVerdict>();
   for (const r of sortReviews(reviews)) {
     if (!VERDICT_STATES.has(r.state)) continue;
-    latestVerdict.set(r.author.toLowerCase(), r.state);
+    latestVerdict.set(r.author.toLowerCase(), { login: r.author, state: r.state, commitId: r.commitId });
   }
   return latestVerdict;
 }
 
 /**
- * Count the distinct logins, other than `author`, whose LATEST verdict review is an approval.
- * This is the `approvalsByOthers` input to protectionSatisfied, and it lives here so the two stay
- * in step.
+ * What an approval has to be about before a required-approvals rule may count it.
+ *
+ * Issue #53: a peer approved `sha0001`, the author pushed `sha0009`, and the gate merged `sha0009` on
+ * the strength of the approval of `sha0001`. Nobody had approved the code that merged. "Would GitHub
+ * count this approval" and "did anyone approve THIS code" are different questions, and rail 5 is only
+ * safe to answer with the second one.
+ *
+ * `dismissesStaleReviews` is the one case where the commit does not have to be checked here, because
+ * GitHub has already checked it: on such a branch a push retires the approving reviews, so an
+ * approval that is still standing is an approval of the current code by construction. Reading the
+ * flag rather than always filtering is what keeps this from being stricter than the repository is:
+ * where GitHub itself dismisses on push, an approval left on a commit our snapshot has not caught up
+ * with is still a real approval of what is now the head.
+ */
+export interface ApprovalScope {
+  /** The head commit being evaluated: the commit an action would actually merge. */
+  headSha: string;
+  /** The base branch's `dismiss_stale_reviews`. False for unreadable or absent protection. */
+  dismissesStaleReviews: boolean;
+}
+
+/**
+ * Whether one standing verdict is an approval that `scope` allows to be counted.
+ *
+ * SHAs are compared exactly. GitHub reports both sides as lowercase hex, and a mismatch of any kind
+ * fails toward "does not count", which is the conservative direction.
+ */
+function countableApproval(verdict: StandingVerdict, scope: ApprovalScope): boolean {
+  if (verdict.state !== "APPROVED") return false;
+  return scope.dismissesStaleReviews || verdict.commitId === scope.headSha;
+}
+
+/**
+ * Count the distinct logins, other than `author`, whose LATEST verdict review is an approval that
+ * counts for `scope`. This is the `approvalsByOthers` input to protectionSatisfied, and it lives here
+ * so the two stay in step.
  *
  * The last verdict per author wins, so a later CHANGES_REQUESTED or a DISMISSED review correctly
  * cancels an earlier approval. The PR author's own approval is never counted: GitHub does not
- * accept it toward a required-approvals rule.
+ * accept it toward a required-approvals rule. An approval of a commit that is no longer the head is
+ * not counted either, unless the branch dismisses stale reviews itself; see ApprovalScope.
  */
-export function countApprovalsByOthers(reviews: Review[], author: string): number {
+export function countApprovalsByOthers(reviews: Review[], author: string, scope: ApprovalScope): number {
   const excluded = author.toLowerCase();
   let count = 0;
-  for (const [login, state] of standingVerdicts(reviews)) {
+  for (const [login, verdict] of standingVerdicts(reviews)) {
     if (login === excluded) continue;
-    if (state === "APPROVED") count++;
+    if (countableApproval(verdict, scope)) count++;
   }
   return count;
 }
 
 /**
- * Whether `login`'s standing verdict is an approval: the same question countApprovalsByOthers asks
- * of every other login, asked about one.
+ * Whether `login` holds an approval that counts for `scope`: the same question countApprovalsByOthers
+ * asks of every other login, asked about one.
  *
  * This is how a would-be approver finds out whether its approval is already counted in
  * `approvalsByOthers`, so it exists to keep ProtectionState.pendingApprovalFromActor from adding an
- * approval that is already in the total. Deliberately NOT filtered by commit SHA: protection counts
- * standing approvals whatever commit they were left on, countApprovalsByOthers does not filter
- * either, and filtering here would report "no approval yet" for one that protection is already
- * counting, which is precisely the double count this answers. Logins are compared
- * case-insensitively for the same reason; see standingVerdicts.
+ * approval that is already in the total. It therefore has to apply the SAME scope the count applies:
+ * an approval the count is ignoring as stale must be reported as absent here, or the operation whose
+ * job is to approve the new head would withhold its own pending approval on the grounds of an
+ * approval nothing is counting, and rail 5 would be unsatisfiable at every head after the first. The
+ * question "should a fresh approval be POSTED at this head" is a different one, and its caller
+ * answers it separately.
+ *
+ * Logins are compared case-insensitively, for the reason given on standingVerdicts.
  */
-export function hasStandingApproval(reviews: Review[], login: string): boolean {
-  return standingVerdicts(reviews).get(login.toLowerCase()) === "APPROVED";
+export function hasStandingApproval(reviews: Review[], login: string, scope: ApprovalScope): boolean {
+  const verdict = standingVerdicts(reviews).get(login.toLowerCase());
+  return verdict !== undefined && countableApproval(verdict, scope);
 }

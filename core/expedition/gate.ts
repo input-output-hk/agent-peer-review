@@ -23,7 +23,14 @@ export interface GateInput {
   mergeableState: "clean" | "dirty" | "behind" | "blocked" | "unstable" | "unknown";
   branchProtectionSatisfied: boolean; // required reviews/checks/conversations/enforce_admins all met (computed elsewhere)
   hasNewSecurityAlert: boolean;
-  humanReviewInFlight: boolean;
+  /**
+   * A human was asked to review and has not answered: someone is mid-review right now. The two halves
+   * of rail 7 are separate inputs because they are separate facts, and a proposal comment has to be
+   * able to say which one refused (see the rail, and humanReviewStatus in human-review.ts).
+   */
+  humanReviewPending: boolean;
+  /** A human's standing verdict is CHANGES_REQUESTED: a person has ruled against the change. */
+  humanChangesRequested: boolean;
   autonomy: "auto" | "propose"; // per-invocation argument, never configuration; v1 default propose
   headShaGuardPassed: boolean; // the SHA we evaluated still equals the head we would act on
   actingLogin: string;
@@ -153,8 +160,24 @@ export function evaluateGates(input: GateInput): GateDecision {
   // the specific cause (alerts present, or no access) as an extra reason.
   if (input.hasNewSecurityAlert) reasons.push("the security alert rail is not satisfied");
 
-  // 7. No human review in flight; never race a human reviewer.
-  if (input.humanReviewInFlight) reasons.push("a human review is in flight");
+  // 7. Never race a human who is mid-review, and never act against a human's standing refusal. Two
+  // facts, folded into one rail with one reason each so a proposal comment explains itself
+  // accurately rather than claiming somebody is mid-review when nobody is (issue #57):
+  //
+  //   - A human with an OPEN review request has been asked and has not answered. That, and only
+  //     that, is a review in flight.
+  //   - A human whose standing verdict is CHANGES_REQUESTED has finished reviewing and said no. It
+  //     blocks as a verdict, for as long as they do not replace it with another one.
+  //
+  // What deliberately does NOT fail this rail is a human's finished, favourable review. An APPROVED
+  // review is the outcome the workflow wants: it counts toward rail 5 and does nothing else here. A
+  // COMMENTED review is not a verdict at all. Treating either as an obstacle made this rail fail on
+  // the same event that satisfied rail 5, so the auto path was unreachable on every repository where
+  // a human ever reviews. See humanReviewStatus for what each state is taken to mean and why.
+  const humanBlockers: string[] = [];
+  if (input.humanReviewPending) humanBlockers.push("a human review is in flight");
+  if (input.humanChangesRequested) humanBlockers.push("a human has requested changes");
+  if (humanBlockers.length > 0) reasons.push(humanBlockers.join("; "));
 
   // 8. The autonomy passed on THIS call must itself be "auto". It is a per-invocation argument, not
   // a setting anything can persist, and it alone forces propose.

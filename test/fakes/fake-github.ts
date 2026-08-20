@@ -159,6 +159,14 @@ export class FakeGitHubGateway implements GitHubGateway {
   async getChecks(repo: string, ref: string): Promise<CheckResult[]> {
     return (this.checks.get(`${repo}@${ref}`) ?? []).map((c) => ({ ...c }));
   }
+  /**
+   * The protection seeded with setBranchProtection, or "none" when a test never said.
+   *
+   * A summary comes back as a deep copy, and it carries every field of BranchProtectionSummary,
+   * including `dismissesStaleReviews`: a test seeding protection has to state whether the branch
+   * retires stale approvals, because that is what decides whether an approval of an older commit may
+   * be counted (see ApprovalScope in core/expedition/protection.ts).
+   */
   async getBranchProtection(repo: string, branch: string): Promise<BranchProtectionSummary | "none" | "unknown"> {
     const p = this.protection.get(`${repo}@${branch}`) ?? "none";
     return typeof p === "string" ? p : { ...p, requiredChecks: [...p.requiredChecks] };

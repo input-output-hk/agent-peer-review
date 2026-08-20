@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { protectionSatisfied, countApprovalsByOthers, hasStandingApproval, sortReviews } from "./protection.js";
+import {
+  protectionSatisfied, countApprovalsByOthers, hasStandingApproval, sortReviews, standingVerdicts,
+  type ApprovalScope,
+} from "./protection.js";
 import type { BranchProtectionSummary } from "../github.js";
 import type { Review } from "../model.js";
 
@@ -9,6 +12,7 @@ const summary = (over: Partial<BranchProtectionSummary> = {}): BranchProtectionS
   requiredChecks: [],
   enforceAdmins: false,
   requiresConversationResolution: false,
+  dismissesStaleReviews: false,
   ...over,
 });
 
@@ -137,45 +141,54 @@ describe("protectionSatisfied", () => {
   });
 });
 
+const HEAD = "abc1234";
+const OLDER = "an-older-sha";
+
+/** The everyday scope: judge approvals against HEAD on a branch that does not dismiss stale reviews. */
+const atHead: ApprovalScope = { headSha: HEAD, dismissesStaleReviews: false };
+/** The same head, on a branch where GitHub retires an approval on every push. */
+const dismissing: ApprovalScope = { headSha: HEAD, dismissesStaleReviews: true };
+
 let reviewSeq = 0;
 // Ids and timestamps ascend together, so "chronological" is unambiguous and a test can hand the
-// list over in any order.
-const rev = (author: string, state: string): Review => {
+// list over in any order. The commit defaults to HEAD, so a test only names one when staleness is
+// what it is about.
+const rev = (author: string, state: string, commitId = HEAD): Review => {
   const n = ++reviewSeq;
-  return { id: n, author, state, body: "", commitId: "abc1234", submittedAt: `2026-08-07T10:00:${String(n).padStart(2, "0")}Z` };
+  return { id: n, author, state, body: "", commitId, submittedAt: `2026-08-07T10:00:${String(n).padStart(2, "0")}Z` };
 };
 
 describe("countApprovalsByOthers", () => {
   it("counts one approval per distinct login", () => {
-    expect(countApprovalsByOthers([rev("alice", "APPROVED"), rev("alice", "APPROVED"), rev("bob", "APPROVED")], "author")).toBe(2);
+    expect(countApprovalsByOthers([rev("alice", "APPROVED"), rev("alice", "APPROVED"), rev("bob", "APPROVED")], "author", atHead)).toBe(2);
   });
 
   it("ignores the pull request author's own approval", () => {
-    expect(countApprovalsByOthers([rev("author", "APPROVED"), rev("alice", "APPROVED")], "author")).toBe(1);
+    expect(countApprovalsByOthers([rev("author", "APPROVED"), rev("alice", "APPROVED")], "author", atHead)).toBe(1);
   });
 
   it("a later CHANGES_REQUESTED cancels an earlier approval by the same login", () => {
-    expect(countApprovalsByOthers([rev("alice", "APPROVED"), rev("alice", "CHANGES_REQUESTED")], "author")).toBe(0);
+    expect(countApprovalsByOthers([rev("alice", "APPROVED"), rev("alice", "CHANGES_REQUESTED")], "author", atHead)).toBe(0);
   });
 
   it("a later approval replaces an earlier CHANGES_REQUESTED", () => {
-    expect(countApprovalsByOthers([rev("alice", "CHANGES_REQUESTED"), rev("alice", "APPROVED")], "author")).toBe(1);
+    expect(countApprovalsByOthers([rev("alice", "CHANGES_REQUESTED"), rev("alice", "APPROVED")], "author", atHead)).toBe(1);
   });
 
   it("a DISMISSED review cancels the approval it replaced", () => {
-    expect(countApprovalsByOthers([rev("alice", "APPROVED"), rev("alice", "DISMISSED")], "author")).toBe(0);
+    expect(countApprovalsByOthers([rev("alice", "APPROVED"), rev("alice", "DISMISSED")], "author", atHead)).toBe(0);
   });
 
   it("a COMMENTED review left after an approval does not withdraw it", () => {
-    expect(countApprovalsByOthers([rev("alice", "APPROVED"), rev("alice", "COMMENTED")], "author")).toBe(1);
+    expect(countApprovalsByOthers([rev("alice", "APPROVED"), rev("alice", "COMMENTED")], "author", atHead)).toBe(1);
   });
 
   it("comments alone are not approvals", () => {
-    expect(countApprovalsByOthers([rev("alice", "COMMENTED")], "author")).toBe(0);
+    expect(countApprovalsByOthers([rev("alice", "COMMENTED")], "author", atHead)).toBe(0);
   });
 
   it("is zero for no reviews", () => {
-    expect(countApprovalsByOthers([], "author")).toBe(0);
+    expect(countApprovalsByOthers([], "author", atHead)).toBe(0);
   });
 
   // The standing verdict is decided from submittedAt, not from the order the list arrived in, so a
@@ -183,15 +196,52 @@ describe("countApprovalsByOthers", () => {
   it("uses submission time, not array order, to find the standing verdict", () => {
     const approved = rev("alice", "APPROVED");
     const withdrawn = rev("alice", "CHANGES_REQUESTED"); // later
-    expect(countApprovalsByOthers([approved, withdrawn], "author")).toBe(0);
-    expect(countApprovalsByOthers([withdrawn, approved], "author")).toBe(0); // same answer reversed
+    expect(countApprovalsByOthers([approved, withdrawn], "author", atHead)).toBe(0);
+    expect(countApprovalsByOthers([withdrawn, approved], "author", atHead)).toBe(0); // same answer reversed
   });
 
   it("breaks a submittedAt tie with the review id", () => {
     const sameTime = "2026-08-07T10:00:00Z";
-    const first: Review = { id: 1, author: "alice", state: "CHANGES_REQUESTED", body: "", commitId: "c", submittedAt: sameTime };
-    const second: Review = { id: 2, author: "alice", state: "APPROVED", body: "", commitId: "c", submittedAt: sameTime };
-    expect(countApprovalsByOthers([second, first], "author")).toBe(1); // id 2 is the later one
+    const first: Review = { id: 1, author: "alice", state: "CHANGES_REQUESTED", body: "", commitId: HEAD, submittedAt: sameTime };
+    const second: Review = { id: 2, author: "alice", state: "APPROVED", body: "", commitId: HEAD, submittedAt: sameTime };
+    expect(countApprovalsByOthers([second, first], "author", atHead)).toBe(1); // id 2 is the later one
+  });
+
+  // Issue #53: a peer approved sha0001, the author pushed sha0009, and the gate merged sha0009 on the
+  // strength of the approval of sha0001. Nobody had approved the code that merged.
+  describe("an approval of a commit that is no longer the head", () => {
+    it("does not count", () => {
+      expect(countApprovalsByOthers([rev("alice", "APPROVED", OLDER)], "author", atHead)).toBe(0);
+    });
+
+    it("counts on a branch that dismisses stale reviews, where GitHub has handled staleness itself", () => {
+      expect(countApprovalsByOthers([rev("alice", "APPROVED", OLDER)], "author", dismissing)).toBe(1);
+    });
+
+    it("is not rescued by a fresh approval from someone else: each login is judged on its own commit", () => {
+      const reviews = [rev("alice", "APPROVED", OLDER), rev("bob", "APPROVED", HEAD)];
+      expect(countApprovalsByOthers(reviews, "author", atHead)).toBe(1);
+      expect(countApprovalsByOthers(reviews, "author", dismissing)).toBe(2);
+    });
+
+    it("re-counts once that login approves the head", () => {
+      const stale = rev("alice", "APPROVED", OLDER);
+      const fresh = rev("alice", "APPROVED", HEAD); // later
+      expect(countApprovalsByOthers([stale, fresh], "author", atHead)).toBe(1);
+    });
+
+    // The standing verdict is still the LATEST one, so an old approval cannot be resurrected by
+    // pushing the branch back: a newer refusal wins even where the refusal names another commit.
+    it("does not resurrect an approval that a later refusal replaced", () => {
+      const approved = rev("alice", "APPROVED", HEAD);
+      const refused = rev("alice", "CHANGES_REQUESTED", OLDER); // later
+      expect(countApprovalsByOthers([approved, refused], "author", atHead)).toBe(0);
+      expect(countApprovalsByOthers([approved, refused], "author", dismissing)).toBe(0);
+    });
+
+    it("does not count a review whose commit the API did not report at all", () => {
+      expect(countApprovalsByOthers([rev("alice", "APPROVED", "")], "author", atHead)).toBe(0);
+    });
   });
 });
 
@@ -199,25 +249,25 @@ describe("countApprovalsByOthers", () => {
 // already counted, and this says whether a specific login's is one of them.
 describe("hasStandingApproval", () => {
   it("is true for a login whose latest verdict is an approval", () => {
-    expect(hasStandingApproval([rev("me", "APPROVED")], "me")).toBe(true);
+    expect(hasStandingApproval([rev("me", "APPROVED")], "me", atHead)).toBe(true);
   });
 
   it("is false for a login with no reviews at all", () => {
-    expect(hasStandingApproval([rev("alice", "APPROVED")], "me")).toBe(false);
-    expect(hasStandingApproval([], "me")).toBe(false);
+    expect(hasStandingApproval([rev("alice", "APPROVED")], "me", atHead)).toBe(false);
+    expect(hasStandingApproval([], "me", atHead)).toBe(false);
   });
 
   it("follows the same standing-verdict rule as the count: a later verdict replaces an earlier one", () => {
-    expect(hasStandingApproval([rev("me", "APPROVED"), rev("me", "CHANGES_REQUESTED")], "me")).toBe(false);
-    expect(hasStandingApproval([rev("me", "APPROVED"), rev("me", "DISMISSED")], "me")).toBe(false);
-    expect(hasStandingApproval([rev("me", "CHANGES_REQUESTED"), rev("me", "APPROVED")], "me")).toBe(true);
-    expect(hasStandingApproval([rev("me", "APPROVED"), rev("me", "COMMENTED")], "me")).toBe(true);
+    expect(hasStandingApproval([rev("me", "APPROVED"), rev("me", "CHANGES_REQUESTED")], "me", atHead)).toBe(false);
+    expect(hasStandingApproval([rev("me", "APPROVED"), rev("me", "DISMISSED")], "me", atHead)).toBe(false);
+    expect(hasStandingApproval([rev("me", "CHANGES_REQUESTED"), rev("me", "APPROVED")], "me", atHead)).toBe(true);
+    expect(hasStandingApproval([rev("me", "APPROVED"), rev("me", "COMMENTED")], "me", atHead)).toBe(true);
   });
 
   it("uses submission time rather than array order", () => {
     const approved = rev("me", "APPROVED");
     const withdrawn = rev("me", "CHANGES_REQUESTED"); // later
-    expect(hasStandingApproval([withdrawn, approved], "me")).toBe(false);
+    expect(hasStandingApproval([withdrawn, approved], "me", atHead)).toBe(false);
   });
 
   // The one comparison in this loosening that could fail OPEN. countApprovalsByOthers counts
@@ -225,21 +275,39 @@ describe("hasStandingApproval", () => {
   // approval already inside that count, and rail 5 would add a second one for the same person.
   // GitHub logins are unique case-insensitively, so the two spellings are one account.
   it("matches a login whose case differs from the review's, so one approval is never counted twice", () => {
-    const approved: Review = { id: 1, author: "Me", state: "APPROVED", body: "", commitId: "c", submittedAt: "2026-08-07T09:00:00Z" };
-    expect(hasStandingApproval([approved], "me")).toBe(true);
-    expect(countApprovalsByOthers([approved], "the-author")).toBe(1); // the same approval, once
+    const approved: Review = { id: 1, author: "Me", state: "APPROVED", body: "", commitId: HEAD, submittedAt: "2026-08-07T09:00:00Z" };
+    expect(hasStandingApproval([approved], "me", atHead)).toBe(true);
+    expect(countApprovalsByOthers([approved], "the-author", atHead)).toBe(1); // the same approval, once
     // The same insensitivity excludes the pull request author's own approval however it was spelled,
     // which is the conservative direction: a lower count, never a higher one.
-    expect(countApprovalsByOthers([approved], "mE")).toBe(0);
+    expect(countApprovalsByOthers([approved], "mE", atHead)).toBe(0);
   });
 
-  // An approval left on an earlier commit still counts toward branch protection, and
-  // countApprovalsByOthers counts it too, so this must agree with it or the pending-approval
-  // increment would count the same approval twice.
-  it("does not care which commit the approval was left on", () => {
-    const old: Review = { id: 1, author: "me", state: "APPROVED", body: "", commitId: "an-older-sha", submittedAt: "2026-08-07T09:00:00Z" };
-    expect(hasStandingApproval([old], "me")).toBe(true);
-    expect(countApprovalsByOthers([old], "the-author")).toBe(1);
+  // This has to apply exactly the scope the count applies, in both directions. Reporting a stale
+  // approval as standing while the count ignores it would make the operation whose job is to approve
+  // the new head withhold its own pending approval on the strength of an approval nothing counts, and
+  // rail 5 would be unsatisfiable at every head after the first: issue #48's deadlock, reintroduced
+  // through issue #53's fix.
+  it("agrees with the count about an approval of an older commit, whichever way the scope reads it", () => {
+    const stale = [rev("me", "APPROVED", OLDER)];
+    expect(hasStandingApproval(stale, "me", atHead)).toBe(false);
+    expect(countApprovalsByOthers(stale, "the-author", atHead)).toBe(0);
+
+    expect(hasStandingApproval(stale, "me", dismissing)).toBe(true);
+    expect(countApprovalsByOthers(stale, "the-author", dismissing)).toBe(1);
+  });
+});
+
+describe("standingVerdicts", () => {
+  it("keeps each login's latest verdict, with the login as reported and the commit it named", () => {
+    const reviews = [rev("Alice", "APPROVED", OLDER), rev("Alice", "CHANGES_REQUESTED", HEAD)];
+    expect([...standingVerdicts(reviews).entries()]).toEqual([
+      ["alice", { login: "Alice", state: "CHANGES_REQUESTED", commitId: HEAD }],
+    ]);
+  });
+
+  it("holds no entry for a login that has left no verdict", () => {
+    expect(standingVerdicts([rev("alice", "COMMENTED"), rev("bob", "PENDING")]).size).toBe(0);
   });
 });
 
