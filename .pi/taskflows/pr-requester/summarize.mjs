@@ -6,8 +6,8 @@
 // printed is ignored.
 //
 // Zero dependencies, and all string handling is linear (indexOf / slice / startsWith / endsWith /
-// split): the text below is written by a model reading pull-request content, so no regex is applied
-// to it.
+// split / toLowerCase): the text below is written by a model reading pull-request content, so no
+// regex is applied to it.
 
 import { readFileSync } from "node:fs";
 
@@ -15,6 +15,7 @@ const ITEM_HEADER = "### [";
 const FAILED_SUFFIX = "(failed)";
 const MAX_NOTES = 20;
 const MAX_DIGITS = 6;
+const MAX_REASON_CHARS = 160;
 
 /** Read all of stdin. An empty or closed stdin means the map phase produced nothing. */
 function readStdin() {
@@ -94,6 +95,37 @@ function label(item) {
   return "an unidentified item";
 }
 
+/** First reason, trimmed to one readable line. Reasons quote file and package names from the diff. */
+function firstReason(result) {
+  const reasons = result !== null && Array.isArray(result.reasons) ? result.reasons : [];
+  for (const reason of reasons) {
+    if (typeof reason !== "string" || reason.length === 0) continue;
+    const oneLine = reason.split("\n").join(" ");
+    return oneLine.length > MAX_REASON_CHARS ? `${oneLine.slice(0, MAX_REASON_CHARS)}...` : oneLine;
+  }
+  return "";
+}
+
+/**
+ * True when a reason says the decision is held by a review that is in flight.
+ *
+ * Matched on the two words that carry the meaning rather than on a whole sentence, because the gate
+ * owns the wording of its rails and this has to keep working when that wording changes. The rail is
+ * worth singling out: it is the one refusal an operator can cause by configuration alone. A peer
+ * agent missing from `knownAgentLogins` reads as a human, so its review holds the gate on a pull
+ * request no human has touched, and a GitHub review is permanent, so the hold never expires.
+ */
+function heldForReviewInFlight(result) {
+  const reasons = result !== null && Array.isArray(result.reasons) ? result.reasons : [];
+  for (const reason of reasons) {
+    if (typeof reason !== "string") continue;
+    const lower = reason.toLowerCase();
+    const inFlight = lower.indexOf("in flight") !== -1 || lower.indexOf("in-flight") !== -1;
+    if (inFlight && lower.indexOf("review") !== -1) return true;
+  }
+  return false;
+}
+
 function main() {
   const items = parseItems(readStdin());
 
@@ -102,7 +134,18 @@ function main() {
     return;
   }
 
-  const counts = { stabilized: 0, proposed: 0, merged: 0, "review-requested": 0, escalated: 0, failed: 0 };
+  // "human-review-hold" is a breakdown of the refusals above it, not an outcome of its own: an item
+  // counted there is also counted as proposed. It is called out because it is the one rail an
+  // operator can trip by configuration, and a count is what turns that from silence into a number.
+  const counts = {
+    stabilized: 0,
+    proposed: 0,
+    merged: 0,
+    "review-requested": 0,
+    "human-review-hold": 0,
+    escalated: 0,
+    failed: 0,
+  };
   const attention = [];
 
   for (const item of items) {
@@ -116,14 +159,23 @@ function main() {
     const stabilize = typeof result.stabilize === "string" ? result.stabilize : "";
     const expedite = typeof result.expedite === "string" ? result.expedite : "";
     const requested = typeof result.requested === "string" ? result.requested : "";
+    const reason = firstReason(result);
+    // Whether anybody is looking at this pull request now. `bot-authored` is not engagement, but it
+    // is a hand-off to pr-steward rather than a strand, so it is excluded from the line below too.
+    const engaged = requested === "requested" || requested === "already-requested";
+    const held = heldForReviewInFlight(result);
 
     if (stabilize === "updated") counts.stabilized += 1;
     if (expedite === "proposed" || expedite === "already-proposed") counts.proposed += 1;
     if (expedite === "merged") counts.merged += 1;
-    if (requested === "requested" || requested === "already-requested") counts["review-requested"] += 1;
+    if (engaged) counts["review-requested"] += 1;
+    if (held) counts["human-review-hold"] += 1;
 
     // Every item that stopped early gets a line, so a pull request the flow walked away from is
-    // never invisible in the summary. "blocked" is deliberately absent: it does not stop an item.
+    // never invisible in the summary. "blocked" at stabilize is deliberately absent: it does not
+    // stop an item. The four branches after the merge refusal are the ones a healthy-looking
+    // summary used to hide (issue #51): the flow neither merged the pull request nor got anyone to
+    // look at it, and only this list says so.
     if (expedite === "escalate-human") {
       counts.escalated += 1;
       attention.push(`${label(item)}: needs a human (stabilize reported ${stabilize || "nothing"})`);
@@ -138,7 +190,20 @@ function main() {
     } else if (stabilize === "draft") {
       attention.push(`${label(item)}: stopped at stabilize; the pull request is a draft`);
     } else if (expedite === "blocked") {
-      attention.push(`${label(item)}: the merge was refused`);
+      attention.push(`${label(item)}: the merge was refused${reason ? ` (${reason})` : ""}`);
+    } else if (requested === "unconfigured") {
+      // requestPeerReview throws before its first GitHub call, so nothing was written anywhere and
+      // the pull request itself carries no trace. Naming the field and the variable is the whole
+      // point: otherwise an operator reads review-requested=0 for a month and learns nothing.
+      attention.push(
+        `${label(item)}: no reviewers are configured, so nobody was asked; set "reviewers" in ~/.agent-peer-review/config.json or AGENT_REVIEW_REVIEWERS`,
+      );
+    } else if (expedite === "not-eligible") {
+      attention.push(`${label(item)}: the gate never ran${reason ? ` (${reason})` : ""}`);
+    } else if (held) {
+      attention.push(`${label(item)}: held for a review in flight; if no human is looking, "knownAgentLogins" is missing a peer agent`);
+    } else if ((expedite === "proposed" || expedite === "already-proposed") && !engaged && requested !== "bot-authored") {
+      attention.push(`${label(item)}: proposed, and no reviewer was asked${reason ? ` (${reason})` : ""}`);
     }
   }
 

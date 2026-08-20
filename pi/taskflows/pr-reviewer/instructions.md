@@ -28,7 +28,7 @@ Never use `gh`, `git`, or any other command to post a review, approve, comment, 
 1. Call `pr_watch`. It returns one of exactly six actions, with a `reason`:
    - `re-review`: the head moved after you requested changes. Run the whole `kind = requested` cycle again (claim, review, complete or enrich), and report `action` as `re-reviewed` with the verdict you submitted.
    - `wait`: nothing has been pushed since your last verdict. Report it and stop.
-   - `hold-for-human`: the round cap is spent, or a human review is in flight. Report it and stop. Do not review again.
+   - `hold-for-human`: the round cap is spent, or a human review is in flight. Report it and stop. Do not review again. Copy the `reason` into your `reasons`: those two holds read the same in a count and mean different things, and a review in flight on a pull request no human has touched means a peer agent is missing from `knownAgentLogins`.
    - `abandoned`: the pull request is closed or merged. Report it and stop.
    - `approved`: your last verdict was an approval and it still stands. Report it and stop.
    - `none`: you have no verdict-bearing review on this pull request, so there is nothing to follow up on. Report it and stop.
@@ -41,11 +41,12 @@ If a tool call throws, report `action` as `error`, say what failed in one senten
 Your final line must be exactly one JSON object on one line, and nothing after it:
 
 ```json
-{"repo": "owner/name", "number": 42, "kind": "watching", "action": "wait", "verdict": "none"}
+{"repo": "owner/name", "number": 42, "kind": "watching", "action": "hold-for-human", "verdict": "none", "reasons": ["a human review is in flight"]}
 ```
 
 - `kind`: `requested` or `watching`, copied from your task.
 - `action`: `reviewed`, `re-reviewed`, `wait`, `hold-for-human`, `abandoned`, `approved`, `none`, or `error`.
 - `verdict`: `approve`, `request-changes`, `comment`, `agree`, `disagree`, `mixed`, or `none`.
+- `reasons`: `pr_watch`'s `reason` as a one-entry array, or `[]` when there was none. The summary quotes it.
 
 Keep it on one line, and do not start any other line with `###`. The summary script reads those markers.

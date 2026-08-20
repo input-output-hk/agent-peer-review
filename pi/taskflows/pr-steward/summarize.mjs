@@ -6,8 +6,8 @@
 // printed is ignored.
 //
 // Zero dependencies, and all string handling is linear (indexOf / slice / startsWith / endsWith /
-// split): the text below is written by a model reading pull-request content, so no regex is applied
-// to it.
+// split / toLowerCase): the text below is written by a model reading pull-request content, so no
+// regex is applied to it.
 
 import { readFileSync } from "node:fs";
 
@@ -106,6 +106,26 @@ function firstReason(result) {
   return "";
 }
 
+/**
+ * True when a reason says the decision is held by a review that is in flight.
+ *
+ * Matched on the two words that carry the meaning rather than on a whole sentence, because the gate
+ * owns the wording of its rails and this has to keep working when that wording changes. The rail is
+ * worth singling out: it is the one refusal an operator can cause by configuration alone. A peer
+ * agent missing from `knownAgentLogins` reads as a human, so its review holds the gate on a pull
+ * request no human has touched, and a GitHub review is permanent, so the hold never expires.
+ */
+function heldForReviewInFlight(result) {
+  const reasons = result !== null && Array.isArray(result.reasons) ? result.reasons : [];
+  for (const reason of reasons) {
+    if (typeof reason !== "string") continue;
+    const lower = reason.toLowerCase();
+    const inFlight = lower.indexOf("in flight") !== -1 || lower.indexOf("in-flight") !== -1;
+    if (inFlight && lower.indexOf("review") !== -1) return true;
+  }
+  return false;
+}
+
 function main() {
   const items = parseItems(readStdin());
 
@@ -117,7 +137,20 @@ function main() {
   // "approved" is counted apart from "approved-and-merged" on purpose: the approval landed and the
   // merge did not, so folding the two together would report an upgrade as shipped when it is only
   // unblocked.
-  const counts = { proposed: 0, approved: 0, "approved-and-merged": 0, "not-eligible": 0, blocked: 0, failed: 0 };
+  //
+  // "human-review-hold" is a breakdown of the verdicts before it, not a verdict of its own: an item
+  // counted there is also counted as proposed, approved, or blocked. It is called out because it is
+  // the one rail an operator can trip by configuration, and a count is what turns that from silence
+  // into a number (issue #51).
+  const counts = {
+    proposed: 0,
+    approved: 0,
+    "approved-and-merged": 0,
+    "not-eligible": 0,
+    blocked: 0,
+    "human-review-hold": 0,
+    failed: 0,
+  };
   const attention = [];
 
   for (const item of items) {
@@ -130,6 +163,8 @@ function main() {
 
     const action = typeof result.action === "string" ? result.action : "";
     const reason = firstReason(result);
+    const held = heldForReviewInFlight(result);
+    if (held) counts["human-review-hold"] += 1;
 
     if (action === "proposed" || action === "already-proposed") counts.proposed += 1;
     else if (action === "approved") counts.approved += 1;
@@ -150,6 +185,11 @@ function main() {
       attention.push(`${label(item)}: not eligible for the automated path, so a human decides it${reason ? ` (${reason})` : ""}`);
     } else if (action === "" || action === "error") {
       attention.push(`${label(item)}: a tool call failed${reason ? ` (${reason})` : ""}`);
+    } else if (held) {
+      // Reached by a proposal, whose comment says the same thing on the pull request. The line is
+      // here because the rail can be tripped by a peer agent missing from `knownAgentLogins`, and
+      // then nothing about the wait is true: no human is looking, and none ever will.
+      attention.push(`${label(item)}: held for a review in flight; if no human is looking, "knownAgentLogins" is missing a peer agent`);
     }
   }
 
