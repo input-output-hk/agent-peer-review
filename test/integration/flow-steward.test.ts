@@ -113,6 +113,59 @@ describe("Flow C (pr-steward): approve a bot dependency upgrade", () => {
     expect(gh.writes).toHaveLength(2);
   });
 
+  // The protected repository from issue #48, end to end: a Renovate-shaped bot pull request on a
+  // repository that requires an approving review, with a lockfile-sized diff. Every one of those
+  // three properties used to make the auto path unreachable, and the durable order below is the
+  // contract: the approval that makes the pull request eligible goes in BEFORE the merge, both at
+  // the commit the rails were read at, by a login that is not the author.
+  it("approves and merges a bot upgrade on a repository that requires an approving review", async () => {
+    const gh = seedBotBump(new RecordingGateway(), [
+      manifest(bumpPatch("pnpm", "10.34.3", "10.34.4")),
+      // A realistic lockfile bump: far past the general 200-line cap, well inside the deps policy.
+      { filename: "pnpm-lock.yaml", status: "modified", additions: 900, deletions: 300, patch: "@@ -1 +1 @@\n-a\n+b" },
+    ]);
+    gh.setBranchProtection(REPO, "main", {
+      requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
+      requiredChecks: ["build"], enforceAdmins: false, requiresConversationResolution: false,
+    });
+
+    const result = await steward(gh, tick(1), { autonomy: "auto" });
+    expect(result).toEqual({ action: "approved-and-merged", reasons: [] });
+
+    expect(gh.writes).toEqual([`review:APPROVE@${HEAD}`, `merge@${HEAD}`]);
+    expect(gh.reviews).toHaveLength(1);
+    expect(gh.reviews[0]).toMatchObject({ author: ME, event: "APPROVE", state: "APPROVED", commitId: HEAD });
+    expect(gh.reviews[0].author).not.toBe(BOT);
+    expect((await gh.getPullRequest(REPO, PR)).author).toBe(BOT);
+    // The approval a maintainer will read months from now says what was approved and why.
+    expect(gh.reviews[0].body).toContain("`pnpm`: 10.34.3 -> 10.34.4");
+    expect(gh.reviews[0].body).toContain("Semver level: patch");
+    expect(gh.reviews[0].body).toContain(HEAD);
+    expect(gh.merges).toEqual([{ repo: REPO, pr: PR, sha: HEAD, method: "merge", commitTitle: undefined }]);
+    expect((await gh.getPullRequest(REPO, PR)).state).toBe("merged");
+    expect(await gh.listComments(REPO, PR)).toEqual([]); // the auto path posts no proposal
+
+    // And the flow is still idempotent: a later tick on the merged pull request writes nothing.
+    expect((await steward(gh, tick(2), { autonomy: "auto" })).action).toBe("not-eligible");
+    expect(gh.writes).toHaveLength(2);
+  });
+
+  it("proposes on that same repository when it requires two approvals, and writes no approval", async () => {
+    const gh = seedBotBump(new RecordingGateway());
+    gh.setBranchProtection(REPO, "main", {
+      requiresPullRequestReviews: true, requiredApprovingReviewCount: 2,
+      requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
+    });
+
+    const result = await steward(gh, tick(1), { autonomy: "auto" });
+    expect(result.action).toBe("proposed");
+    expect(result.reasons).toEqual(["branch protection requirements are not satisfied"]);
+    expect(gh.writes).toEqual([]); // the pending approval adds one, and one is not two
+    const comments = await gh.listComments(REPO, PR);
+    expect(comments).toHaveLength(1);
+    expect(comments[0].body).toContain("branch protection requirements are not satisfied");
+  });
+
   describe("upgrades this path refuses, writing nothing at all", () => {
     it("refuses a major bump, naming the semver level", async () => {
       const gh = seedBotBump(new FakeGitHubGateway(), [manifest(bumpPatch("left-pad", "1.0.0", "2.0.0"))]);

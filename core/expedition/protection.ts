@@ -11,6 +11,34 @@ import type { ChecksSummary } from "./checks.js";
 export interface ProtectionState {
   approvalsByOthers: number;      // approving reviews by logins other than the PR author
   checksSummary: ChecksSummary;   // the same rollup fed to gate rail 3 (see summarizeChecks)
+  /**
+   * True when the caller is an operation that is ABOUT to submit an approving review of its own, and
+   * that approval is not already counted in `approvalsByOthers` (see gatherRails, which is the only
+   * place that computes this: the acting login differs from the author and holds no standing
+   * approval). Then, and only then, the required-approvals comparison counts it.
+   *
+   * Why this is sound rather than a bypass:
+   *
+   * - The approval is a real action, not an assumption. `approveDependencyUpgrade` submits it, and
+   *   GitHub counts it toward the same requirement this function is evaluating. Judging the pull
+   *   request without it would be judging a state that will not exist by the time anything merges.
+   * - Without it the operation that SUPPLIES the approval can never satisfy the requirement its own
+   *   approval exists to satisfy: `approvalsByOthers` is read before the approval is posted, so on
+   *   any repository requiring an approving review the comparison is unsatisfiable and the auto path
+   *   is unreachable on exactly the repositories that need it (issue #48).
+   * - It adds exactly one, so every requirement above one still holds: two required approvals with
+   *   none present stays false (0 + 1 < 2), and a human's approval is still required to reach it.
+   * - It relaxes nothing else. `"unknown"` protection, required conversation resolution, red or
+   *   pending required checks, and a malformed count all still fail closed, and the malformed-count
+   *   guards below run BEFORE the increment so a bogus count cannot be rescued by it.
+   * - The approval is separately gated. Rail 10 refuses self-approval, and gatherRails withholds
+   *   this flag when the acting login is the author, so it can never stand in for an approval GitHub
+   *   would not accept.
+   *
+   * Callers that do not approve (`expedite`) never set it, and the comparison is then exactly what
+   * it always was.
+   */
+  pendingApprovalFromActor?: boolean;
 }
 
 /**
@@ -25,6 +53,10 @@ export interface ProtectionState {
  *   "unprotected" are indistinguishable from here, so this fails closed.
  * - A summary object: required checks must be green, required approvals must be met, and required
  *   conversation resolution is an automatic false.
+ *
+ * "Required approvals must be met" counts the approval the caller is about to submit, when the
+ * caller told us it is about to submit one; see ProtectionState.pendingApprovalFromActor for why
+ * that is sound and for everything it deliberately does not relax.
  *
  * `requiresConversationResolution` fails closed because whether every review thread is resolved
  * cannot be answered cheaply over REST (it needs a GraphQL query per thread). Rather than guess,
@@ -48,7 +80,10 @@ export function protectionSatisfied(
     // the check below would wrongly reject; an explicit guard makes the intent unambiguous).
     if (!Number.isInteger(state.approvalsByOthers) || state.approvalsByOthers < 0) return false;
     if (!Number.isInteger(needed) || needed < 0) return false;
-    if (state.approvalsByOthers < needed) return false;
+    // Both guards above ran on the RAW count, so the pending approval cannot rescue a malformed one:
+    // NaN + 1 is still NaN, and this line is only reached once the count is a non-negative integer.
+    const approvals = state.approvalsByOthers + (state.pendingApprovalFromActor === true ? 1 : 0);
+    if (approvals < needed) return false;
   }
   return true;
 }
@@ -70,6 +105,22 @@ export function sortReviews(reviews: Review[]): Review[] {
 }
 
 /**
+ * The standing verdict per login: the state of each login's LATEST verdict-bearing review.
+ *
+ * One implementation, because both questions asked below ("how many others approve" and "does this
+ * one login approve") have to be answered the same way or the pending-approval increment would
+ * double-count an approval already in the total.
+ */
+function standingVerdicts(reviews: Review[]): Map<string, string> {
+  const latestVerdict = new Map<string, string>();
+  for (const r of sortReviews(reviews)) {
+    if (!VERDICT_STATES.has(r.state)) continue;
+    latestVerdict.set(r.author, r.state);
+  }
+  return latestVerdict;
+}
+
+/**
  * Count the distinct logins, other than `author`, whose LATEST verdict review is an approval.
  * This is the `approvalsByOthers` input to protectionSatisfied, and it lives here so the two stay
  * in step.
@@ -79,13 +130,25 @@ export function sortReviews(reviews: Review[]): Review[] {
  * accept it toward a required-approvals rule.
  */
 export function countApprovalsByOthers(reviews: Review[], author: string): number {
-  const latestVerdict = new Map<string, string>();
-  for (const r of sortReviews(reviews)) {
-    if (r.author === author) continue;
-    if (!VERDICT_STATES.has(r.state)) continue;
-    latestVerdict.set(r.author, r.state);
-  }
   let count = 0;
-  for (const state of latestVerdict.values()) if (state === "APPROVED") count++;
+  for (const [login, state] of standingVerdicts(reviews)) {
+    if (login === author) continue;
+    if (state === "APPROVED") count++;
+  }
   return count;
+}
+
+/**
+ * Whether `login`'s standing verdict is an approval: the same question countApprovalsByOthers asks
+ * of every other login, asked about one.
+ *
+ * This is how a would-be approver finds out whether its approval is already counted in
+ * `approvalsByOthers`, so it exists to keep ProtectionState.pendingApprovalFromActor from adding an
+ * approval that is already in the total. Deliberately NOT filtered by commit SHA: protection counts
+ * standing approvals whatever commit they were left on, countApprovalsByOthers does not filter
+ * either, and filtering here would report "no approval yet" for one that protection is already
+ * counting, which is precisely the double count this answers.
+ */
+export function hasStandingApproval(reviews: Review[], login: string): boolean {
+  return standingVerdicts(reviews).get(login) === "APPROVED";
 }

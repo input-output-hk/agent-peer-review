@@ -2,13 +2,23 @@ import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
 import { approveDependencyUpgrade } from "./approve-dependency-upgrade.js";
 import { findActionMarkers } from "../expedition/action-marker.js";
-import type { DetailedPullFile } from "../github.js";
+import { DEFAULT_GATE_POLICY, DEPS_GATE_POLICY } from "../expedition/gate.js";
+import type { BranchProtectionSummary, CheckResult, DetailedPullFile, Mergeability } from "../github.js";
 
 const REPO = "o/r";
 const PR = 1;
 const ME = "me";
 const BOT = "dependabot[bot]";
 const HEAD = "sha0001";
+
+/** Branch protection that requires `count` approving reviews and nothing else. */
+const requiresApprovals = (count: number): BranchProtectionSummary => ({
+  requiresPullRequestReviews: true,
+  requiredApprovingReviewCount: count,
+  requiredChecks: [],
+  enforceAdmins: false,
+  requiresConversationResolution: false,
+});
 
 const bumpPatch = (name: string, from: string, to: string): string =>
   ["@@ -12,7 +12,7 @@", '   "dependencies": {', `-    "${name}": "${from}",`, `+    "${name}": "${to}",`, '     "zod": "^3.23.0"'].join("\n");
@@ -17,8 +27,12 @@ const manifest = (patch: string): DetailedPullFile => ({ filename: "package.json
 const lockfile: DetailedPullFile = { filename: "package-lock.json", status: "modified", additions: 12, deletions: 12, patch: "@@ -1 +1 @@\n-a\n+b" };
 
 // A bot-authored patch bump with green checks and no protection: every rail clears except autonomy.
-function seedBotBump(files: DetailedPullFile[] = [manifest(bumpPatch("left-pad", "^1.0.0", "^1.0.1")), lockfile]): FakeGitHubGateway {
-  const gh = new FakeGitHubGateway();
+// The optional second argument seeds a gateway subclass instead, for the tests that need a read to
+// change its answer between calls.
+function seedBotBump<T extends FakeGitHubGateway = FakeGitHubGateway>(
+  files: DetailedPullFile[] = [manifest(bumpPatch("left-pad", "^1.0.0", "^1.0.1")), lockfile],
+  gh: T = new FakeGitHubGateway() as T,
+): T {
   gh.seedPr({ number: PR, title: "chore(deps): bump left-pad", author: BOT, headSha: HEAD, baseSha: "base", url: "u", state: "open", labels: [] });
   gh.setActorType(BOT, "Bot");
   gh.setDetailedFiles(REPO, PR, files);
@@ -225,6 +239,274 @@ describe("approveDependencyUpgrade", () => {
       const result = await run(gh, { autonomy: "auto" });
       expect(result.action).toBe("proposed");
       expect(result.reasons.some((r) => r.includes("failing closed"))).toBe(true);
+    });
+  });
+
+  // Issue #48: on a repository that requires an approving review, rail 5 was unsatisfiable for the
+  // operation whose own approval is the thing that would satisfy it, so the auto path was
+  // unreachable on exactly the repositories that need it.
+  describe("a repository that requires an approving review", () => {
+    it("approves and merges when one approval is required and none stands yet", async () => {
+      const gh = seedBotBump();
+      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result).toEqual({ action: "approved-and-merged", reasons: [] });
+      expect(gh.reviews).toHaveLength(1);
+      expect(gh.reviews[0]).toMatchObject({ author: ME, event: "APPROVE", state: "APPROVED", commitId: HEAD });
+      expect(gh.merges).toEqual([{ repo: REPO, pr: PR, sha: HEAD, method: "merge", commitTitle: undefined }]);
+    });
+
+    it("proposes instead when two approvals are required and none stands: the pending one adds exactly one", async () => {
+      const gh = seedBotBump();
+      gh.setBranchProtection(REPO, "main", requiresApprovals(2));
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons).toEqual(["branch protection requirements are not satisfied"]);
+      expect(gh.reviews).toEqual([]); // nothing was approved on the propose path
+      expect(gh.merges).toEqual([]);
+    });
+
+    it("does not count its own standing approval twice toward a two-approval requirement", async () => {
+      const gh = seedBotBump();
+      gh.setBranchProtection(REPO, "main", requiresApprovals(2));
+      // One approval by this agent already stands, so it is already inside approvalsByOthers. Adding
+      // a pending one on top would reach two and merge on a single approval.
+      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "approved on an earlier tick" });
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons).toEqual(["branch protection requirements are not satisfied"]);
+      expect(gh.reviews).toHaveLength(1); // the standing one, unchanged
+      expect(gh.merges).toEqual([]);
+    });
+
+    it("reaches a two-approval requirement alongside another reviewer's approval", async () => {
+      const gh = seedBotBump();
+      gh.setBranchProtection(REPO, "main", requiresApprovals(2));
+      gh.login = "peer-agent"; // someone else's approval, submitted as that login
+      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "looks fine" });
+      gh.login = ME;
+
+      // Listed as an agent, because a review by anyone who is NOT a known agent fails rail 7 as well
+      // (a human's approval holds the pull request for the human, which is stricter still).
+      const result = await run(gh, { autonomy: "auto", knownAgentLogins: ["peer-agent"] });
+      expect(result.action).toBe("approved-and-merged");
+      expect(gh.reviews.map((r) => r.author)).toEqual(["peer-agent", ME]);
+      expect(gh.merges).toHaveLength(1);
+    });
+
+    it("holds off when the other standing approval is a human's, even at two of two", async () => {
+      const gh = seedBotBump();
+      gh.setBranchProtection(REPO, "main", requiresApprovals(2));
+      gh.login = "alice";
+      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "looks fine" });
+      gh.login = ME;
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons.some((r) => r.includes("human review"))).toBe(true);
+      expect(gh.merges).toEqual([]);
+    });
+
+    it("gives the acting agent no credit when it is the author itself", async () => {
+      const gh = seedBotBump();
+      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+      gh.login = BOT; // the token really is the bot's, so the identity check passes
+
+      const result = await run(gh, { autonomy: "auto", actingLogin: BOT });
+      expect(result.action).toBe("proposed");
+      // Both rails fire: GitHub would not accept the approval, so it cannot count toward protection.
+      expect(result.reasons).toContain("branch protection requirements are not satisfied");
+      expect(result.reasons.some((r) => r.includes("self-approval"))).toBe(true);
+      expect(gh.reviews).toEqual([]);
+      expect(gh.merges).toEqual([]);
+    });
+  });
+
+  // The merge is judged against state read AFTER the approval landed, never on the strength of the
+  // pending-approval arithmetic that authorized the approval itself.
+  describe("the re-check between approving and merging", () => {
+    /** Green on the first read, failing afterwards: a required check that started a new run. */
+    class ChecksTurnRed extends FakeGitHubGateway {
+      reads = 0;
+      async getChecks(repo: string, ref: string): Promise<CheckResult[]> {
+        this.reads += 1;
+        return [{ name: "build", status: this.reads === 1 ? "success" : "failure" }];
+      }
+    }
+
+    it("returns approved with the approval recorded and no merge when protection is still unsatisfied", async () => {
+      const gh = seedBotBump(undefined, new ChecksTurnRed());
+      gh.setBranchProtection(REPO, "main", { ...requiresApprovals(1), requiredChecks: ["build"] });
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved");
+      expect(result.reasons).toEqual(["branch protection still not satisfied after approving; a required check or a second approval is outstanding"]);
+      // The approval is durable and did happen; the merge did not.
+      expect(gh.reviews).toHaveLength(1);
+      expect(gh.reviews[0]).toMatchObject({ author: ME, event: "APPROVE", commitId: HEAD });
+      expect(gh.merges).toEqual([]);
+      expect((await gh.getPullRequest(REPO, PR)).state).toBe("open");
+    });
+
+    /** The bot force-pushes in the moment between the approval and the merge. */
+    class HeadMovesOnApproval extends FakeGitHubGateway {
+      async submitReview(...args: Parameters<FakeGitHubGateway["submitReview"]>): Promise<{ url: string }> {
+        const result = await super.submitReview(...args);
+        this.prs.get(`${REPO}#${PR}`)!.headSha = "sha0002";
+        return result;
+      }
+    }
+
+    it("returns approved without attempting a merge when the head moved after the approval", async () => {
+      const gh = seedBotBump(undefined, new HeadMovesOnApproval());
+      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved");
+      expect(result.reasons.some((r) => r.includes("the head moved after the approval"))).toBe(true);
+      expect(gh.reviews[0].commitId).toBe(HEAD); // the approval names the commit it judged
+      expect(gh.merges).toEqual([]);
+    });
+
+    /** Clean on the first read, blocked afterwards: GitHub recomputing mergeability. */
+    class MergeabilityTurnsBlocked extends FakeGitHubGateway {
+      reads = 0;
+      async getMergeability(repo: string, pr: number): Promise<Mergeability> {
+        this.reads += 1;
+        return { state: this.reads === 1 ? "clean" : "blocked", mergeable: this.reads === 1, draft: false, baseRef: "main", headSha: HEAD };
+      }
+    }
+
+    it("returns approved when the mergeable state stops being clean after the approval", async () => {
+      const gh = seedBotBump(undefined, new MergeabilityTurnsBlocked());
+      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved");
+      expect(result.reasons.some((r) => r.includes("mergeable state is blocked"))).toBe(true);
+      expect(gh.reviews).toHaveLength(1);
+      expect(gh.merges).toEqual([]);
+    });
+
+    it("reports approved rather than blocked when the merge itself is refused", async () => {
+      const gh = seedBotBump();
+      gh.setBranchProtection(REPO, "main", requiresApprovals(1));
+      // Every read says clean, and the merge call is the thing that refuses.
+      gh.mergePull = async () => ({ merged: false, sha: null, message: "not mergeable", reason: "not-mergeable" });
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved"); // the approval landed, so "blocked" would hide it
+      expect(result.reasons).toEqual(["merge refused (not-mergeable): not mergeable"]);
+      expect(gh.reviews).toHaveLength(1);
+    });
+
+    it("re-checks even when the approval was submitted on an earlier tick", async () => {
+      const gh = seedBotBump(undefined, new ChecksTurnRed());
+      gh.setBranchProtection(REPO, "main", { ...requiresApprovals(1), requiredChecks: ["build"] });
+      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "approved on an earlier tick" });
+      gh.reads = 0; // the seeded approval is not a read of the checks
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved");
+      expect(gh.reviews).toHaveLength(1); // no second approval stacked on
+      expect(gh.merges).toEqual([]);
+    });
+  });
+
+  // A dependency upgrade is judged on the content check (version-only manifest lines plus
+  // lockfiles), so the line cap is a sanity bound rather than the safety mechanism. See
+  // DEPS_GATE_POLICY.
+  describe("the dependency size policy", () => {
+    const bigLockfile = (lines: number): DetailedPullFile => ({
+      filename: "package-lock.json", status: "modified", additions: lines, deletions: 0, patch: "@@ -1 +1 @@\n-a\n+b",
+    });
+    const withLockfile = (lines: number): DetailedPullFile[] => [manifest(bumpPatch("left-pad", "^1.0.0", "^1.0.1")), bigLockfile(lines)];
+
+    it("passes a lockfile-sized diff that the general default cap would refuse", async () => {
+      expect(1200).toBeGreaterThan(DEFAULT_GATE_POLICY.maxLines); // the cap that used to hold this back
+      expect(1202).toBeLessThanOrEqual(DEPS_GATE_POLICY.maxLines);
+      const gh = seedBotBump(withLockfile(1200));
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved-and-merged");
+      expect(gh.merges).toHaveLength(1);
+    });
+
+    it("still refuses a diff past the dependency cap", async () => {
+      const gh = seedBotBump(withLockfile(5000));
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons.some((r) => r.includes(`too many changed lines (5002 > ${DEPS_GATE_POLICY.maxLines})`))).toBe(true);
+      expect(gh.merges).toEqual([]);
+    });
+
+    it("still applies the file-count cap, which the deps policy does not widen", async () => {
+      expect(DEPS_GATE_POLICY.maxFiles).toBe(DEFAULT_GATE_POLICY.maxFiles);
+      const many = Array.from({ length: DEPS_GATE_POLICY.maxFiles + 1 }, (_, i) => ({
+        ...bigLockfile(2), filename: `packages/p${i}/package-lock.json`,
+      }));
+      const gh = seedBotBump([manifest(bumpPatch("left-pad", "^1.0.0", "^1.0.1")), ...many]);
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons.some((r) => r.includes("too many changed files"))).toBe(true);
+    });
+
+    it("lets a caller tighten the caps but not widen them (the tool clamps; the operation obeys)", async () => {
+      const gh = seedBotBump(withLockfile(1200));
+      const tightened = await run(gh, { autonomy: "auto", policy: { maxLines: 100 } });
+      expect(tightened.action).toBe("proposed");
+      expect(tightened.reasons.some((r) => r.includes("too many changed lines (1202 > 100)"))).toBe(true);
+      expect(gh.merges).toEqual([]);
+
+      // Tightening one cap must not silently restore the general 200-line default for the other.
+      const other = seedBotBump(withLockfile(1200));
+      expect((await run(other, { autonomy: "auto", policy: { maxFiles: 5 } })).action).toBe("approved-and-merged");
+    });
+  });
+
+  describe("the approving review body", () => {
+    it("carries the verdict: packages, semver level, size, head SHA, and the rails", async () => {
+      const gh = seedBotBump([
+        manifest([
+          "@@ -12,9 +12,9 @@",
+          '   "dependencies": {',
+          '-    "left-pad": "^1.0.0",',
+          '+    "left-pad": "^1.0.1",',
+          '-    "zod": "^3.23.0",',
+          '+    "zod": "^3.24.0",',
+        ].join("\n")),
+        lockfile,
+      ]);
+      await run(gh, { autonomy: "auto" });
+
+      const body = gh.reviews[0].body;
+      expect(body).toContain("automated steward approval of a bot-authored dependency change");
+      expect(body).toContain("`left-pad`: ^1.0.0 -> ^1.0.1");
+      expect(body).toContain("`zod`: ^3.23.0 -> ^3.24.0");
+      expect(body).toContain("Semver level: minor"); // the largest jump in the diff
+      expect(body).toContain("Change class: deps");
+      expect(body).toContain(`- Head commit: \`${HEAD}\``);
+      expect(body).toContain(`Author: ${BOT}`);
+      expect(body).toContain("2 file(s), 26 changed line(s)");
+      expect(body).toContain("Manifests: package.json");
+      expect(body).toContain("branch protection is satisfied, counting this approval");
+    });
+
+    it("caps the package list and counts the rest", async () => {
+      const names = Array.from({ length: 14 }, (_, i) => `pkg-${i}`);
+      const patch = ["@@ -1,30 +1,30 @@", '   "dependencies": {',
+        ...names.flatMap((n) => [`-    "${n}": "1.0.0",`, `+    "${n}": "1.0.1",`])].join("\n");
+      const gh = seedBotBump([manifest(patch)]);
+      await run(gh, { autonomy: "auto" });
+
+      const body = gh.reviews[0].body;
+      expect(body).toContain("`pkg-0`: 1.0.0 -> 1.0.1");
+      expect(body).toContain("`pkg-9`: 1.0.0 -> 1.0.1");
+      expect(body).not.toContain("`pkg-10`");
+      expect(body).toContain("and 4 more");
     });
   });
 });

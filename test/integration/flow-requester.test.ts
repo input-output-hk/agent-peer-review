@@ -183,6 +183,42 @@ describe("Flow A (pr-requester): stabilize, expedite, request a peer review", ()
     });
   });
 
+  // Issue #48: a bot-authored pull request is not a peer's to review. GitHub only forbids approving
+  // your OWN pull request, so this agent may review and approve a bot's itself, which is the steward
+  // flow's job. Handing it to another engineer's agent adds a round trip and a person's queue for
+  // nothing.
+  describe("a bot-authored pull request", () => {
+    it("is never handed to a peer, even when the gate asks for a review", async () => {
+      const gh = new FakeGitHubGateway();
+      seedPr(gh, HEAD, [DOCS_FILE, SOURCE_FILE]);
+      gh.prs.get(`${REPO}#${PR}`)!.author = "app/renovate"; // the author string from issue #48
+      seedClean(gh, HEAD);
+
+      // Steps 1 and 2 are unchanged: a real open pull request, and a gate verdict that names the
+      // source path, which is exactly the reason step 3 would normally ask for a reviewer.
+      expect((await stabilize(gh, { repo: REPO, pr: PR })).status).toBe("up-to-date");
+      const proposed = await runExpedite(gh, tick(1));
+      expect(proposed.action).toBe("proposed");
+      expect(proposed.reasons.some((r) => r.startsWith("not auto-eligible:") && r.includes("source"))).toBe(true);
+
+      // Step 3 refuses, and nothing at all is written on the pull request.
+      const requested = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] });
+      expect(requested.status).toBe("bot-authored");
+      expect(requested.reason).toContain("steward");
+      expect((await gh.getPullRequest(REPO, PR)).labels).toEqual([]); // no trigger label
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
+      expect(await gh.listReviewRequests(REPO, PEER)).toEqual([]); // the peer's queue never sees it
+      expect(gh.merges).toEqual([]);
+
+      // A second tick reports the same thing and still writes nothing: this is a stable outcome, not
+      // a state to be retried into existence.
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] })).status).toBe("bot-authored");
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
+      // The only durable trace of the tick is the proposal comment step 2 posted.
+      expect((await soleMarker(gh)).marker.kind).toBe("expedite-proposal");
+    });
+  });
+
   describe("conflict", () => {
     it("stops the item at step 1 for a dirty branch, without even attempting a sync", async () => {
       const gh = new FakeGitHubGateway();

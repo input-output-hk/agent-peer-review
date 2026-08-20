@@ -60,6 +60,68 @@ describe("requestPeerReview", () => {
     expect((await gh.listRequestedReviewers(REPO, PR)).users).toEqual(["alice", "peer-bot"]);
   });
 
+  // Issue #48: a bot-authored pull request is the steward's, not a peer's. GitHub only forbids
+  // approving your OWN pull request, so this agent can review and approve a bot's itself, and
+  // handing a machine-checkable dependency bump to another engineer's agent costs a round trip and a
+  // person's queue for nothing.
+  describe("a bot-authored pull request", () => {
+    /** Nothing was written: no trigger label, no skill label, no reviewer request, either view of it. */
+    async function assertNothingHappened(gh: FakeGitHubGateway): Promise<void> {
+      expect((await gh.getPullRequest(REPO, PR)).labels).toEqual([]);
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
+      expect(await gh.listReviewRequests(REPO, "peer-bot")).toEqual([]);
+      expect(await gh.listComments(REPO, PR)).toEqual([]);
+    }
+
+    it("is refused when GitHub says the author is a Bot account, and nothing is requested", async () => {
+      const gh = seed();
+      gh.prs.get(`${REPO}#${PR}`)!.author = "renovate";
+      gh.setActorType("renovate", "Bot");
+      const result = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"], skills: ["security"] });
+      expect(result.status).toBe("bot-authored");
+      expect(result.reviewers).toEqual([]);
+      expect(result.reason).toContain("steward");
+      expect(result.reason).toContain("renovate");
+      await assertNothingHappened(gh);
+    });
+
+    // The shape the pull request in issue #48 really had: an App integration, whose author string
+    // the users API does not resolve, so the actor type alone would have let it through.
+    it("is refused for an app/ author name even when the actor type is unknown", async () => {
+      const gh = seed();
+      gh.prs.get(`${REPO}#${PR}`)!.author = "app/renovate";
+      gh.setActorType("app/renovate", "unknown");
+      const result = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] });
+      expect(result.status).toBe("bot-authored");
+      expect(result.reason).toContain("app/renovate");
+      await assertNothingHappened(gh);
+    });
+
+    it("is refused for a [bot]-suffixed author name whatever the actor type says", async () => {
+      const gh = seed();
+      gh.prs.get(`${REPO}#${PR}`)!.author = "dependabot[bot]";
+      gh.setActorType("dependabot[bot]", "User"); // the name is enough; this is the safe direction
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("bot-authored");
+      await assertNothingHappened(gh);
+    });
+
+    it("is refused even on a later tick that already carries the trigger label", async () => {
+      // An earlier round (or a human) may have labeled it. That is not a reason to add a request.
+      const gh = seed([TRIGGER]);
+      gh.prs.get(`${REPO}#${PR}`)!.author = "app/dependabot";
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("bot-authored");
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
+    });
+
+    it("does not refuse a human author whose name merely mentions a bot", async () => {
+      const gh = seed();
+      gh.prs.get(`${REPO}#${PR}`)!.author = "botanist";
+      const result = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] });
+      expect(result.status).toBe("requested");
+      expect((await gh.listRequestedReviewers(REPO, PR)).users).toEqual(["peer-bot"]);
+    });
+  });
+
   it("errors when no reviewers were resolved", async () => {
     const gh = seed();
     await expect(requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [] })).rejects.toThrow(/No reviewers/);

@@ -141,6 +141,37 @@ describe("expedite", () => {
       expect(result.reasons.some((r) => r.includes("branch protection"))).toBe(true);
     });
 
+    // The other side of the issue #48 fix: a required approval is only ever counted for the
+    // operation that is about to SUPPLY it. expedite merges rather than approves, so it passes no
+    // willApproveAs to gatherRails and rail 5 is exactly what it always was: a missing required
+    // approval holds the change back, even under autonomy auto, even from an agent that could
+    // approve some other pull request.
+    it("still fails the protection rail on a repository that requires an approving review", async () => {
+      const gh = seedGreenDocsPr();
+      gh.setBranchProtection(REPO, "main", {
+        requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
+        requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
+      });
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons).toEqual(["branch protection requirements are not satisfied"]);
+      expect(gh.merges).toEqual([]);
+      expect(gh.reviews).toEqual([]); // and it certainly does not approve anything to get there
+    });
+
+    it("merges once a real approval by someone else satisfies that requirement", async () => {
+      const gh = seedGreenDocsPr();
+      gh.setBranchProtection(REPO, "main", {
+        requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
+        requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
+      });
+      gh.login = "peer-bot";
+      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "fine by me" });
+      gh.login = ME;
+      const result = await run(gh, { autonomy: "auto", knownAgentLogins: ["peer-bot"] });
+      expect(result.action).toBe("merged");
+    });
+
     it("judges only the required contexts when the base branch declares them", async () => {
       const gh = seedGreenDocsPr();
       gh.setBranchProtection(REPO, "main", {

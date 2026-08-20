@@ -291,19 +291,23 @@ describe("taskflow summarize.mjs", () => {
 
   it("pr-steward counts each verdict and quotes the reason behind a refused merge", () => {
     const out = summarize("pr-steward", [
-      item(1, 6, ['{"repo": "o/r", "number": 1, "action": "proposed", "reasons": ["autonomy is propose, not auto"]}']),
-      item(2, 6, ['{"repo": "o/r", "number": 2, "action": "already-proposed", "reasons": []}']),
-      item(3, 6, ['{"repo": "o/r", "number": 3, "action": "approved-and-merged", "reasons": []}']),
-      item(4, 6, ['{"repo": "o/r", "number": 4, "action": "not-eligible", "reasons": ["semver level is major"]}']),
-      item(5, 6, ["oops, not JSON", '{"repo": "o/r", "number": 5, "action": "blocked", "reasons": ["merge refused: the \\"head\\" moved"]}']),
-      item(6, 6, [], true),
+      item(1, 7, ['{"repo": "o/r", "number": 1, "action": "proposed", "reasons": ["autonomy is propose, not auto"]}']),
+      item(2, 7, ['{"repo": "o/r", "number": 2, "action": "already-proposed", "reasons": []}']),
+      item(3, 7, ['{"repo": "o/r", "number": 3, "action": "approved-and-merged", "reasons": []}']),
+      item(4, 7, ['{"repo": "o/r", "number": 4, "action": "not-eligible", "reasons": ["semver level is major"]}']),
+      item(5, 7, ["oops, not JSON", '{"repo": "o/r", "number": 5, "action": "blocked", "reasons": ["merge refused: the \\"head\\" moved"]}']),
+      item(6, 7, [], true),
+      // The approval landed and the merge did not: counted apart from approved-and-merged, because
+      // reporting it as a merge would say the upgrade shipped when it is only unblocked.
+      item(7, 7, ['{"repo": "o/r", "number": 7, "action": "approved", "reasons": ["branch protection still not satisfied after approving"]}']),
     ].join("\n"));
 
     const lines = out.trimEnd().split("\n");
-    expect(lines[0]).toBe("pr-steward: 6 pull request(s). proposed=2 approved-and-merged=1 not-eligible=1 blocked=1 failed=1");
+    expect(lines[0]).toBe("pr-steward: 7 pull request(s). proposed=2 approved=1 approved-and-merged=1 not-eligible=1 blocked=1 failed=1");
     expect(lines.slice(1)).toEqual([
       '- o/r #5: the merge was refused (merge refused: the "head" moved)', // JSON escapes survive
-      "- item 6 of 6: the agent did not report a result",
+      "- item 6 of 7: the agent did not report a result",
+      "- o/r #7: approved, not merged (branch protection still not satisfied after approving)",
     ]);
   });
 
@@ -373,7 +377,7 @@ describe("taskflow instructions and the code they drive", () => {
     },
     {
       what: "requestPeerReview status", file: "core/operations/request-peer-review.ts", field: "status:", end: ";", flow: "pr-requester",
-      outcomes: ["requested", "already-requested"],
+      outcomes: ["requested", "already-requested", "bot-authored"],
     },
     {
       what: "watchAndReReview action", file: "core/operations/watch-and-re-review.ts", field: "action:", end: ";", flow: "pr-reviewer",
@@ -397,7 +401,7 @@ describe("taskflow instructions and the code they drive", () => {
     },
     {
       what: "approveDependencyUpgrade action", file: "core/operations/approve-dependency-upgrade.ts", field: "action:", end: ";", flow: "pr-steward",
-      outcomes: ["approved-and-merged", "proposed", "already-proposed", "not-eligible", "blocked"],
+      outcomes: ["approved-and-merged", "approved", "proposed", "already-proposed", "not-eligible", "blocked"],
     },
   ];
 
