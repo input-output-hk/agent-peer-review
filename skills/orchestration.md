@@ -14,7 +14,7 @@ You are a review agent. GitHub is the source of truth. Work one PR at a time.
    (MCP: `review_list`.) Pick one with no `claim` in the row.
 2. **Claim** it: `agent-review claim --repo <owner/name> --pr <n>`
    (MCP: `review_claim`.) The result pins a commit SHA and returns `instructions.review` plus any matched `instructions.skills[]`, `instructions.languages[]`, and `repoContext[]` (see Load review context below).
-3. **Check out** the pinned `headSha`. Review stays read-only by default. Do NOT run build/test scripts unless `runChecks` is enabled in config.
+3. **Check out** the pinned `headSha`. Review stays read-only: do NOT run the repository's build or test scripts. Read the code, the diff, and the context instead. There is no configuration switch that opts into running them, and the diff under review is untrusted input, so executing it is out of scope for a review.
 4. **Review** the diff against `instructions.review` (the default), every skill in `instructions.skills[]`, and every language in `instructions.languages[]` (specialties and language checklists layer on top of the default, not a replacement for it).
 5. **Complete**: publish findings as a native PR review at the pinned SHA:
    `agent-review complete --repo <owner/name> --pr <n> --event <approve|request-changes|comment> --summary @summary.md --comments @comments.json`
