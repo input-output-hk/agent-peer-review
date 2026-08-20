@@ -44,6 +44,10 @@ Run it without `--repo` from a terminal and it prompts for repositories, and opt
 agent-review init --repo input-output-hk/some-repo --yes
 ```
 
+:::note[Dependabot alerts permission]
+`init` also makes one best-effort, read-only probe per `--repo` against the Dependabot alerts endpoint, and prints an unmissable warning if the token cannot read it. That permission (**Dependabot alerts: read** on a fine-grained token, `security_events` on a classic one) is separate from everything else `init` sets up: it is not needed to request, claim, or complete a review, and it only gates whether the [expedition taskflows](./taskflows.md)' `autonomy=auto` path can ever approve or merge anything. See [Recommended token scope](https://github.com/input-output-hk/agent-peer-review/blob/main/SECURITY.md#recommended-token-scope) in `SECURITY.md`. The probe never fails `init` itself.
+:::
+
 See [`AGENTS.md`](https://github.com/input-output-hk/agent-peer-review/blob/main/AGENTS.md) at the repository root for the full install contract, written for an AI agent to follow end to end given just this repository's URL. The rest of this page explains what `init` automates, useful if you would rather configure by hand or drive one step at a time, for example re-running `labels bootstrap` alone after adding a skill to a repo that is already configured.
 
 ## Configure (optional)
@@ -65,16 +69,20 @@ If none exist, every field falls back to its default. Since an MCP host has no `
 | `githubLogin` | string or null | `null` | Your GitHub login. Leave it `null` and the first command that needs it resolves it once from the token via the GitHub API. |
 | `defaultRepo` | string | none | An `owner/name` used whenever a command omits `--repo`. |
 | `skillsDir` | string or null | `null` | Overrides the bundled `skills/` directory, useful while iterating on skill content locally. |
-| `runChecks` | boolean | `false` | Whether the reviewing agent may run build or test scripts. Reviews stay read-only, diff-only analysis until you opt in. |
 | `captureMetadata` | boolean | `false` | Opt in to a durable, machine-readable record of model/agent/verdict/role on every review. See [Review metadata capture](./metadata-capture.md) before enabling it, including its privacy note. |
 | `model`, `agent`, `toolVersion` | string, optional | none | Only read when `captureMetadata` is on; see [Review metadata capture](./metadata-capture.md) for what each populates. |
 | `reviewers` | array of string | `[]` | Default GitHub logins to request review from when a `request`/`review_create` call does not name any. See [Request a review](#request-a-review) below. |
 | `knownAgentLogins` | array of string | `[]` | GitHub logins that count as agents rather than humans when the safety gate asks whether a human review is in flight. Only the logins listed here are treated as agents, so an unlisted reviewer is always assumed to be a human and holds a merge back. See [Expedition taskflows](./taskflows.md#the-safety-model). |
+| `mergeMethodByRepo` | object (`owner/name` -> `merge`\|`squash`\|`rebase`), optional | none | Per-repository default merge method for the expedition auto-merge tools (`pr_expedite`, `pr_approve_dep_upgrade`) when a call omits `mergeMethod`. Set this for a repository restricted to squash-only or rebase-only merges; without it, those tools instead read the repository's own allowed merge methods and pick a permitted one. |
+
+:::tip[Needed for the dashboard's per-agent views]
+The [dashboard](./dashboard.md)'s **Agents** and **Collaborators** views attribute each review to the model and agent that produced it by reading the footer `captureMetadata` writes. Leave `captureMetadata` off (the default) and every review collapses into a single "Unknown" row in those views instead of being attributed to an agent. See [Review metadata capture](./metadata-capture.md).
+:::
 
 `~/.agent-peer-review/config.json`:
 
 ```json
-{ "githubLogin": null, "defaultRepo": "input-output-hk/some-repo", "skillsDir": null, "runChecks": false }
+{ "githubLogin": null, "defaultRepo": "input-output-hk/some-repo", "skillsDir": null }
 ```
 
 :::tip
@@ -107,6 +115,12 @@ Name the peer agents themselves so the safety gate can tell an agent's review fr
 
 ```json
 { "knownAgentLogins": ["some-agent-bot"] }
+```
+
+`agent-review init` accepts the same list via a repeatable flag:
+
+```bash
+agent-review init --repo input-output-hk/some-repo --known-agent-login some-agent-bot
 ```
 
 or override it for a single invocation with the comma-separated `AGENT_REVIEW_KNOWN_AGENTS` environment variable:

@@ -101,6 +101,12 @@ function ghJson(args, label) {
       process.stderr.write(`[pr-reviewer] ${label} did not return a JSON array\n`);
       return null;
     }
+    // Every call here passes "--limit" MAX_PER_REPO, and gh silently truncates at that cap rather
+    // than reporting whether more results existed. A returned count at (or, defensively, past) the
+    // cap is the only signal available that some may be missing from this run.
+    if (parsed.length >= MAX_PER_REPO) {
+      process.stderr.write(`[pr-reviewer] ${label}: hit the --limit ${MAX_PER_REPO} cap; there may be more results than were returned\n`);
+    }
     return parsed;
   } catch (error) {
     process.stderr.write(`[pr-reviewer] ${label} returned unparseable JSON: ${error instanceof Error ? error.message : String(error)}\n`);

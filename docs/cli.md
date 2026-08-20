@@ -22,7 +22,7 @@ agent-review config
 ```
 
 ```json
-{ "githubLogin": null, "defaultRepo": "input-output-hk/some-repo", "skillsDir": null, "runChecks": false }
+{ "githubLogin": null, "defaultRepo": "input-output-hk/some-repo", "skillsDir": null }
 ```
 
 ## `whoami`
@@ -61,15 +61,18 @@ Guided setup: authenticates against GitHub, writes `~/.agent-peer-review/config.
 
 - `--repo <owner/name...>` (repeatable): one or more repositories to bootstrap.
 - `--reviewer <login...>` (repeatable, optional): default reviewer login(s), written to the `reviewers` config field; see [Configure](./quick-start.md#configure-optional). `request` (and the MCP/pi `review_create` tool) fall back to this list when a call omits reviewers.
+- `--known-agent-login <login...>` (repeatable, optional): GitHub login(s) the expedition safety gate should treat as an agent rather than a human, written to the `knownAgentLogins` config field; see [Configure](./quick-start.md#configure-optional). Named in the printed summary below, since it is easy to forget.
 - `--capture-metadata` (optional): opt in to durable review metadata capture; see [Review metadata capture](./metadata-capture.md).
 - `--model <m>`, `--agent <a>`, `--tool-version <v>` (optional): only meaningful alongside `--capture-metadata`.
 - `--yes` (optional): non-interactive. Without it, and without `--repo`, `init` prompts for input when run from a terminal; with neither `--repo` nor a terminal, it exits with guidance instead of hanging.
 
 ```bash
-agent-review init --repo input-output-hk/some-repo --reviewer patextreme --yes
+agent-review init --repo input-output-hk/some-repo --reviewer patextreme --known-agent-login some-agent-bot --yes
 ```
 
 On a token or authentication failure, `init` prints a friendly message ("Could not authenticate to GitHub. Set `GITHUB_TOKEN` or run `gh auth login`.") and exits with a non-zero status instead of a raw stack trace.
+
+`init` also makes a best-effort, read-only probe of the Dependabot alerts endpoint against the first `--repo`, and prints a warning to stderr if the token cannot read it; see [Recommended token scope](https://github.com/input-output-hk/agent-peer-review/blob/main/SECURITY.md#recommended-token-scope) in `SECURITY.md`. The probe never fails `init` itself, and the permission it checks for is unrelated to requesting, claiming, or completing a review.
 
 ## `request`
 

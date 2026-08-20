@@ -29,6 +29,11 @@ export interface BranchProtectionSummary {
   requiresConversationResolution: boolean;
 }
 export interface DetailedPullFile { filename: string; status: string; additions: number; deletions: number; patch?: string }
+// Which merge methods a repository's own settings permit right now. Read by the pi adapter
+// (pi/src/extension.ts) so an expedition auto-merge call that omits an explicit mergeMethod can
+// pick one the repository actually allows instead of always trying "merge" and getting a 405 on a
+// squash-only or rebase-only repository.
+export interface AllowedMergeMethods { merge: boolean; squash: boolean; rebase: boolean }
 
 export interface GitHubGateway {
   getAuthenticatedLogin(): Promise<string>;
@@ -64,6 +69,11 @@ export interface GitHubGateway {
   addAssignees(repo: string, pr: number, assignees: string[]): Promise<void>;
   getActorType(login: string): Promise<"User" | "Bot" | "Organization" | "unknown">;
   listOpenSecurityAlertCount(repo: string): Promise<number | null>;
+  // Optional (added for the pi adapter's merge-method resolution, see AllowedMergeMethods above):
+  // a fake or older gateway implementation is not required to grow one just to keep compiling.
+  // null means the repository's settings could not be read; callers treat that the same as absent,
+  // never as "everything is allowed".
+  getAllowedMergeMethods?(repo: string): Promise<AllowedMergeMethods | null>;
 }
 
 export function resolveToken(): string {
@@ -427,6 +437,26 @@ export class OctokitGateway implements GitHubGateway {
       // access is blocked (e.g. a legal takedown). Callers must treat null as fail-closed for
       // any auto-merge decision: "we don't know" is never the same as "safe".
       if (e.status === 403 || e.status === 404 || e.status === 451) return null;
+      throw e;
+    }
+  }
+  async getAllowedMergeMethods(repo: string): Promise<AllowedMergeMethods | null> {
+    const [owner, name] = split(repo);
+    try {
+      const { data } = await this.kit.repos.get({ owner, repo: name });
+      // Missing rather than false: GitHub always returns these three on a real repository, so a
+      // missing value here is a shape surprise, not a signal that the method is actually allowed.
+      return {
+        merge: data.allow_merge_commit ?? false,
+        squash: data.allow_squash_merge ?? false,
+        rebase: data.allow_rebase_merge ?? false,
+      };
+    } catch (e: any) {
+      // 403/404: the token cannot read this repository's settings (or it does not exist). The
+      // caller cannot tell "restricted but invisible to me" from "unrestricted", so it treats this
+      // the same as getBranchProtection's "unknown": fail closed to "I don't know" rather than
+      // guess.
+      if (e.status === 403 || e.status === 404) return null;
       throw e;
     }
   }

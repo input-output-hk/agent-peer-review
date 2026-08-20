@@ -39,7 +39,7 @@ const tick = (n: number): string => `2026-08-08T${String(9 + n).padStart(2, "0")
  * exactly the v1 shapes the flow ships with today.
  */
 const config = (skillsDir: string): Config => ({
-  githubLogin: null, skillsDir, runChecks: false, captureMetadata: false, reviewers: [], knownAgentLogins: [],
+  githubLogin: null, skillsDir, captureMetadata: false, reviewers: [], knownAgentLogins: [],
 });
 
 /** An isolated skills directory, so claimReview does not depend on this repository's bundled skills. */

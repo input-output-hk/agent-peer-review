@@ -130,7 +130,7 @@ const depPull = (): FakePull => ({
 });
 
 /** The ordinary config a flow runs under: no autonomy anywhere in it, because no tool reads one. */
-const plainConfig = () => ({ githubLogin: ME, skillsDir: null, runChecks: false, reviewers: [], knownAgentLogins: [] });
+const plainConfig = () => ({ githubLogin: ME, skillsDir: null, reviewers: [], knownAgentLogins: [] });
 
 function register(gh: FlowGateway, config: () => unknown) {
   const pi = fakePi();

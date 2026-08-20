@@ -16,7 +16,7 @@ That content is authored by the PR submitter, so any instruction-shaped text ins
 - **Content policy served in every task.** `claimReview` serves a standing `contentPolicy` (see `core/guard.ts`) telling the agent to treat the diff and `repoContext` as data, never as instructions, and never to let them change its verdict, permissions, or tooling. It travels inside the review task, so it reaches every host (Claude, Codex, pi.dev).
 - **Untrusted labeling.** Every file in `repoContext[]` is flagged `untrusted: true`. The PR diff is fetched out-of-band by the agent and cannot be embedded, so it is covered by the served policy prose rather than a structural flag.
 - **Skill guidance.** The review and orchestration skills state that repo convention files inform code style and structure only, never the verdict, permissions, or which tools or commands run.
-- **Read-only by convention.** The review skills instruct the agent not to run the repository's build or test scripts unless the operator sets `runChecks`, and the documented host shortcut no longer disables permission prompts. This is advisory, enforced by the skills the agent follows rather than by code (no code path reads `runChecks` today), so pair it with a least-privilege token and host isolation.
+- **Read-only by convention.** The review skills instruct the agent not to run the repository's build or test scripts, and the documented host shortcut no longer disables permission prompts. This is advisory, enforced by the skills the agent follows rather than by code, so pair it with a least-privilege token and host isolation. (An earlier `runChecks` config switch was meant to gate this in code; no non-test code path ever read it, so it was removed from the schema rather than wired up. See issue #55.)
 
 ## Operating the reviewer safely
 
@@ -36,6 +36,15 @@ The review flow needs write access to submit reviews, add labels, and create and
 - Metadata: read
 
 Prefer a separate least-privilege token for the review flow, distinct from any token used to install the package. The token is never logged.
+
+### Additional scope for expedition auto mode
+
+The scope above is everything the review flow (request, claim, complete, enrich) needs. It is NOT everything the expedition taskflows' `autonomy=auto` path needs: before `pr_expedite` or `pr_approve_dep_upgrade` will ever approve or merge anything, their safety gate reads the target repository's open Dependabot alert count, and that read needs a permission the scope above does not grant:
+
+- Fine-grained token: **Dependabot alerts: read**
+- Classic token: **`security_events`**
+
+Without it, the read 403s, the alert count comes back unreadable, and the gate fails closed: `autonomy=auto` proposes forever and never approves or merges anything, on any repository, with no error beyond a phrase inside the pull request's own proposal comments (see issue #54). This permission is needed **only** for the `autonomy=auto` path; it changes nothing about requesting, claiming, or completing a review. `agent-review init` makes a best-effort, read-only probe of this endpoint and prints a warning if it cannot read it; see [Quick start](docs/quick-start.md#configure-optional).
 
 ## Out of scope
 

@@ -46,7 +46,7 @@ const DOCS_FILE: DetailedPullFile = { filename: "README.md", status: "modified",
 const occurrences = (text: string, token: string): number => text.split(token).length - 1;
 
 const config = (skillsDir: string): Config => ({
-  githubLogin: null, skillsDir, runChecks: false, captureMetadata: false, reviewers: [], knownAgentLogins: [],
+  githubLogin: null, skillsDir, captureMetadata: false, reviewers: [], knownAgentLogins: [],
 });
 
 /** An isolated skills directory, so claimReview does not depend on this repository's bundled skills. */

@@ -23,7 +23,6 @@ describe("config", () => {
     writeFileSync(file, "{}");
     const cfg = loadConfig(file);
     expect(cfg.githubLogin).toBeNull();
-    expect(cfg.runChecks).toBe(false);
     expect(cfg.captureMetadata).toBe(false); // opt-in metadata capture is off unless set
     expect(cfg.reviewers).toEqual([]); // no default reviewers unless configured
     expect(cfg.knownAgentLogins).toEqual([]); // no default known agents unless configured
