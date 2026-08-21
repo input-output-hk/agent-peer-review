@@ -211,13 +211,27 @@ describe("FakeGitHubGateway expedition methods (PR 3)", () => {
     expect(await gh.getActorType("octocat")).toBe("User"); // unaffected
   });
 
-  it("listOpenSecurityAlertCount defaults to 0 and setAlertCount can arrange a count or null", async () => {
+  it("listOpenSecurityAlertCount fails closed by default and setAlertCount can arrange a count", async () => {
     const gh = new FakeGitHubGateway();
+    expect(await gh.listOpenSecurityAlertCount("o/r")).toBeNull();
+    gh.setAlertCount("o/r", 0);
     expect(await gh.listOpenSecurityAlertCount("o/r")).toBe(0);
     gh.setAlertCount("o/r", 5);
     expect(await gh.listOpenSecurityAlertCount("o/r")).toBe(5);
     gh.setAlertCount("o/r", null);
     expect(await gh.listOpenSecurityAlertCount("o/r")).toBeNull();
+  });
+
+  it("records review timestamps in chronological ISO order beyond the ninth review", async () => {
+    const gh = new FakeGitHubGateway();
+    for (let i = 0; i < 11; i++) {
+      await gh.submitReview("o/r", 1, { commitId: `sha${i}`, event: "COMMENT", body: "note" });
+    }
+    const reviews = await gh.getReviews("o/r", 1);
+    expect(reviews.every((review) => !Number.isNaN(Date.parse(review.submittedAt)))).toBe(true);
+    expect(reviews.map((review) => review.submittedAt)).toEqual(
+      [...reviews].map((review) => review.submittedAt).sort(),
+    );
   });
 
   it("mergePull's sha guard: a mismatched sha fails without merging or recording; a matching sha merges, marks the PR merged, and records it", async () => {

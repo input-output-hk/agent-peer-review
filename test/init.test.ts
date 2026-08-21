@@ -229,8 +229,10 @@ describe("runInit", () => {
       expect(result.expeditionPermissionsWarning).toBeUndefined();
     });
 
-    it("does not warn by default (FakeGitHubGateway's unset alert count reads as accessible)", async () => {
-      const deps = makeDeps();
+    it("does not warn when every permission probe is explicitly readable", async () => {
+      const gateway = new FakeGitHubGateway();
+      gateway.setAlertCount("o/r", 0);
+      const deps = makeDeps(gateway);
       const result = await runInit({ repos: ["o/r"] }, deps);
       expect(result.expeditionPermissionsWarning).toBeUndefined();
     });

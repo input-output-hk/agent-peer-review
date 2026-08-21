@@ -4,7 +4,7 @@ import { hostname } from "node:os";
 import {
   loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, enrichReview, bootstrap,
   stabilize, expedite, requestPeerReview, approveDependencyUpgrade, watchAndReReview,
-  DEFAULT_GATE_POLICY, DEPS_GATE_POLICY,
+  DEFAULT_GATE_POLICY, DEPS_GATE_POLICY, DEFAULT_MAX_REVIEW_ROUNDS,
   type GitHubGateway, type Config, type AllowedMergeMethods,
 } from "@input-output-hk/agent-review";
 
@@ -233,7 +233,11 @@ export function registerTools(
     name: "pr_watch",
     label: "Watch a reviewed PR",
     description: "Decide the reviewer watch action for a PR I reviewed (re-review / wait / hold-for-human / abandoned / approved / none).",
-    parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), maxReviewRounds: Type.Optional(Type.Integer({ minimum: 1 })) }),
+    parameters: Type.Object({
+      repo: Type.String(),
+      pr: Type.Number(),
+      maxReviewRounds: Type.Optional(Type.Integer({ minimum: 1, maximum: DEFAULT_MAX_REVIEW_ROUNDS })),
+    }),
     async execute(_id, p) {
       // Same login resolution as the CLI: the configured login wins, falling back to the token's
       // own login. Captured once and reused for both calls below: relying on the default gh()
@@ -245,7 +249,13 @@ export function registerTools(
       const config = cfg();
       const myLogin = config.githubLogin ?? await github.getAuthenticatedLogin();
       return ok(await watchAndReReview(github, {
-        repo: p.repo, pr: p.pr, myLogin, maxReviewRounds: p.maxReviewRounds, knownAgentLogins: config.knownAgentLogins,
+        repo: p.repo,
+        pr: p.pr,
+        myLogin,
+        maxReviewRounds: p.maxReviewRounds === undefined
+          ? undefined
+          : Math.min(p.maxReviewRounds, DEFAULT_MAX_REVIEW_ROUNDS),
+        knownAgentLogins: config.knownAgentLogins,
       }));
     },
   });

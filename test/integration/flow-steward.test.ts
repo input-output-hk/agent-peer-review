@@ -64,6 +64,7 @@ function seedBotBump<T extends FakeGitHubGateway>(gh: T, files: DetailedPullFile
   gh.setActorType(BOT, "Bot");
   gh.setDetailedFiles(REPO, PR, files);
   gh.setChecks(REPO, HEAD, [{ name: "build", status: "success" }]);
+  gh.setAlertCount(REPO, 0);
   gh.setMergeability(REPO, PR, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: HEAD });
   return gh;
 }

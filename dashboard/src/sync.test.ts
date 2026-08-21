@@ -100,6 +100,31 @@ describe("sync", () => {
     expect(db.prepare("SELECT COUNT(*) n FROM sync_run WHERE ok=1").get()).toEqual({ n: 1 });
   });
 
+  it("stores a privacy-default claim whose marker omits the machine", async () => {
+    const gw = new FakeSyncGateway();
+    gw.seedPull("o/r", {
+      pull: pull(),
+      comments: [{
+        id: 300,
+        author: "agent-bot",
+        body: serializeMarker({
+          v: 1,
+          reviewer: "agent-bot",
+          sha: "head123",
+          claimedAt: "2026-01-02T00:00:00Z",
+        }),
+      }] as any,
+    });
+    const db = openDb(":memory:");
+
+    await sync(gw, db, ["o/r"]);
+
+    expect(db.prepare("SELECT reviewer_login, machine FROM claim").get()).toEqual({
+      reviewer_login: "agent-bot",
+      machine: null,
+    });
+  });
+
   it("dedups repeated repo entries so each repo is only synced once", async () => {
     const gw = new FakeSyncGateway();
     gw.seedPull("o/r", { pull: pull() });

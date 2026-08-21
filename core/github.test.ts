@@ -167,8 +167,6 @@ function fakeSearchTransport() {
 }
 
 describe("OctokitGateway search results survive conditional-request caching", () => {
-  // Generous timeout: the throttling plugin spaces /search/ calls by 2s, so the
-  // second poll's search request waits before firing.
   it("serves a cached search result on a second poll without corrupting the entry", async () => {
     const { fetch, calls } = fakeSearchTransport();
     const gw = new OctokitGateway("fake-token", fetch);
@@ -180,7 +178,7 @@ describe("OctokitGateway search results survive conditional-request caching", ()
     expect(second.map((p) => p.number)).toEqual([11, 12]); // identical, entry not corrupted, no throw
     expect(calls.filter((c) => c.startsWith("/search/issues")).length).toBe(2);
     expect(calls).toContain("/search/issues (304)"); // the second poll revalidated from cache
-  }, 15000);
+  });
 });
 
 // ================================================================================================
@@ -306,10 +304,15 @@ describe("OctokitGateway.getChecks", () => {
   });
 
   it("still propagates non-permission failures", async () => {
-    const fetch = (async () => new Response(JSON.stringify({ message: "server error" }), {
-      status: 500, headers: { "content-type": "application/json; charset=utf-8" },
-    })) as typeof globalThis.fetch;
+    let calls = 0;
+    const fetch = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ message: "server error" }), {
+        status: 500, headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }) as typeof globalThis.fetch;
     await expect(new OctokitGateway("fake-token", fetch).getChecks("o/r", "deadbeef")).rejects.toThrow();
+    expect(calls).toBe(2); // one per checks endpoint, with no production retry loop over the fake
   });
 });
 

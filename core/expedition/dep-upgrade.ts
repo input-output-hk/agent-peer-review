@@ -32,9 +32,15 @@ export interface DependencyUpgrade {
   ineligibleFiles: string[];
 }
 
-// Same lockfile set as classify.ts's DEPS rule, matched on the basename so it applies at any depth
-// (root or nested in a workspace).
-const LOCKFILES: ReadonlySet<string> = new Set(["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]);
+// The one lockfile-name allowlist for both this content-aware classifier and classify.ts's path
+// classifier. Exported because adding a name on only this side is unsafe: the steward synthesizes an
+// auto-eligible dependency classification after this stricter check passes, so both entry points
+// must recognize exactly the same basenames. Matched at any workspace depth.
+export const LOCKFILE_NAMES: ReadonlySet<string> = new Set([
+  "package-lock.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+]);
 const MANIFEST = "package.json";
 
 // The only file statuses a dependency bump produces. "removed", "renamed", and "copied" all change
@@ -210,11 +216,11 @@ export function classifyDependencyUpgrade(files: DetailedPullFile[]): Dependency
 
   for (const file of files) {
     const base = basename(file.filename);
-    const recognized = LOCKFILES.has(base) || base === MANIFEST;
+    const recognized = LOCKFILE_NAMES.has(base) || base === MANIFEST;
     // Checked before anything else so a lockfile, whose contents are never inspected, cannot be
     // deleted or renamed under cover of its name.
     if (recognized && !UPGRADE_STATUSES.has(file.status)) { ineligibleFiles.push(file.filename); continue; }
-    if (LOCKFILES.has(base)) { lockfileCount++; continue; }
+    if (LOCKFILE_NAMES.has(base)) { lockfileCount++; continue; }
     if (base !== MANIFEST) { ineligibleFiles.push(file.filename); continue; }
     manifests.push(file.filename);
     if (file.patch === undefined || file.patch === "") { ineligibleFiles.push(file.filename); continue; }

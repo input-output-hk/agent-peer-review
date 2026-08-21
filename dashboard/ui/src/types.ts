@@ -53,7 +53,7 @@ export interface Note {
 
 export interface Claim {
   reviewer: string;
-  machine: string;
+  machine: string | null;
   sha: string;
   claimedAt: string;
   model: string | null;

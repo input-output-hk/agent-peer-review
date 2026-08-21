@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { classifyChange, type Category } from "./classify.js";
+import { LOCKFILE_NAMES } from "./dep-upgrade.js";
 
 describe("classifyChange", () => {
   describe("category rules", () => {
@@ -85,6 +86,13 @@ describe("classifyChange", () => {
     expect(result.autoEligible).toBe(true);
     expect(result.sawSourceOrTest).toBe(false);
     expect(result.categories).toEqual(["deps"]);
+  });
+
+  it("classifies every name from the shared lockfile allowlist at any depth", () => {
+    expect([...LOCKFILE_NAMES]).toEqual(["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]);
+    for (const name of LOCKFILE_NAMES) {
+      expect(classifyChange([`packages/widget/${name}`]).byFile[0].category).toBe("deps");
+    }
   });
 
   it("a diff mixing several allowlisted categories (docs+lint+ci+deps) is still auto-eligible", () => {

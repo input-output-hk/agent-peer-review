@@ -7,7 +7,7 @@ export interface ReviewRow {
   model: string | null; agent: string | null; toolVersion: string | null; machine: string | null; claimedAt: string | null; drifted: number | null;
 }
 export interface NoteRow { githubCommentId: number; path: string; line: number | null; body: string; authorLogin: string; }
-export interface ClaimRow { reviewerLogin: string; machine: string; sha: string; claimedAt: string; model: string | null; agent: string | null; toolVersion: string | null; }
+export interface ClaimRow { reviewerLogin: string; machine: string | null; sha: string; claimedAt: string; model: string | null; agent: string | null; toolVersion: string | null; }
 export interface ParticipantRow { login: string; role: "author" | "reviewer"; }
 export interface SyncRunRow { startedAt: string; finishedAt: string; repos: string[]; counts: Record<string, number>; ok: boolean; }
 

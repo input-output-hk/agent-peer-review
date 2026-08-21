@@ -10,6 +10,9 @@ type SeedPr = Omit<PullRequest, "createdAt" | "updatedAt" | "mergedAt"> & Partia
 // Fixed, deterministic stand-in for "now" when mergePull marks a PR merged. Never Date.now().
 const FAKE_MERGED_AT = "2026-01-01T00:00:00Z";
 
+/** Chronological ISO timestamps that keep sorting correctly beyond review id 9. */
+const fakeReviewTime = (id: number): string => new Date(Date.UTC(2026, 0, 1, 0, 0, id)).toISOString();
+
 export class FakeGitHubGateway implements GitHubGateway {
   login = "me";
   prs = new Map<string, PullRequest>();
@@ -126,7 +129,7 @@ export class FakeGitHubGateway implements GitHubGateway {
   async submitReview(repo: string, pr: number, review: { commitId: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: Array<{ path: string; line: number; body: string }> }): Promise<{ url: string }> {
     const id = this.reviewSeq++;
     const stateMap = { APPROVE: "APPROVED", REQUEST_CHANGES: "CHANGES_REQUESTED", COMMENT: "COMMENTED" } as const;
-    this.reviews.push({ repo, pr, id, author: this.login, state: stateMap[review.event], event: review.event, body: review.body, commitId: review.commitId, comments: review.comments, submittedAt: `t${id}` });
+    this.reviews.push({ repo, pr, id, author: this.login, state: stateMap[review.event], event: review.event, body: review.body, commitId: review.commitId, comments: review.comments, submittedAt: fakeReviewTime(id) });
     for (const c of review.comments ?? []) this.reviewComments.push({ repo, pr, id: this.reviewCommentSeq++, path: c.path, line: c.line, body: c.body, author: this.login });
     // Native: submitting a review clears that reviewer's open request, in both views of it.
     this.requested.get(this.key(repo, pr))?.delete(this.login);
@@ -237,6 +240,8 @@ export class FakeGitHubGateway implements GitHubGateway {
   }
   async listOpenSecurityAlertCount(repo: string): Promise<number | null> {
     const v = this.alertCount.get(repo);
-    return v === undefined ? 0 : v;
+    // Mirrors the real gateway's unreadable state. A passing zero must always be seeded explicitly,
+    // so a test cannot clear the security rail merely by forgetting to arrange it.
+    return v === undefined ? null : v;
   }
 }

@@ -49,6 +49,7 @@ function seedGreenDocsPr(): FakeGitHubGateway {
   gh.seedPr({ number: PR, title: "docs: fix a typo", author: "human-author", headSha: HEAD, baseSha: "base", url: "u", state: "open", labels: [] });
   gh.setDetailedFiles(REPO, PR, [{ filename: "README.md", status: "modified", additions: 2, deletions: 1, patch: "@@\n-a\n+b" }]);
   gh.setChecks(REPO, HEAD, [{ name: "build", status: "success" }]);
+  gh.setAlertCount(REPO, 0);
   gh.setMergeability(REPO, PR, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: HEAD });
   return gh;
 }
@@ -476,6 +477,7 @@ describe("expedite", () => {
       gh.seedPr({ number: PR, title: "docs", author: "human-author", headSha: HEAD, baseSha: "base", url: "u", state: "open", labels: [] });
       gh.setDetailedFiles(REPO, PR, [{ filename: "README.md", status: "modified", additions: 1, deletions: 1, patch: "@@" }]);
       gh.setChecks(REPO, HEAD, [{ name: "build", status: "success" }]);
+      gh.setAlertCount(REPO, 0);
       gh.setMergeability(REPO, PR, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: HEAD });
 
       const result = await run(gh, { autonomy: "auto" });

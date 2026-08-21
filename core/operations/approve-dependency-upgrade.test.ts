@@ -74,6 +74,7 @@ function seedBotBump<T extends FakeGitHubGateway = FakeGitHubGateway>(
   gh.setActorType(BOT, "Bot");
   gh.setDetailedFiles(REPO, PR, files);
   gh.setChecks(REPO, HEAD, [{ name: "build", status: "success" }]);
+  gh.setAlertCount(REPO, 0);
   // Stated explicitly, because the fake's unseeded default is "unknown" and fails rail 4. "clean" is
   // the honest value for this fixture: no protection, so nothing is waiting on a review.
   gh.setMergeability(REPO, PR, mergeable("clean"));

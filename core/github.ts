@@ -144,53 +144,58 @@ export class OctokitGateway implements GitHubGateway {
   private cachedLogin?: string;
   private readonly cache = new ConditionalCache();
 
-  // `fetch` is an optional injection seam for tests only: it drives the
-  // throttling/retry/conditional-cache stack over a fake transport instead of
-  // the network. It is not part of the GitHubGateway interface.
+  // `fetch` is an optional injection seam for tests only. It keeps Octokit's endpoint mapping and
+  // the conditional cache over a fake transport, but deliberately omits the production throttle
+  // and retry plugins: an in-memory response consumes no GitHub quota, and waiting out their
+  // spacing/backoff tests time rather than behavior. It is not part of the GitHubGateway interface.
   constructor(token = resolveToken(), fetch?: typeof globalThis.fetch) {
-    const ThrottledOctokit = Octokit.plugin(throttling, retry);
-    this.kit = new ThrottledOctokit({
-      auth: token,
-      request: fetch ? { fetch } : undefined,
-      // Retry after the delay GitHub asks for, but only a bounded number of
-      // times so a hard limit surfaces instead of looping forever. Warnings go
-      // to STDERR via octokit.log.warn (console.warn), never to STDOUT.
-      throttle: {
-        onRateLimit: (retryAfter, options, octokit, retryCount) => {
-          octokit.log.warn(`GitHub primary rate limit on ${options.method} ${options.url}; retry ${retryCount + 1} in ${retryAfter}s`);
-          return retryCount < 2;
+    const log = { debug: () => {}, info: () => {}, error: () => {}, warn: console.warn.bind(console) };
+    if (fetch) {
+      this.kit = new Octokit({ auth: token, request: { fetch }, log });
+    } else {
+      const ThrottledOctokit = Octokit.plugin(throttling, retry);
+      this.kit = new ThrottledOctokit({
+        auth: token,
+        // Retry after the delay GitHub asks for, but only a bounded number of
+        // times so a hard limit surfaces instead of looping forever. Warnings go
+        // to STDERR via octokit.log.warn (console.warn), never to STDOUT.
+        throttle: {
+          onRateLimit: (retryAfter, options, octokit, retryCount) => {
+            octokit.log.warn(`GitHub primary rate limit on ${options.method} ${options.url}; retry ${retryCount + 1} in ${retryAfter}s`);
+            return retryCount < 2;
+          },
+          onSecondaryRateLimit: (retryAfter, options, octokit, retryCount) => {
+            octokit.log.warn(`GitHub secondary rate limit on ${options.method} ${options.url}; retry ${retryCount + 1} in ${retryAfter}s`);
+            return retryCount < 2;
+          },
         },
-        onSecondaryRateLimit: (retryAfter, options, octokit, retryCount) => {
-          octokit.log.warn(`GitHub secondary rate limit on ${options.method} ${options.url}; retry ${retryCount + 1} in ${retryAfter}s`);
-          return retryCount < 2;
-        },
-      },
-      // @octokit/plugin-retry's own default is doNotRetry: [400,401,403,404,410,422,451]. Passing
-      // doNotRetry here REPLACES that list rather than extending it, so every status that must
-      // not retry is spelled out below (the original seven, plus 405 and 409). 409 on
-      // pulls.merge means the pinned `sha` is no longer the PR's head; retrying the identical
-      // `sha` cannot succeed. 405 on pulls.merge means the PR is not mergeable; a retry that
-      // happened to succeed inside the retry window would merge a state the safety gate never
-      // evaluated. Adding 409 here also stops repos.getContent from retrying GitHub's 409 for an
-      // empty repository instead of failing fast.
-      retry: { retries: 2, doNotRetry: [400, 401, 403, 404, 405, 409, 410, 422, 451] },
-      // @octokit/plugin-request-log narrates every request, and its failure line goes to
-      // `log.error`, which Octokit sends to console.error by default. That is how a bare
-      // `GET /user - 401 with id ABCD:... in 570ms` came to print above the CLI's own friendly
-      // "Could not authenticate to GitHub" message, reading like a crash. Nothing is swallowed by
-      // dropping it: the RequestError itself is still thrown to the caller, which is what decides
-      // what the user sees. `warn` stays on the console because it carries messages of substance
-      // that have no other route out: GitHub's deprecation notices (@octokit/request,
-      // plugin-rest-endpoint-methods) and this constructor's own rate-limit hooks above. In this
-      // dependency tree plugin-request-log is the only caller of log.debug/info/error.
-      log: { debug: () => {}, info: () => {}, error: () => {}, warn: console.warn.bind(console) },
-    });
+        // @octokit/plugin-retry's own default is doNotRetry: [400,401,403,404,410,422,451]. Passing
+        // doNotRetry here REPLACES that list rather than extending it, so every status that must
+        // not retry is spelled out below (the original seven, plus 405 and 409). 409 on
+        // pulls.merge means the pinned `sha` is no longer the PR's head; retrying the identical
+        // `sha` cannot succeed. 405 on pulls.merge means the PR is not mergeable; a retry that
+        // happened to succeed inside the retry window would merge a state the safety gate never
+        // evaluated. Adding 409 here also stops repos.getContent from retrying GitHub's 409 for an
+        // empty repository instead of failing fast.
+        retry: { retries: 2, doNotRetry: [400, 401, 403, 404, 405, 409, 410, 422, 451] },
+        // @octokit/plugin-request-log narrates every request, and its failure line goes to
+        // `log.error`, which Octokit sends to console.error by default. That is how a bare
+        // `GET /user - 401 with id ABCD:... in 570ms` came to print above the CLI's own friendly
+        // "Could not authenticate to GitHub" message, reading like a crash. Nothing is swallowed by
+        // dropping it: the RequestError itself is still thrown to the caller, which is what decides
+        // what the user sees. `warn` stays on the console because it carries messages of substance
+        // that have no other route out: GitHub's deprecation notices (@octokit/request,
+        // plugin-rest-endpoint-methods) and this constructor's own rate-limit hooks above. In this
+        // dependency tree plugin-request-log is the only caller of log.debug/info/error.
+        log,
+      });
+    }
     this.wireConditionalCache();
   }
 
-  // Wire the ETag conditional-request cache as the outermost `request` hook, so
-  // it sees the final outcome of the retry/throttle stack. Repeated GETs of an
-  // unchanged resource revalidate with `If-None-Match` and come back as 304s,
+  // Wire the ETag conditional-request cache as the outermost `request` hook, so it sees the final
+  // outcome of the retry/throttle stack when those production plugins are present. Repeated GETs
+  // of an unchanged resource revalidate with `If-None-Match` and come back as 304s,
   // which GitHub does not charge against the rate limit. The passed `request`
   // is the composed inner chain (no `.endpoint`), so the fully-resolved URL is
   // taken from the top-level parser to key the cache.

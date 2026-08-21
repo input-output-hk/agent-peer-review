@@ -2,7 +2,10 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { serializeMarker, PRIMARY_MARKER, DEFAULT_GATE_POLICY, DEPS_GATE_POLICY, DEFAULT_BOT_ALLOWLIST } from "@input-output-hk/agent-review";
+import {
+  serializeMarker, PRIMARY_MARKER, DEFAULT_GATE_POLICY, DEPS_GATE_POLICY, DEFAULT_BOT_ALLOWLIST,
+  DEFAULT_MAX_REVIEW_ROUNDS,
+} from "@input-output-hk/agent-review";
 import { registerTools, once } from "./extension.js";
 
 function fakePi() {
@@ -447,6 +450,40 @@ describe("pi extension", () => {
     const res = await watch.execute("id-w1", { repo: "o/r", pr: 3 }, undefined, undefined, undefined);
     const result = JSON.parse(res.content[0].text);
     expect(result.action).toBe("wait"); // no push since "me" requested changes at the current head
+  });
+
+  it("pr_watch cannot widen the handoff cap past the built-in review-round limit", async () => {
+    const pi = fakePi();
+    const gh = {
+      getPullRequest: async () => ({
+        number: 3, title: "t", author: "human-author", headSha: "sha0004", baseSha: "base",
+        url: "u", state: "open" as const, labels: [],
+      }),
+      getReviews: async () => [1, 2, 3].map((round) => ({
+        id: round,
+        author: "me",
+        state: "CHANGES_REQUESTED",
+        body: "",
+        commitId: `sha000${round}`,
+        submittedAt: `2026-08-01T00:00:0${round}Z`,
+      })),
+    } as any;
+    registerTools(pi as any, {
+      gh: () => gh,
+      config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any,
+    });
+    const watch = pi.tools.find((t) => t.name === "pr_watch");
+    expect(watch.parameters.properties.maxReviewRounds.maximum).toBe(DEFAULT_MAX_REVIEW_ROUNDS);
+
+    // Runtime clamping remains the backstop even for a host that does not enforce TypeBox schemas.
+    const response = await watch.execute(
+      "id-w-cap",
+      { repo: "o/r", pr: 3, maxReviewRounds: 999 },
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(JSON.parse(response.content[0].text)).toMatchObject({ action: "hold-for-human" });
   });
 
   it("pr_watch's knownAgentLogins from config reaches the human-review rail", async () => {

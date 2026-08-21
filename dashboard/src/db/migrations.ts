@@ -89,4 +89,30 @@ CREATE TABLE sync_run (
 );
 `;
 
-export const MIGRATIONS: ReadonlyArray<Migration> = [{ version: 1, sql: INIT }];
+// Claim markers omit machine when metadata capture is off as of 0.6.0. SQLite cannot drop a NOT
+// NULL constraint in place, so rebuild only this leaf table and preserve every existing claim.
+const OPTIONAL_CLAIM_MACHINE = `
+CREATE TABLE claim_v2 (
+  id             INTEGER PRIMARY KEY,
+  pr_id          INTEGER NOT NULL REFERENCES pull_request(id),
+  reviewer_login TEXT NOT NULL,
+  machine        TEXT,
+  sha            TEXT NOT NULL,
+  claimed_at     TEXT NOT NULL,
+  model          TEXT,
+  agent          TEXT,
+  tool_version   TEXT,
+  UNIQUE (pr_id, reviewer_login)
+);
+
+INSERT INTO claim_v2(id, pr_id, reviewer_login, machine, sha, claimed_at, model, agent, tool_version)
+SELECT id, pr_id, reviewer_login, machine, sha, claimed_at, model, agent, tool_version FROM claim;
+
+DROP TABLE claim;
+ALTER TABLE claim_v2 RENAME TO claim;
+`;
+
+export const MIGRATIONS: ReadonlyArray<Migration> = [
+  { version: 1, sql: INIT },
+  { version: 2, sql: OPTIONAL_CLAIM_MACHINE },
+];

@@ -39,6 +39,7 @@
     "typecheck:test": "tsc -p tsconfig.test.json",
     "pretest": "npm run typecheck:test",
     "test": "vitest run",
+    "test:all": "npm test && npm run build && npm run -w pi test && npm run -w dashboard test",
     "gen:schemas": "tsx scripts/gen-schemas.ts",
     "check:schemas": "tsx scripts/gen-schemas.ts && git diff --exit-code -- schemas",
     "check:lockfile": "tsx scripts/check-lockfile.ts",

@@ -11,6 +11,7 @@
 // own to make it auto-eligible; see EXECUTABLE_EXTS and WORKFLOW_OR_ACTION_DIR_RE.
 
 import { LANGUAGE_EXTENSIONS } from "../languages.js";
+import { LOCKFILE_NAMES } from "./dep-upgrade.js";
 
 export type Category = "docs" | "lint" | "ci" | "deps" | "source" | "test";
 
@@ -67,8 +68,12 @@ const LINT_RE = /(^|\/)(\.eslintrc(\.[^/]+)?|eslint\.config\.[^/]+|\.prettierrc(
 // intentionally NOT matched here: a path alone cannot tell a dependency bump from a script or
 // config edit inside package.json, so it falls through to source. A real bot-authored,
 // semver-only bump is a separate gate input, computed elsewhere from the diff content, not the
-// path.
-const DEPS_RE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/;
+// path. The basename lookup uses the content classifier's exported allowlist, so teaching either
+// operation a new lockfile necessarily teaches both and keeps this attacker-influenced path scan
+// linear.
+function isLockfile(file: string): boolean {
+  return LOCKFILE_NAMES.has(file.slice(file.lastIndexOf("/") + 1));
+}
 
 // Escape-to-source guard (a): executable code is source, full stop, regardless of directory. A
 // path alone is not proof of intent; a `.ts`/`.js`/`.sh`/etc. file under docs/, .github/, or next
@@ -111,7 +116,7 @@ function classifyFile(file: string): Category {
   if (DOCS_EXT_RE.test(file) || DOCS_DIR_RE.test(file) || DOCS_LICENSE_RE.test(file)) return "docs";
   if (CI_DIR_RE.test(file)) return "ci";
   if (LINT_RE.test(file)) return "lint";
-  if (DEPS_RE.test(file)) return "deps";
+  if (isLockfile(file)) return "deps";
   return "source"; // the conservative default: anything unrecognized is source
 }
 
