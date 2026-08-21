@@ -40,7 +40,7 @@ pi install npm:pi-taskflow
 
 or, outside a Pi host, `npm i pi-taskflow`. pi-taskflow requires **Node.js 22.19.0 or newer**, which is stricter than this package's own Node 22 floor.
 
-Then copy the three flows into the repository you want to sweep. They live in the installed package under `@input-output-hk/agent-review-pi/taskflows/`, and this repository keeps a working copy of the same files under [`.pi/taskflows/`](https://github.com/input-output-hk/agent-peer-review/tree/main/.pi/taskflows) that you can copy instead. Each flow is two files plus a directory of four:
+Then copy the three flows into the repository you want to sweep. They live in the installed package under `@input-output-hk/agent-review-pi/taskflows/`; a Pi installation normally places that package under `~/.pi/agent/npm/node_modules/`, while a global npm installation can be located with `npm root -g`. This repository also keeps the untouched templates under [`pi/taskflows/`](https://github.com/input-output-hk/agent-peer-review/tree/main/pi/taskflows). Do not copy the dogfood `.pi/taskflows/` configs: those intentionally sweep this repository. Each flow is two sibling files plus a directory of four:
 
 ```text
 .pi/taskflows/pr-steward.json          the flow definition
@@ -51,7 +51,7 @@ Then copy the three flows into the repository you want to sweep. They live in th
 .pi/taskflows/pr-steward/config.example.json  the repositories to sweep
 ```
 
-The paths inside each flow definition are repository-relative and point at `.pi/taskflows/<name>/`, so copy the whole directory to that location and the flow resolves without editing. Finally, rename `config.example.json` to `config.json` and list your repositories:
+The paths inside each flow definition are repository-relative and point at `.pi/taskflows/<name>/`. Copy all six paths shown above into the same layout; copying only the directory omits the definition and sidecar, so the flow cannot resolve. Finally, rename `config.example.json` to `config.json` and list your repositories:
 
 ```json
 { "repos": ["input-output-hk/agent-peer-review"], "botAuthors": ["app/dependabot", "app/renovate"] }

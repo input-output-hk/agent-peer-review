@@ -86,10 +86,11 @@ agent posts one comment explaining what it would do, and changes nothing else.
 
 1. Install the engine explicitly, it is an optional peer dependency and is not installed for you:
    `pi install npm:pi-taskflow` (needs Node.js 22.19.0 or newer).
-2. Copy a flow into the target repository at `.pi/taskflows/<name>/`. The templates ship inside the
-   installed package under `@input-output-hk/agent-review-pi/taskflows/`. Paths inside each flow
-   definition are repository-relative and already point at `.pi/taskflows/<name>/`, so copy the
-   whole directory and nothing needs editing.
+2. Copy all six assets for a flow into the target repository: the sibling definitions
+   `.pi/taskflows/<name>.json` and `.pi/taskflows/<name>.meta.json`, plus the four files under
+   `.pi/taskflows/<name>/`. The templates ship inside the installed package under
+   `@input-output-hk/agent-review-pi/taskflows/`; copying only the directory leaves the flow
+   unresolvable. Paths inside the definition already point at `.pi/taskflows/<name>/`.
 3. Rename that flow's `config.example.json` to `config.json` and list the repositories to sweep.
 4. Make sure the per-repository setup is in place: labels bootstrapped on every repository swept,
    `reviewers` set in `~/.agent-peer-review/config.json` (`pr_request_review` errors without it),
