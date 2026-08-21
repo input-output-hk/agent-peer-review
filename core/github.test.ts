@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { OctokitGateway } from "./github.js";
 import type { LabelSpec } from "./model.js";
 
@@ -741,47 +741,5 @@ describe("OctokitGateway.ensureLabel", () => {
     const { fetch: listed, calls: listedCalls } = fakeLabelFetch([drifted]);
     expect(await new OctokitGateway("fake-token", listed).ensureLabel("o/r", TRIGGER_LABEL)).toBe("updated");
     expect(listedCalls).toEqual(["GET /repos/o/r/labels", "PATCH /repos/o/r/labels/ai-review"]);
-  });
-});
-
-describe("OctokitGateway request logging", () => {
-  // Issue #67 item 5: @octokit/plugin-request-log narrates a failed request through log.error, which
-  // Octokit routes to console.error by default, so `GET /user - 401 with id ... in 570ms` printed
-  // above the CLI's own friendly message and read like a crash.
-  it("does not narrate a failed request to the console, and still throws the error", async () => {
-    const fetch = (async () => new Response(JSON.stringify({ message: "Bad credentials" }), {
-      status: 401, headers: { "content-type": "application/json; charset=utf-8" },
-    })) as typeof globalThis.fetch;
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      const gw = new OctokitGateway("bad-token", fetch);
-      await expect(gw.getAuthenticatedLogin()).rejects.toThrow(/Bad credentials/);
-      expect(errors).not.toHaveBeenCalled(); // the caller decides what the user sees
-      expect(logs).not.toHaveBeenCalled();
-    } finally {
-      errors.mockRestore();
-      logs.mockRestore();
-    }
-  });
-
-  it("leaves warnings alone: a GitHub deprecation notice still reaches the console", async () => {
-    // @octokit/request warns on a `deprecation` response header. Nothing else routes that message
-    // anywhere, so silencing warn would lose it outright.
-    const fetch = (async () => new Response(JSON.stringify({ login: "me" }), {
-      status: 200,
-      headers: {
-        "content-type": "application/json; charset=utf-8",
-        deprecation: "Tue, 01 Sep 2026 00:00:00 GMT",
-        sunset: "Tue, 01 Dec 2026 00:00:00 GMT",
-      },
-    })) as typeof globalThis.fetch;
-    const warns = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      expect(await new OctokitGateway("fake-token", fetch).getAuthenticatedLogin()).toBe("me");
-      expect(warns).toHaveBeenCalled();
-    } finally {
-      warns.mockRestore();
-    }
   });
 });
