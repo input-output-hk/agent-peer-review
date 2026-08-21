@@ -8,7 +8,9 @@ name: Publish
 # release tag: this workflow only ever publishes a tag, never a branch, so a
 # dispatch cannot ship unreviewed code. Either way the run goes through the
 # `release` environment, whose required reviewers approve every publish, and the
-# tag/version check and the test suite run for both triggers. See issue #69.
+# tag/version check and the test suite run for both triggers. Validation/build and credentialed
+# publish use separate runners, so code from node_modules never shares a process boundary with the
+# package token. See issue #69.
 on:
   release:
     types: [published]
@@ -21,38 +23,31 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: publish
   cancel-in-progress: false
 
 jobs:
-  publish:
+  # Install, validate, test, build, and pack without packages:write. The artifact contains only the
+  # two prebuilt tarballs; npm lifecycle scripts are disabled while packing them.
+  validate:
     runs-on: ubuntu-latest
-    # Required reviewers on this environment are the gate on a manual publish.
-    # Same shape as the `github-pages` environment in pages.yml.
-    environment: release
     steps:
       # The tag being published, resolved from whichever trigger fired. Forced
       # under refs/tags/ so a `workflow_dispatch` can never select a branch (a
       # branch named like a version would otherwise satisfy the check below).
       # This is an action input, not a shell word, so nothing is interpolated
       # into a command here.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: refs/tags/${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://npm.pkg.github.com
-          scope: "@input-output-hk"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 22, cache: npm }
 
-      # No install scripts: nothing on the publish path needs one, so no
-      # dependency runs code in a job that holds `packages: write`.
-      - run: npm ci --ignore-scripts
+      - run: npm ci
 
       # The tag must match the root package version (v<version>), so a mistyped
       # tag can never publish the wrong version. Runs for a manual dispatch too,
@@ -69,11 +64,10 @@ jobs:
             exit 1
           fi
 
-      # Both packages are versioned in lockstep and published together, so drift
-      # between them must stop the publish, not half of it. check:lockfile cannot
-      # protect the `npm ci` above (it needs node_modules to run), but it does
-      # stop a tag with an unpinned lockfile from being published at all.
+      # Both packages are versioned in lockstep and published together, so drift between them must
+      # stop the publish, not half of it.
       - run: npm run check:version
+      - run: npm run check:schemas
       - run: npm run check:lockfile
 
       # Build both before publishing either, so a build failure never leaves a
@@ -90,26 +84,111 @@ jobs:
           npm test
           npm run -w pi test
 
-      # Each publish is skipped if that exact version is already on the registry,
-      # so a partial-failure re-run is safe.
+      - name: Pack without lifecycle scripts
+        run: |
+          mkdir "$RUNNER_TEMP/agent-review-packages"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/agent-review-packages"
+          npm pack -w pi --ignore-scripts --pack-destination "$RUNNER_TEMP/agent-review-packages"
+          test "$(find "$RUNNER_TEMP/agent-review-packages" -maxdepth 1 -type f -name '*.tgz' | wc -l)" -eq 2
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-packages
+          path: ${{ runner.temp }}/agent-review-packages/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  # Required reviewers and branch/tag rules gate the only job that can see PACKAGE_TOKEN. The
+  # automatic GITHUB_TOKEN stays read-only: otherwise a modified branch could remove `environment:`
+  # and request packages:write for itself. This job receives no checkout and installs no
+  # dependencies: pinned actions download the tarballs and configure npm, then the runner's npm
+  # publishes them with lifecycle scripts disabled.
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      # A reference to a missing environment is auto-created without protection. This marker is an
+      # environment variable (not a repository variable), so an unconfigured environment stops here.
+      - name: Confirm protected release environment
+        env:
+          RELEASE_ENVIRONMENT_CONFIGURED: ${{ vars.RELEASE_ENVIRONMENT_CONFIGURED }}
+        run: |
+          if [ "$RELEASE_ENVIRONMENT_CONFIGURED" != "true" ]; then
+            echo "::error::the release environment is not configured; see docs/releasing.md"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-packages
+          path: release-packages
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: "@input-output-hk"
+
+      - name: Verify package artifacts
+        id: artifacts
+        env:
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+        run: |
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::invalid release tag '$TAG'"
+            exit 1
+          fi
+          version="${TAG#v}"
+          root="$PWD/release-packages/input-output-hk-agent-review-$version.tgz"
+          pi="$PWD/release-packages/input-output-hk-agent-review-pi-$version.tgz"
+          test -f "$root" && test -f "$pi"
+          test "$(find release-packages -maxdepth 1 -type f -name '*.tgz' | wc -l)" -eq 2
+
+          tar -xOf "$root" package/package.json > "$RUNNER_TEMP/root-package.json"
+          tar -xOf "$pi" package/package.json > "$RUNNER_TEMP/pi-package.json"
+          node -e 'const p=require(process.argv[1]); if (p.name!==process.argv[2] || p.version!==process.argv[3]) process.exit(1)' \
+            "$RUNNER_TEMP/root-package.json" "@input-output-hk/agent-review" "$version"
+          node -e 'const p=require(process.argv[1]); if (p.name!==process.argv[2] || p.version!==process.argv[3]) process.exit(1)' \
+            "$RUNNER_TEMP/pi-package.json" "@input-output-hk/agent-review-pi" "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "root=$root" >> "$GITHUB_OUTPUT"
+          echo "pi=$pi" >> "$GITHUB_OUTPUT"
+
+      # Each publish is skipped if that exact version is already on the registry, so a
+      # partial-failure re-run is safe. Publishing a tarball with --ignore-scripts cannot invoke the
+      # pi package's prepack build (or any lifecycle added later) while NODE_AUTH_TOKEN is present.
       - name: Publish @input-output-hk/agent-review
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
+          VERSION: ${{ steps.artifacts.outputs.version }}
+          TARBALL: ${{ steps.artifacts.outputs.root }}
         run: |
-          v=$(node -p "require('./package.json').version")
-          if npm view "@input-output-hk/agent-review@$v" version >/dev/null 2>&1; then
-            echo "@input-output-hk/agent-review@$v already published, skipping."
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::PACKAGE_TOKEN is not set on the release environment; see docs/releasing.md"
+            exit 1
+          fi
+          if npm view "@input-output-hk/agent-review@$VERSION" version >/dev/null 2>&1; then
+            echo "@input-output-hk/agent-review@$VERSION already published, skipping."
           else
-            npm publish
+            npm publish "$TARBALL" --ignore-scripts
           fi
 
       - name: Publish @input-output-hk/agent-review-pi
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
+          VERSION: ${{ steps.artifacts.outputs.version }}
+          TARBALL: ${{ steps.artifacts.outputs.pi }}
         run: |
-          v=$(node -p "require('./pi/package.json').version")
-          if npm view "@input-output-hk/agent-review-pi@$v" version >/dev/null 2>&1; then
-            echo "@input-output-hk/agent-review-pi@$v already published, skipping."
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::PACKAGE_TOKEN is not set on the release environment; see docs/releasing.md"
+            exit 1
+          fi
+          if npm view "@input-output-hk/agent-review-pi@$VERSION" version >/dev/null 2>&1; then
+            echo "@input-output-hk/agent-review-pi@$VERSION already published, skipping."
           else
-            npm publish -w pi
+            npm publish "$TARBALL" --ignore-scripts
           fi

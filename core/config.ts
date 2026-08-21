@@ -103,7 +103,8 @@ function describeUnknownKeys(keys: string[], file: string): string {
   return lines.join("\n");
 }
 
-function parseConfig(raw: unknown, file: string): Config {
+/** Validate one config object with the same file-aware diagnostics loadConfig uses. */
+export function parseConfig(raw: unknown, file: string): Config {
   const result = ConfigSchema.safeParse(raw);
   if (result.success) return result.data;
   const unknown = result.error.issues.flatMap((i) => (i.code === "unrecognized_keys" ? i.keys : []));

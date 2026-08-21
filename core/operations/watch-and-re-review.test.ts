@@ -152,6 +152,14 @@ describe("watchAndReReview", () => {
       expect((await run(gh, { maxReviewRounds: 1 })).action).toBe("hold-for-human");
     });
 
+    it.each([999, Infinity, Number.NaN])("cannot widen the core API cap with %s", async (maxReviewRounds) => {
+      const gh = seed("sha0004");
+      for (const sha of ["sha0001", "sha0002", "sha0003"]) await reviewAs(gh, ME, "REQUEST_CHANGES", sha);
+      const result = await run(gh, { maxReviewRounds });
+      expect(result.action).toBe("hold-for-human");
+      expect(result.reason).toContain(`3 of ${DEFAULT_MAX_REVIEW_ROUNDS}`);
+    });
+
     // Issue #52, livelock 3. Counting every review by this login spent the cap on writes that asked
     // the author for nothing: a second opinion is a COMMENTED review, and so is a primary that
     // completeReview downgraded because a competing one already existed. The count only grows, so

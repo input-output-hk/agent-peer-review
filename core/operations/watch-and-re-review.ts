@@ -69,7 +69,14 @@ export const DEFAULT_MAX_REVIEW_ROUNDS = 3;
  */
 export async function watchAndReReview(gh: GitHubGateway, input: WatchAndReReviewInput): Promise<WatchAndReReviewResult> {
   const { repo, pr, myLogin } = input;
-  const maxRounds = input.maxReviewRounds ?? DEFAULT_MAX_REVIEW_ROUNDS;
+  // This operation is part of the published core API, so the safety boundary must live here as
+  // well as in the pi adapter's TypeBox schema. A JavaScript caller can bypass that schema (or pass
+  // NaN/Infinity despite the TypeScript type); none of those values may disable the built-in human
+  // handoff. Valid smaller values still tighten the cap.
+  const requestedMaxRounds = input.maxReviewRounds;
+  const maxRounds = requestedMaxRounds === undefined || !Number.isFinite(requestedMaxRounds)
+    ? DEFAULT_MAX_REVIEW_ROUNDS
+    : Math.min(Math.max(Math.trunc(requestedMaxRounds), 1), DEFAULT_MAX_REVIEW_ROUNDS);
 
   const pull = await gh.getPullRequest(repo, pr);
   if (pull.state !== "open") {

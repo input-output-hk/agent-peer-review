@@ -210,6 +210,26 @@ describe("runInit", () => {
     expect(deps.reads.get(configPath)).toBe("{"); // untouched
   });
 
+  it("rejects an unknown existing key before writing the file or bootstrapping labels", async () => {
+    const deps = makeDeps();
+    const configPath = path.join(deps.home, "config.json");
+    deps.reads.set(configPath, JSON.stringify({ runChecks: false }));
+
+    await expect(runInit({ repos: ["o/r"] }, deps)).rejects.toThrow(/"runChecks": removed with issue #55/);
+    expect(deps.writes.has(configPath)).toBe(false);
+    expect(deps.gateway.listLabelsCalls).toEqual([]);
+  });
+
+  it("rejects a wrong existing value type before writing or bootstrapping", async () => {
+    const deps = makeDeps();
+    const configPath = path.join(deps.home, "config.json");
+    deps.reads.set(configPath, JSON.stringify({ reviewers: "peer-bot" }));
+
+    await expect(runInit({ repos: ["o/r"] }, deps)).rejects.toThrow();
+    expect(deps.writes.has(configPath)).toBe(false);
+    expect(deps.gateway.listLabelsCalls).toEqual([]);
+  });
+
   describe("expedition permission preflight (issues #54 and #70)", () => {
     it("warns when the gateway cannot read Dependabot alerts (its null sentinel)", async () => {
       const gateway = new FakeGitHubGateway();

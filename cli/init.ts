@@ -1,5 +1,6 @@
 import path from "node:path";
 import { UNREADABLE_CHECKS, type GitHubGateway } from "../core/github.js";
+import { parseConfig } from "../core/config.js";
 import { bootstrap } from "../core/index.js";
 
 export interface InitInput {
@@ -102,6 +103,10 @@ export async function runInit(input: InitInput, deps: InitDeps): Promise<InitRes
   // required" (issue #67).
   if (input.repos.length === 1 && config.defaultRepo === undefined) config.defaultRepo = input.repos[0];
 
+  // Validate the merged object before the first write or label mutation. loadConfig is strict, so
+  // preserving an obsolete/misspelled key here and reporting init success would merely defer the
+  // same friendly error until the next command, after GitHub had already been changed.
+  parseConfig(config, configPath);
   deps.writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
 
   const bootstrapped: InitResult["bootstrapped"] = [];
