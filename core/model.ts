@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+// Strict, not stripping: an unknown key is a typo or a field an older version wrote, and either way
+// the value the user meant to set is not in effect. zod's default strip mode discarded it silently,
+// which hurts most on knownAgentLogins, the one field whose failure mode is a safety gate quietly
+// treating a peer agent as a human. schemas/config.schema.json has always published
+// additionalProperties: false, so this makes the runtime agree with the schema. loadConfig turns the
+// resulting error into a message naming the key (see core/config.ts).
 export const ConfigSchema = z.object({
   githubLogin: z.string().nullable().default(null),
   defaultRepo: z.string().optional(),
@@ -8,8 +14,8 @@ export const ConfigSchema = z.object({
   agent: z.string().optional(),
   toolVersion: z.string().optional(),
   // Opt-in switch (default off): gates ALL durable metadata capture (the review-meta footer on
-  // complete/enrich, and the claim marker's model/agent/toolVersion fields). When false, the
-  // workflow behaves exactly as before: v1 claim markers, no footer.
+  // complete/enrich, and the claim marker's machine/model/agent/toolVersion fields). When false,
+  // the workflow writes a privacy-preserving v1 marker and no footer.
   captureMetadata: z.boolean().default(false),
   // Global default reviewers to request when a create call (CLI --reviewers, MCP/pi `reviewers`)
   // does not name any. Each adapter falls back to this list; ReviewRequestSchema.reviewers below
@@ -32,7 +38,7 @@ export const ConfigSchema = z.object({
   // leaving it undefined when unset avoids widening every other Config literal across the
   // codebase with a field it does not use.
   mergeMethodByRepo: z.record(z.string(), z.enum(["merge", "squash", "rebase"])).optional(),
-});
+}).strict();
 export type Config = z.infer<typeof ConfigSchema>;
 
 export const ReviewRequestSchema = z.object({
@@ -47,7 +53,9 @@ export type ReviewRequest = z.infer<typeof ReviewRequestSchema>;
 export const ClaimMarkerSchema = z.object({
   v: z.union([z.literal(1), z.literal(2)]),
   reviewer: z.string().min(1),
-  machine: z.string().min(1),
+  // Older markers always carried this. New markers omit it unless captureMetadata is enabled, so
+  // the default cannot publish the reviewing machine's hostname.
+  machine: z.string().min(1).optional(),
   sha: z.string().min(7),
   claimedAt: z.string().min(1),
   // v2 only: written when Config.captureMetadata is true (see core/operations/claim.ts). Absent

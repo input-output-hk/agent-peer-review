@@ -113,7 +113,9 @@ function firstReason(result) {
  * owns the wording of its rails and this has to keep working when that wording changes. The rail is
  * worth singling out: it is the one refusal an operator can cause by configuration alone. A peer
  * agent missing from `knownAgentLogins` reads as a human, so its review holds the gate on a pull
- * request no human has touched, and a GitHub review is permanent, so the hold never expires.
+ * request no human has touched. The hold is an open review request, which clears natively when it is
+ * answered, or a standing CHANGES_REQUESTED, which clears when that verdict is replaced; a login the
+ * gate misreads as a human's supplies neither, so nothing arrives to clear it.
  */
 function heldForReviewInFlight(result) {
   const reasons = result !== null && Array.isArray(result.reasons) ? result.reasons : [];

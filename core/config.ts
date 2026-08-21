@@ -48,9 +48,73 @@ function applyEnvOverrides(cfg: Config): Config {
   };
 }
 
+const CONFIG_FIELDS = Object.keys(ConfigSchema.shape);
+
+// Fields an earlier version of this tool accepted and this one does not. A config file written
+// months ago is one of the likelier ways to meet the unknown-key error, and "did you mean" has
+// nothing to offer for a field that was deliberately deleted, so name the removal instead. Add an
+// entry here whenever a field leaves ConfigSchema.
+const REMOVED_FIELDS: Record<string, string> = {
+  runChecks: 'removed with issue #55. The review is unconditionally read-only now (see SECURITY.md); delete the key.',
+};
+
+// Levenshtein distance, two-row form. Only ever run over the handful of keys in one config file
+// against the schema's ten field names, so the naive implementation is the right one.
+function editDistance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      const substitution = previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1);
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, substitution);
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+// The field an unknown key was most likely meant to be, or undefined when nothing is close enough.
+// Case-insensitive because a wrong case is a typo too. Two edits is the widest gap that still reads
+// as a slip of the same name (knownAgentLogin -> knownAgentLogins, reviewer -> reviewers); past that
+// a suggestion is a guess, and a confidently wrong one costs the reader more than silence.
+function nearestField(key: string): string | undefined {
+  let best: { field: string; distance: number } | undefined;
+  for (const field of CONFIG_FIELDS) {
+    const distance = editDistance(key.toLowerCase(), field.toLowerCase());
+    if (!best || distance < best.distance) best = { field, distance };
+  }
+  return best && best.distance <= 2 && best.distance < key.length ? best.field : undefined;
+}
+
+// zod's own text ("Unrecognized key(s) in object: 'knownAgentLogin'") is accurate and unhelpful: it
+// names neither the file it came from nor a way forward, and it arrives wrapped in a ZodError dump.
+// This says which file, which key, what it was probably meant to be, and what the valid fields are.
+function describeUnknownKeys(keys: string[], file: string): string {
+  const lines = [`Unknown ${keys.length === 1 ? "key" : "keys"} in ${file}:`];
+  for (const key of keys) {
+    const removed = REMOVED_FIELDS[key];
+    if (removed) lines.push(`  "${key}": ${removed}`);
+    else {
+      const near = nearestField(key);
+      lines.push(`  "${key}": ${near ? `did you mean "${near}"?` : "not a config field."}`);
+    }
+  }
+  lines.push(`Valid fields: ${CONFIG_FIELDS.join(", ")}.`);
+  return lines.join("\n");
+}
+
+/** Validate one config object with the same file-aware diagnostics loadConfig uses. */
+export function parseConfig(raw: unknown, file: string): Config {
+  const result = ConfigSchema.safeParse(raw);
+  if (result.success) return result.data;
+  const unknown = result.error.issues.flatMap((i) => (i.code === "unrecognized_keys" ? i.keys : []));
+  if (unknown.length > 0) throw new Error(describeUnknownKeys(unknown, file));
+  throw result.error; // a wrong type or shape: unchanged from ConfigSchema.parse
+}
+
 export function loadConfig(explicitPath?: string): Config {
   for (const p of candidatePaths(explicitPath)) {
-    if (existsSync(p)) return applyEnvOverrides(ConfigSchema.parse(JSON.parse(readFileSync(p, "utf8"))));
+    if (existsSync(p)) return applyEnvOverrides(parseConfig(JSON.parse(readFileSync(p, "utf8")), p));
   }
   return applyEnvOverrides(ConfigSchema.parse({}));
 }

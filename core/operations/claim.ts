@@ -17,7 +17,10 @@ export async function claimReview(
   if (pr.state !== "open") throw new Error(`PR ${opts.repo}#${opts.pr} is ${pr.state}, not open`);
 
   const markers = sortMarkers(parseMarkers(await gh.listComments(opts.repo, opts.pr)));
-  const ours = markers.filter((m) => m.marker.reviewer === login);
+  // The marker body is attacker-controlled text. Delete only comments whose GitHub author agrees
+  // with the asserted reviewer; a maintainer comment that merely claims reviewer=login must never
+  // become deletable by this operation.
+  const ours = markers.filter((m) => m.marker.reviewer === login && m.comment.author === login);
   const own = ours[0];
   let pinnedSha: string;
   // The marker set whose earliest claim decides the role. Re-read only when a marker of ours was
@@ -51,11 +54,11 @@ export async function claimReview(
   } else {
     pinnedSha = pr.headSha;
     // Metadata capture is opt-in (Config.captureMetadata, default false): off, this writes a v1
-    // marker exactly as before; on, it writes a v2 marker carrying model/agent/toolVersion from
-    // config (JSON.stringify in serializeMarker drops any that are unset).
+    // marker without the hostname; on, it writes a v2 marker carrying the machine plus
+    // model/agent/toolVersion from config (JSON.stringify drops any unset optional fields).
     const marker: ClaimMarker = config.captureMetadata
       ? { v: 2, reviewer: login, machine, sha: pinnedSha, claimedAt: now, model: config.model, agent: config.agent, toolVersion: config.toolVersion }
-      : { v: 1, reviewer: login, machine, sha: pinnedSha, claimedAt: now };
+      : { v: 1, reviewer: login, sha: pinnedSha, claimedAt: now };
     await gh.createComment(opts.repo, opts.pr, serializeMarker(marker));
     ordered = sortMarkers(parseMarkers(await gh.listComments(opts.repo, opts.pr)));
   }

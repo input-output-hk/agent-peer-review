@@ -4,7 +4,7 @@ import { hostname } from "node:os";
 import {
   loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, enrichReview, bootstrap,
   stabilize, expedite, requestPeerReview, approveDependencyUpgrade, watchAndReReview,
-  DEFAULT_GATE_POLICY, DEPS_GATE_POLICY,
+  DEFAULT_GATE_POLICY, DEPS_GATE_POLICY, DEFAULT_MAX_REVIEW_ROUNDS, DEFAULT_CLAIM_TTL_MS,
   type GitHubGateway, type Config, type AllowedMergeMethods,
 } from "@input-output-hk/agent-review";
 
@@ -98,7 +98,7 @@ export function registerTools(
 
   pi.registerTool({ name: "review_enrich", label: "Enrich a review", description: "Post a consolidated second opinion once the primary exists; else waiting/promote.",
     parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), verdict: Type.Union([Type.Literal("agree"), Type.Literal("disagree"), Type.Literal("mixed")]), summary: Type.String(), newFindings: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Number(), body: Type.String() }))) }),
-    async execute(_id, p) { return ok(await enrichReview({ gh: gh(), config: cfg(), ttlMs: 30 * 60_000, nowMs: Date.now() }, { repo: p.repo, pr: p.pr, overallVerdict: p.verdict, summary: p.summary, newFindings: p.newFindings })); } });
+    async execute(_id, p) { return ok(await enrichReview({ gh: gh(), config: cfg(), ttlMs: DEFAULT_CLAIM_TTL_MS, nowMs: Date.now() }, { repo: p.repo, pr: p.pr, overallVerdict: p.verdict, summary: p.summary, newFindings: p.newFindings })); } });
 
   pi.registerTool({ name: "labels_bootstrap", label: "Bootstrap labels", description: "Idempotently create/update the ai-review + skill labels.",
     parameters: Type.Object({ repo: Type.String() }),
@@ -190,7 +190,10 @@ export function registerTools(
       pr: Type.Number(),
       autonomy: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("propose")])),
       mergeMethod: Type.Optional(Type.Union([Type.Literal("merge"), Type.Literal("squash"), Type.Literal("rebase")])),
-      botAllowlist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+      botAllowlist: Type.Optional(Type.Array(Type.String({
+        minLength: 1,
+        description: "Narrows the built-in dependency-bot allowlist; additional bot identities are ignored.",
+      }))),
       maxFiles: Type.Optional(Type.Integer({
         minimum: 1,
         description: `At most the dependency policy's max files cap (${DEPS_GATE_POLICY.maxFiles}); narrows the size rail, never widens it.`,
@@ -230,7 +233,11 @@ export function registerTools(
     name: "pr_watch",
     label: "Watch a reviewed PR",
     description: "Decide the reviewer watch action for a PR I reviewed (re-review / wait / hold-for-human / abandoned / approved / none).",
-    parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), maxReviewRounds: Type.Optional(Type.Integer({ minimum: 1 })) }),
+    parameters: Type.Object({
+      repo: Type.String(),
+      pr: Type.Number(),
+      maxReviewRounds: Type.Optional(Type.Integer({ minimum: 1, maximum: DEFAULT_MAX_REVIEW_ROUNDS })),
+    }),
     async execute(_id, p) {
       // Same login resolution as the CLI: the configured login wins, falling back to the token's
       // own login. Captured once and reused for both calls below: relying on the default gh()
@@ -242,7 +249,13 @@ export function registerTools(
       const config = cfg();
       const myLogin = config.githubLogin ?? await github.getAuthenticatedLogin();
       return ok(await watchAndReReview(github, {
-        repo: p.repo, pr: p.pr, myLogin, maxReviewRounds: p.maxReviewRounds, knownAgentLogins: config.knownAgentLogins,
+        repo: p.repo,
+        pr: p.pr,
+        myLogin,
+        maxReviewRounds: p.maxReviewRounds === undefined
+          ? undefined
+          : Math.min(p.maxReviewRounds, DEFAULT_MAX_REVIEW_ROUNDS),
+        knownAgentLogins: config.knownAgentLogins,
       }));
     },
   });

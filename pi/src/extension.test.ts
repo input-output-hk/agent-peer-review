@@ -2,7 +2,10 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { serializeMarker, PRIMARY_MARKER, DEFAULT_GATE_POLICY, DEPS_GATE_POLICY, DEFAULT_BOT_ALLOWLIST } from "@input-output-hk/agent-review";
+import {
+  serializeMarker, PRIMARY_MARKER, DEFAULT_GATE_POLICY, DEPS_GATE_POLICY, DEFAULT_BOT_ALLOWLIST,
+  DEFAULT_MAX_REVIEW_ROUNDS,
+} from "@input-output-hk/agent-review";
 import { registerTools, once } from "./extension.js";
 
 function fakePi() {
@@ -375,7 +378,7 @@ describe("pi extension", () => {
       addLabels: async () => { calls.labeled = true; },
       requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, reviewers: ["patextreme"] }) as any });
     const requestReview = pi.tools.find((t) => t.name === "pr_request_review");
     const res = await requestReview.execute("id-r3", { repo: "o/r", pr: 7 }, undefined, undefined, undefined);
     const result = JSON.parse(res.content[0].text);
@@ -394,7 +397,7 @@ describe("pi extension", () => {
       addLabels: async () => { calls.labeled = true; },
       requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, reviewers: ["patextreme"] }) as any });
     const requestReview = pi.tools.find((t) => t.name === "pr_request_review");
     const res = await requestReview.execute("id-r4", { repo: "o/r", pr: 8 }, undefined, undefined, undefined);
     expect(JSON.parse(res.content[0].text).status).toBe("requested");
@@ -404,7 +407,7 @@ describe("pi extension", () => {
   it("pr_approve_dep_upgrade cannot widen the size rail past the deps policy cap", async () => {
     const pi = fakePi();
     const gh = fakeDepUpgradeGh();
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
     const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
     // The diff is 26 lines, so a clamped-down maxLines of 1 is what must bite: if 999999 had been
     // taken at face value the tool could widen its own blast radius in the call that asks to merge.
@@ -415,7 +418,7 @@ describe("pi extension", () => {
 
     const tight = fakeDepUpgradeGh();
     const pi2 = fakePi();
-    registerTools(pi2 as any, { gh: () => tight, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(pi2 as any, { gh: () => tight, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
     const res = await pi2.tools.find((t) => t.name === "pr_approve_dep_upgrade")
       .execute("id-d5", { repo: "o/r", pr: 2, autonomy: "auto", maxLines: 1 }, undefined, undefined, undefined);
     const result = JSON.parse(res.content[0].text);
@@ -426,11 +429,12 @@ describe("pi extension", () => {
 
   it("pr_approve_dep_upgrade advertises the deps policy caps, not the general ones", () => {
     const pi = fakePi();
-    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false }) as any });
+    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null }) as any });
     const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
     const params = approveDep.parameters.properties;
     expect(params.maxLines.description).toContain(String(DEPS_GATE_POLICY.maxLines));
     expect(params.maxFiles.description).toContain(String(DEPS_GATE_POLICY.maxFiles));
+    expect(params.botAllowlist.items.description).toContain("Narrows");
     expect(DEPS_GATE_POLICY.maxLines).toBeGreaterThan(DEFAULT_GATE_POLICY.maxLines);
   });
 
@@ -446,6 +450,40 @@ describe("pi extension", () => {
     const res = await watch.execute("id-w1", { repo: "o/r", pr: 3 }, undefined, undefined, undefined);
     const result = JSON.parse(res.content[0].text);
     expect(result.action).toBe("wait"); // no push since "me" requested changes at the current head
+  });
+
+  it("pr_watch cannot widen the handoff cap past the built-in review-round limit", async () => {
+    const pi = fakePi();
+    const gh = {
+      getPullRequest: async () => ({
+        number: 3, title: "t", author: "human-author", headSha: "sha0004", baseSha: "base",
+        url: "u", state: "open" as const, labels: [],
+      }),
+      getReviews: async () => [1, 2, 3].map((round) => ({
+        id: round,
+        author: "me",
+        state: "CHANGES_REQUESTED",
+        body: "",
+        commitId: `sha000${round}`,
+        submittedAt: `2026-08-01T00:00:0${round}Z`,
+      })),
+    } as any;
+    registerTools(pi as any, {
+      gh: () => gh,
+      config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any,
+    });
+    const watch = pi.tools.find((t) => t.name === "pr_watch");
+    expect(watch.parameters.properties.maxReviewRounds.maximum).toBe(DEFAULT_MAX_REVIEW_ROUNDS);
+
+    // Runtime clamping remains the backstop even for a host that does not enforce TypeBox schemas.
+    const response = await watch.execute(
+      "id-w-cap",
+      { repo: "o/r", pr: 3, maxReviewRounds: 999 },
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(JSON.parse(response.content[0].text)).toMatchObject({ action: "hold-for-human" });
   });
 
   it("pr_watch's knownAgentLogins from config reaches the human-review rail", async () => {

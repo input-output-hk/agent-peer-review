@@ -16,7 +16,7 @@ The refusal is limited to the same bot allowlist the steward accepts. `pr_reques
 
 ### pr-reviewer
 
-The reviewer side, in two buckets. Pull requests with a review requested from you run the full claim, review, complete cycle: `review_claim` pins the head SHA and returns the composed review task, and `review_complete` (or `review_enrich` when you are a second reviewer on a [panel](./lifecycle.md#panel-review-multiple-reviewers)) posts the verdict at that pinned SHA. Pull requests you have already reviewed run `pr_watch` instead, which reads state and returns one of exactly six verbs: `re-review` when the head moved after you requested changes, `wait` when nothing has been pushed since your verdict, `hold-for-human` when the round cap is spent, a human has been asked for a review and not answered, or a human's standing verdict requests changes, `abandoned` when the pull request is closed or merged, `approved` when your approval still stands, and `none` when you have no verdict-bearing review on it at all. Every answer also carries `headMoved`, which says whether your standing verdict was left on a commit that is no longer the head; on `approved` that means the approval is stale, and the merge side will not count it. Only `re-review` starts another review round; every other verb is reported and left alone. Nothing in this flow asks for a merge: its instructions name none of the merge-capable tools and never pass an `autonomy`, those tools default to `propose` on every call, and no file the flows read can turn that default up.
+The reviewer side, in two buckets. Pull requests with a review requested from you run the full claim, review, complete cycle: `review_claim` pins the head SHA and returns the composed review task, and `review_complete` (or `review_enrich` when you are a second reviewer on a [panel](./lifecycle.md#panel-review-multiple-reviewers)) posts the verdict at that pinned SHA. Pull requests you have already reviewed run `pr_watch` instead, which reads state and returns one of exactly six verbs: `re-review` when the head moved after you requested changes, `wait` when nothing has been pushed since your verdict, `hold-for-human` when your standing verdict was dismissed, the round cap is spent, a human has been asked for a review and not answered, or a human's standing verdict requests changes, `abandoned` when the pull request is closed or merged, `approved` when your approval still stands, and `none` when you have no verdict-bearing review on it at all. Every answer also carries `headMoved`, which says whether your standing verdict was left on a commit that is no longer the head; on `approved` that means the approval is stale, and the merge side will not count it. Only `re-review` starts another review round; every other verb is reported and left alone. The optional `maxReviewRounds` may tighten the built-in cap of three but cannot raise it. Nothing in this flow asks for a merge: its instructions name none of the merge-capable tools and never pass an `autonomy`, those tools default to `propose` on every call, and no file the flows read can turn that default up.
 
 ### pr-steward
 
@@ -40,7 +40,7 @@ pi install npm:pi-taskflow
 
 or, outside a Pi host, `npm i pi-taskflow`. pi-taskflow requires **Node.js 22.19.0 or newer**, which is stricter than this package's own Node 22 floor.
 
-Then copy the three flows into the repository you want to sweep. They live in the installed package under `@input-output-hk/agent-review-pi/taskflows/`, and this repository keeps a working copy of the same files under [`.pi/taskflows/`](https://github.com/input-output-hk/agent-peer-review/tree/main/.pi/taskflows) that you can copy instead. Each flow is two files plus a directory of four:
+Then copy the three flows into the repository you want to sweep. They live in the installed package under `@input-output-hk/agent-review-pi/taskflows/`; a Pi installation normally places that package under `~/.pi/agent/npm/node_modules/`, while a global npm installation can be located with `npm root -g`. This repository also keeps the untouched templates under [`pi/taskflows/`](https://github.com/input-output-hk/agent-peer-review/tree/main/pi/taskflows). Do not copy the dogfood `.pi/taskflows/` configs: those intentionally sweep this repository. Each flow is two sibling files plus a directory of four:
 
 ```text
 .pi/taskflows/pr-steward.json          the flow definition
@@ -51,10 +51,10 @@ Then copy the three flows into the repository you want to sweep. They live in th
 .pi/taskflows/pr-steward/config.example.json  the repositories to sweep
 ```
 
-The paths inside each flow definition are repository-relative and point at `.pi/taskflows/<name>/`, so copy the whole directory to that location and the flow resolves without editing. Finally, rename `config.example.json` to `config.json` and list your repositories:
+The paths inside each flow definition are repository-relative and point at `.pi/taskflows/<name>/`. Copy all six paths shown above into the same layout; copying only the directory omits the definition and sidecar, so the flow cannot resolve. Finally, rename `config.example.json` to `config.json` and list your repositories:
 
 ```json
-{ "repos": ["input-output-hk/agent-peer-review"], "botAuthors": ["app/dependabot"] }
+{ "repos": ["input-output-hk/agent-peer-review"], "botAuthors": ["app/dependabot", "app/renovate"] }
 ```
 
 `config.json` is the only file in the flow directory you have to edit. It never carries an autonomy setting; see [The safety model](#the-safety-model).
@@ -85,7 +85,7 @@ The flows drive this package's tools, so a repository needs the same setup the r
 
    `captureMetadata` is optional and off by default. Turn it on if you want the durable footer that records which model and agent reviewed, which is also what gives the [dashboard](./dashboard.md) something better than "unknown" to attribute a review to. It writes that metadata into the public review body, so enable it only where that is acceptable.
 
-4. **Authenticate the GitHub CLI** (`gh auth login`) or export `GITHUB_TOKEN`. The discover scripts shell out to `gh`, and the tools need a token with read and write access to pull requests and issues on every repository you sweep.
+4. **Authenticate the GitHub CLI** (`gh auth login`) or export `GITHUB_TOKEN`. The discover scripts shell out to `gh`. Beyond the review flow's pull-request and issue access, the expedition gate needs Checks, Commit statuses, Administration, and Dependabot alerts read access on every repository swept. Auto-merge also needs Contents write. See [`SECURITY.md`](https://github.com/input-output-hk/agent-peer-review/blob/main/SECURITY.md#additional-scope-for-expedition-taskflows) for the exact fine-grained and classic-token scopes.
 
 A quick way to check the discovery half before involving a model at all: run a flow's discover script directly. It spends no tokens, prints its candidate count to stderr, and emits the candidate array on stdout.
 
@@ -121,7 +121,7 @@ The case those lines exist for is a pull request that was neither merged nor han
 | Line under the counts | What it means | What to do about it |
 | --- | --- | --- |
 | `no reviewers are configured, so nobody was asked` | `requested: "unconfigured"`. `pr_request_review` throws before its first GitHub call when no reviewer list is configured, so nothing was written anywhere and the pull request carries no trace of the attempt. | Set `reviewers` in `~/.agent-peer-review/config.json`, or export `AGENT_REVIEW_REVIEWERS`. See [Before your first run](#before-your-first-run-on-a-new-repository). |
-| `held for a review in flight` | A review the gate reads as a human's is holding the decision. Counted as `human-review-hold`. | Nothing, if a person really is reviewing. If nobody is, a peer agent is missing from `knownAgentLogins`, and the hold is permanent: a GitHub review is history and never expires. |
+| `held for a review in flight` | A review the gate reads as a human's is holding the decision: either an open review request nobody has answered, or a standing `CHANGES_REQUESTED`. Counted as `human-review-hold`. | Nothing, if a person really is reviewing. If nobody is, a peer agent is missing from `knownAgentLogins`, and the hold lasts as long as that state does: an open request until it is answered, a refusal until that person replaces the verdict. Neither clears on its own while the login is misread as a human's. |
 | `the gate never ran` | `expedite: "not-eligible"`: the pull request turned out to be closed, merged, or a draft, so no rail was evaluated. | Nothing, beyond confirming that is the state you expect. |
 | `proposed, and no reviewer was asked` | The gate refused and the item still ended with nobody engaged. | Read the run's log. The executor did not do what the flow's step 3 tells it to. |
 

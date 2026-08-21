@@ -7,7 +7,9 @@ import TabItem from '@theme/TabItem';
 
 # MCP reference
 
-The `agent-review-mcp` binary (equivalently, `agent-review serve`) starts an MCP server over stdio, built with `@modelcontextprotocol/sdk`. It registers six tools, one per operation in `core`, using [zod](https://zod.dev) schemas for input validation.
+The `agent-review-mcp` binary (equivalently, `agent-review serve`) starts an MCP server over stdio, built with `@modelcontextprotocol/sdk`. It registers six tools, one per **review** operation in `core`, using [zod](https://zod.dev) schemas for input validation.
+
+`core` exports eleven operations. The other five are the expedition operations, which move a pull request forward instead of reviewing one (`stabilize`, `expedite`, `requestPeerReview`, `approveDependencyUpgrade`, and `watchAndReReview`), and they are exposed only through the [pi.dev extension](./pi.md), because the [taskflows](./taskflows.md) that drive them are a pi.dev feature. Reaching them from an MCP host is tracked as [issue #61](https://github.com/input-output-hk/agent-peer-review/issues/61).
 
 Every tool returns its result the same way: a single text content block holding the same JSON you would get back from the equivalent CLI command, pretty-printed with two-space indentation.
 

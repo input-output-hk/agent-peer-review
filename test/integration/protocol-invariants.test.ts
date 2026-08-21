@@ -70,6 +70,7 @@ function seedDocsPr(gh: FakeGitHubGateway, files: DetailedPullFile[] = [DOCS_FIL
   gh.setDetailedFiles(REPO, PR, files);
   gh.setChecks(REPO, HEAD, [{ name: "build", status: "success" }]);
   gh.setChecks(REPO, HEAD2, [{ name: "build", status: "success" }]);
+  gh.setAlertCount(REPO, 0);
   gh.setMergeability(REPO, PR, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: HEAD });
 }
 

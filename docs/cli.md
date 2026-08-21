@@ -72,7 +72,7 @@ agent-review init --repo input-output-hk/some-repo --reviewer patextreme --known
 
 On a token or authentication failure, `init` prints a friendly message ("Could not authenticate to GitHub. Set `GITHUB_TOKEN` or run `gh auth login`.") and exits with a non-zero status instead of a raw stack trace.
 
-`init` also makes a best-effort, read-only probe of the Dependabot alerts endpoint against the first `--repo`, and prints a warning to stderr if the token cannot read it; see [Recommended token scope](https://github.com/input-output-hk/agent-peer-review/blob/main/SECURITY.md#recommended-token-scope) in `SECURITY.md`. The probe never fails `init` itself, and the permission it checks for is unrelated to requesting, claiming, or completing a review.
+`init` also makes a best-effort, read-only preflight against the first `--repo` for the expedition gate's checks, commit-status, branch-protection, and Dependabot-alert reads, and prints a warning to stderr if the token cannot read one; see [Recommended token scope](https://github.com/input-output-hk/agent-peer-review/blob/main/SECURITY.md#recommended-token-scope) in `SECURITY.md`. The preflight never fails `init` itself, and those permissions are unrelated to requesting, claiming, or completing a review. Contents write, needed only for an actual merge, cannot be probed safely without making a write.
 
 ## `request`
 
@@ -136,7 +136,7 @@ Used by an enricher in a panel review. Waits for the panel's primary review to e
 - `--summary <text|@file>` (required): literal text, or a path prefixed with `@` to read the summary from a file.
 - `--comments <@file>` (optional): a JSON array of `{path, line, body}` new findings, typically read from a file the same way.
 - `--poll <seconds>` (optional): seconds between polls. Defaults to `5`.
-- `--timeout <seconds>` (optional): seconds before giving up. Defaults to `1800`.
+- `--timeout <seconds>` (optional): seconds before the CLI gives up polling. Defaults to `1800`; it does not change the fixed 30-minute claim-staleness threshold used to promote an enricher.
 
 ```bash
 agent-review enrich --repo input-output-hk/some-repo --pr 42 --verdict mixed --summary @summary.md --comments @comments.json

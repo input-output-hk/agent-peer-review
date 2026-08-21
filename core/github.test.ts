@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { OctokitGateway } from "./github.js";
+import { OctokitGateway, UNREADABLE_CHECKS } from "./github.js";
+import type { LabelSpec } from "./model.js";
 
 describe("OctokitGateway construction", () => {
   it("constructs with a token without throwing (throttling + retry plugins registered)", () => {
@@ -166,8 +167,6 @@ function fakeSearchTransport() {
 }
 
 describe("OctokitGateway search results survive conditional-request caching", () => {
-  // Generous timeout: the throttling plugin spaces /search/ calls by 2s, so the
-  // second poll's search request waits before firing.
   it("serves a cached search result on a second poll without corrupting the entry", async () => {
     const { fetch, calls } = fakeSearchTransport();
     const gw = new OctokitGateway("fake-token", fetch);
@@ -179,7 +178,7 @@ describe("OctokitGateway search results survive conditional-request caching", ()
     expect(second.map((p) => p.number)).toEqual([11, 12]); // identical, entry not corrupted, no throw
     expect(calls.filter((c) => c.startsWith("/search/issues")).length).toBe(2);
     expect(calls).toContain("/search/issues (304)"); // the second poll revalidated from cache
-  }, 15000);
+  });
 });
 
 // ================================================================================================
@@ -292,6 +291,28 @@ describe("OctokitGateway.getChecks", () => {
       { name: "status-failure", status: "failure" },
       { name: "status-error", status: "failure" },
     ]);
+  });
+
+  it("maps a 403 from either checks endpoint to a fail-closed sentinel", async () => {
+    const fetch = (async () => new Response(JSON.stringify({ message: "Resource not accessible" }), {
+      status: 403, headers: { "content-type": "application/json; charset=utf-8" },
+    })) as typeof globalThis.fetch;
+    const gw = new OctokitGateway("fake-token", fetch);
+    expect(await gw.getChecks("o/r", "deadbeef")).toEqual([
+      { name: UNREADABLE_CHECKS, status: "failure" },
+    ]);
+  });
+
+  it("still propagates non-permission failures", async () => {
+    let calls = 0;
+    const fetch = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ message: "server error" }), {
+        status: 500, headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }) as typeof globalThis.fetch;
+    await expect(new OctokitGateway("fake-token", fetch).getChecks("o/r", "deadbeef")).rejects.toThrow();
+    expect(calls).toBe(2); // one per checks endpoint, with no production retry loop over the fake
   });
 });
 
@@ -526,6 +547,12 @@ describe("OctokitGateway.updateBranch", () => {
     const gw = new OctokitGateway("fake-token", fetch);
     expect(await gw.updateBranch("o/r", 3, "stalesha")).toBe("conflict");
   });
+
+  it('maps 403 to "forbidden" instead of throwing', async () => {
+    const { fetch } = fakeUpdateBranchFetch({ 4: { status: 403, body: { message: "Resource not accessible" } } });
+    const gw = new OctokitGateway("fake-token", fetch);
+    expect(await gw.updateBranch("o/r", 4, "headsha")).toBe("forbidden");
+  });
 });
 
 describe("OctokitGateway.listPullFilesDetailed", () => {
@@ -689,5 +716,56 @@ describe("OctokitGateway.listOpenSecurityAlertCount", () => {
   it("propagates other errors", async () => {
     const { fetch } = fakeAlertsFetch({ "o/4": { status: 400 } });
     await expect(new OctokitGateway("fake-token", fetch).listOpenSecurityAlertCount("o/4")).rejects.toThrow();
+  });
+});
+
+// A fake fetch over one repository's labels: GET lists whatever the test seeded, POST and PATCH
+// answer success without recording state. `calls` is what matters here, since these tests are about
+// how many round trips each path costs.
+function fakeLabelFetch(existing: LabelSpec[]) {
+  const calls: string[] = [];
+  const fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === "string" ? input : input.toString();
+    const method = (init?.method ?? "GET").toUpperCase();
+    calls.push(`${method} ${new URL(url).pathname}`);
+    const body = method === "GET" ? existing : { ok: true };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
+  }) as typeof globalThis.fetch;
+  return { fetch, calls };
+}
+
+const TRIGGER_LABEL: LabelSpec = { name: "ai-review", color: "0e8a16", description: "Request an AI agent review" };
+
+describe("OctokitGateway.ensureLabel", () => {
+  it("lists the repository's labels itself when the caller passes no snapshot", async () => {
+    const { fetch, calls } = fakeLabelFetch([]);
+    const gw = new OctokitGateway("fake-token", fetch);
+    expect(await gw.ensureLabel("o/r", TRIGGER_LABEL)).toBe("created");
+    expect(calls).toEqual(["GET /repos/o/r/labels", "POST /repos/o/r/labels"]);
+  });
+
+  it("decides from a snapshot the caller already has, without listing again", async () => {
+    const { fetch, calls } = fakeLabelFetch([]);
+    const gw = new OctokitGateway("fake-token", fetch);
+    expect(await gw.ensureLabel("o/r", TRIGGER_LABEL, [])).toBe("created");
+    expect(calls).toEqual(["POST /repos/o/r/labels"]); // no list: that is the point of the parameter
+  });
+
+  it("reports unchanged from a snapshot without writing or listing anything", async () => {
+    const { fetch, calls } = fakeLabelFetch([]);
+    const gw = new OctokitGateway("fake-token", fetch);
+    expect(await gw.ensureLabel("o/r", TRIGGER_LABEL, [TRIGGER_LABEL])).toBe("unchanged");
+    expect(calls).toEqual([]);
+  });
+
+  it("updates a drifted label found in the snapshot, exactly as it would from its own list", async () => {
+    const drifted: LabelSpec = { ...TRIGGER_LABEL, description: "an older description" };
+    const { fetch: passed, calls: passedCalls } = fakeLabelFetch([]);
+    expect(await new OctokitGateway("fake-token", passed).ensureLabel("o/r", TRIGGER_LABEL, [drifted])).toBe("updated");
+    expect(passedCalls).toEqual(["PATCH /repos/o/r/labels/ai-review"]);
+
+    const { fetch: listed, calls: listedCalls } = fakeLabelFetch([drifted]);
+    expect(await new OctokitGateway("fake-token", listed).ensureLabel("o/r", TRIGGER_LABEL)).toBe("updated");
+    expect(listedCalls).toEqual(["GET /repos/o/r/labels", "PATCH /repos/o/r/labels/ai-review"]);
   });
 });

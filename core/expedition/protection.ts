@@ -99,7 +99,11 @@ export function protectionSatisfied(
 
 // States that carry a verdict. GitHub replaces a user's standing verdict only with another
 // verdict: a COMMENTED (or PENDING) review left after an approval does not withdraw it.
-const VERDICT_STATES: ReadonlySet<string> = new Set(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"]);
+export const STANDING_VERDICT_STATES: ReadonlySet<string> = new Set([
+  "APPROVED",
+  "CHANGES_REQUESTED",
+  "DISMISSED",
+]);
 
 /**
  * Order reviews oldest to newest by submission time, with the review id as the tie-break.
@@ -117,7 +121,7 @@ export function sortReviews(reviews: Review[]): Review[] {
 export interface StandingVerdict {
   /** The login exactly as the API reported it on that review, for callers that compare logins. */
   login: string;
-  /** One of VERDICT_STATES. */
+  /** One of STANDING_VERDICT_STATES. */
   state: string;
   /** The commit the verdict was left on; "" when the API reported none. */
   commitId: string;
@@ -142,7 +146,7 @@ export interface StandingVerdict {
 export function standingVerdicts(reviews: Review[]): Map<string, StandingVerdict> {
   const latestVerdict = new Map<string, StandingVerdict>();
   for (const r of sortReviews(reviews)) {
-    if (!VERDICT_STATES.has(r.state)) continue;
+    if (!STANDING_VERDICT_STATES.has(r.state)) continue;
     latestVerdict.set(r.author.toLowerCase(), { login: r.author, state: r.state, commitId: r.commitId });
   }
   return latestVerdict;

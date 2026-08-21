@@ -74,6 +74,7 @@ function seedBotBump<T extends FakeGitHubGateway = FakeGitHubGateway>(
   gh.setActorType(BOT, "Bot");
   gh.setDetailedFiles(REPO, PR, files);
   gh.setChecks(REPO, HEAD, [{ name: "build", status: "success" }]);
+  gh.setAlertCount(REPO, 0);
   // Stated explicitly, because the fake's unseeded default is "unknown" and fails rail 4. "clean" is
   // the honest value for this fixture: no protection, so nothing is waiting on a review.
   gh.setMergeability(REPO, PR, mergeable("clean"));
@@ -192,12 +193,17 @@ describe("approveDependencyUpgrade", () => {
       expect(gh.reviews).toEqual([]);
     });
 
-    it("honors a caller-supplied allowlist", async () => {
+    it("lets a caller tighten the built-in allowlist but never add a new trusted bot", async () => {
       const gh = seedBotBump();
-      gh.prs.get(`${REPO}#${PR}`)!.author = "my-bot[bot]";
-      gh.setActorType("my-bot[bot]", "Bot");
-      expect((await run(gh, { botAllowlist: ["my-bot[bot]"] })).action).toBe("proposed");
-      expect((await run(gh, { botAllowlist: ["other[bot]"] })).action).toBe("not-eligible");
+      expect((await run(gh, { botAllowlist: ["app/dependabot"] })).action).toBe("proposed");
+      expect((await run(gh, { botAllowlist: ["renovate[bot]"] })).action).toBe("not-eligible");
+
+      gh.prs.get(`${REPO}#${PR}`)!.author = "totally-unrelated[bot]";
+      gh.setActorType("totally-unrelated[bot]", "Bot");
+      const widened = await run(gh, { autonomy: "auto", botAllowlist: ["totally-unrelated[bot]"] });
+      expect(widened.action).toBe("not-eligible");
+      expect(gh.reviews).toEqual([]);
+      expect(gh.merges).toEqual([]);
     });
 
     it("refuses a closed pull request", async () => {
@@ -832,6 +838,17 @@ describe("approveDependencyUpgrade", () => {
 
       const result = await run(gh, { autonomy: "auto" });
       expect(result.action).toBe("approved-and-merged");
+      expect(gh.merges).toHaveLength(1);
+    });
+
+    it("does not let an older dismissal override a later standing approval at the same head", async () => {
+      const gh = seedBotBump();
+      await dismissedApproval(gh, HEAD);
+      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "a maintainer allowed a new verdict" });
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved-and-merged");
+      expect(gh.reviews).toHaveLength(2); // the later standing approval is reused
       expect(gh.merges).toHaveLength(1);
     });
   });

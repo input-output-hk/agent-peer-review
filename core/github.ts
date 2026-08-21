@@ -21,6 +21,8 @@ export interface Mergeability {
   headSha: string;
 }
 export interface CheckResult { name: string; status: "success" | "failure" | "pending" | "neutral" }
+/** Synthetic check returned when either checks/status endpoint cannot be read. */
+export const UNREADABLE_CHECKS = "agent-review: checks or commit statuses unreadable";
 export interface BranchProtectionSummary {
   requiresPullRequestReviews: boolean;
   requiredApprovingReviewCount: number;   // 0 is meaningful: PR required, no approvals needed
@@ -45,13 +47,19 @@ export interface AllowedMergeMethods { merge: boolean; squash: boolean; rebase: 
 
 export interface GitHubGateway {
   getAuthenticatedLogin(): Promise<string>;
+  /** Repository's configured default branch, used by init's read-only permission preflight. */
+  getDefaultBranch(repo: string): Promise<string>;
   getPullRequest(repo: string, pr: number): Promise<PullRequest>;
   listReviewRequests(repo: string, login: string): Promise<PullRequest[]>;
   findAgentPulls(repo: string, login: string): Promise<PullRequest[]>;
   requestReviewers(repo: string, pr: number, reviewers: string[]): Promise<void>;
   addLabels(repo: string, pr: number, labels: string[]): Promise<void>;
   listLabels(repo: string): Promise<LabelSpec[]>;
-  ensureLabel(repo: string, label: LabelSpec): Promise<"created" | "updated" | "unchanged">;
+  // `existing` is the repository's current labels, already fetched by the caller: a caller ensuring
+  // a whole profile (see operations/bootstrap.ts) lists once and passes the snapshot to every call
+  // instead of paying one list per label. Omit it and the method lists for itself, so a single
+  // ensureLabel call still works standalone.
+  ensureLabel(repo: string, label: LabelSpec, existing?: readonly LabelSpec[]): Promise<"created" | "updated" | "unchanged">;
   listComments(repo: string, pr: number): Promise<IssueComment[]>;
   createComment(repo: string, pr: number, body: string): Promise<IssueComment>;
   deleteComment(repo: string, commentId: number): Promise<void>;
@@ -70,7 +78,7 @@ export interface GitHubGateway {
   getChecks(repo: string, ref: string): Promise<CheckResult[]>;
   getBranchProtection(repo: string, branch: string): Promise<BranchProtectionSummary | "none" | "unknown">;
   mergePull(repo: string, pr: number, opts: { sha: string; method?: "merge" | "squash" | "rebase"; commitTitle?: string }): Promise<{ merged: boolean; sha: string | null; message: string; reason: "head-moved" | "not-mergeable" | null }>;
-  updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict">;
+  updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict" | "forbidden">;
   listPullFilesDetailed(repo: string, pr: number): Promise<DetailedPullFile[]>;
   removeLabel(repo: string, pr: number, label: string): Promise<void>;
   listRequestedReviewers(repo: string, pr: number): Promise<{ users: string[]; teams: string[] }>;
@@ -136,43 +144,58 @@ export class OctokitGateway implements GitHubGateway {
   private cachedLogin?: string;
   private readonly cache = new ConditionalCache();
 
-  // `fetch` is an optional injection seam for tests only: it drives the
-  // throttling/retry/conditional-cache stack over a fake transport instead of
-  // the network. It is not part of the GitHubGateway interface.
+  // `fetch` is an optional injection seam for tests only. It keeps Octokit's endpoint mapping and
+  // the conditional cache over a fake transport, but deliberately omits the production throttle
+  // and retry plugins: an in-memory response consumes no GitHub quota, and waiting out their
+  // spacing/backoff tests time rather than behavior. It is not part of the GitHubGateway interface.
   constructor(token = resolveToken(), fetch?: typeof globalThis.fetch) {
-    const ThrottledOctokit = Octokit.plugin(throttling, retry);
-    this.kit = new ThrottledOctokit({
-      auth: token,
-      request: fetch ? { fetch } : undefined,
-      // Retry after the delay GitHub asks for, but only a bounded number of
-      // times so a hard limit surfaces instead of looping forever. Warnings go
-      // to STDERR via octokit.log.warn (console.warn), never to STDOUT.
-      throttle: {
-        onRateLimit: (retryAfter, options, octokit, retryCount) => {
-          octokit.log.warn(`GitHub primary rate limit on ${options.method} ${options.url}; retry ${retryCount + 1} in ${retryAfter}s`);
-          return retryCount < 2;
+    const log = { debug: () => {}, info: () => {}, error: () => {}, warn: console.warn.bind(console) };
+    if (fetch) {
+      this.kit = new Octokit({ auth: token, request: { fetch }, log });
+    } else {
+      const ThrottledOctokit = Octokit.plugin(throttling, retry);
+      this.kit = new ThrottledOctokit({
+        auth: token,
+        // Retry after the delay GitHub asks for, but only a bounded number of
+        // times so a hard limit surfaces instead of looping forever. Warnings go
+        // to STDERR via octokit.log.warn (console.warn), never to STDOUT.
+        throttle: {
+          onRateLimit: (retryAfter, options, octokit, retryCount) => {
+            octokit.log.warn(`GitHub primary rate limit on ${options.method} ${options.url}; retry ${retryCount + 1} in ${retryAfter}s`);
+            return retryCount < 2;
+          },
+          onSecondaryRateLimit: (retryAfter, options, octokit, retryCount) => {
+            octokit.log.warn(`GitHub secondary rate limit on ${options.method} ${options.url}; retry ${retryCount + 1} in ${retryAfter}s`);
+            return retryCount < 2;
+          },
         },
-        onSecondaryRateLimit: (retryAfter, options, octokit, retryCount) => {
-          octokit.log.warn(`GitHub secondary rate limit on ${options.method} ${options.url}; retry ${retryCount + 1} in ${retryAfter}s`);
-          return retryCount < 2;
-        },
-      },
-      // @octokit/plugin-retry's own default is doNotRetry: [400,401,403,404,410,422,451]. Passing
-      // doNotRetry here REPLACES that list rather than extending it, so every status that must
-      // not retry is spelled out below (the original seven, plus 405 and 409). 409 on
-      // pulls.merge means the pinned `sha` is no longer the PR's head; retrying the identical
-      // `sha` cannot succeed. 405 on pulls.merge means the PR is not mergeable; a retry that
-      // happened to succeed inside the retry window would merge a state the safety gate never
-      // evaluated. Adding 409 here also stops repos.getContent from retrying GitHub's 409 for an
-      // empty repository instead of failing fast.
-      retry: { retries: 2, doNotRetry: [400, 401, 403, 404, 405, 409, 410, 422, 451] },
-    });
+        // @octokit/plugin-retry's own default is doNotRetry: [400,401,403,404,410,422,451]. Passing
+        // doNotRetry here REPLACES that list rather than extending it, so every status that must
+        // not retry is spelled out below (the original seven, plus 405 and 409). 409 on
+        // pulls.merge means the pinned `sha` is no longer the PR's head; retrying the identical
+        // `sha` cannot succeed. 405 on pulls.merge means the PR is not mergeable; a retry that
+        // happened to succeed inside the retry window would merge a state the safety gate never
+        // evaluated. Adding 409 here also stops repos.getContent from retrying GitHub's 409 for an
+        // empty repository instead of failing fast.
+        retry: { retries: 2, doNotRetry: [400, 401, 403, 404, 405, 409, 410, 422, 451] },
+        // @octokit/plugin-request-log narrates every request, and its failure line goes to
+        // `log.error`, which Octokit sends to console.error by default. That is how a bare
+        // `GET /user - 401 with id ABCD:... in 570ms` came to print above the CLI's own friendly
+        // "Could not authenticate to GitHub" message, reading like a crash. Nothing is swallowed by
+        // dropping it: the RequestError itself is still thrown to the caller, which is what decides
+        // what the user sees. `warn` stays on the console because it carries messages of substance
+        // that have no other route out: GitHub's deprecation notices (@octokit/request,
+        // plugin-rest-endpoint-methods) and this constructor's own rate-limit hooks above. In this
+        // dependency tree plugin-request-log is the only caller of log.debug/info/error.
+        log,
+      });
+    }
     this.wireConditionalCache();
   }
 
-  // Wire the ETag conditional-request cache as the outermost `request` hook, so
-  // it sees the final outcome of the retry/throttle stack. Repeated GETs of an
-  // unchanged resource revalidate with `If-None-Match` and come back as 304s,
+  // Wire the ETag conditional-request cache as the outermost `request` hook, so it sees the final
+  // outcome of the retry/throttle stack when those production plugins are present. Repeated GETs
+  // of an unchanged resource revalidate with `If-None-Match` and come back as 304s,
   // which GitHub does not charge against the rate limit. The passed `request`
   // is the composed inner chain (no `.endpoint`), so the fully-resolved URL is
   // taken from the top-level parser to key the cache.
@@ -202,6 +225,10 @@ export class OctokitGateway implements GitHubGateway {
   async getAuthenticatedLogin(): Promise<string> {
     if (!this.cachedLogin) this.cachedLogin = (await this.kit.users.getAuthenticated()).data.login;
     return this.cachedLogin;
+  }
+  async getDefaultBranch(repo: string): Promise<string> {
+    const [owner, name] = split(repo);
+    return (await this.kit.repos.get({ owner, repo: name })).data.default_branch;
   }
   async getPullRequest(repo: string, pr: number): Promise<PullRequest> {
     const [owner, name] = split(repo);
@@ -245,9 +272,9 @@ export class OctokitGateway implements GitHubGateway {
     const items = await this.kit.paginate(this.kit.issues.listLabelsForRepo, { owner, repo: name, per_page: 100 });
     return items.map((l) => ({ name: l.name, color: l.color, description: l.description ?? "" }));
   }
-  async ensureLabel(repo: string, label: LabelSpec): Promise<"created" | "updated" | "unchanged"> {
+  async ensureLabel(repo: string, label: LabelSpec, known?: readonly LabelSpec[]): Promise<"created" | "updated" | "unchanged"> {
     const [owner, name] = split(repo);
-    const existing = (await this.listLabels(repo)).find((l) => l.name === label.name);
+    const existing = (known ?? await this.listLabels(repo)).find((l) => l.name === label.name);
     if (!existing) { await this.kit.issues.createLabel({ owner, repo: name, ...label }); return "created"; }
     if (existing.color !== label.color || existing.description !== label.description) {
       await this.kit.issues.updateLabel({ owner, repo: name, name: label.name, color: label.color, description: label.description });
@@ -326,22 +353,30 @@ export class OctokitGateway implements GitHubGateway {
   }
   async getChecks(repo: string, ref: string): Promise<CheckResult[]> {
     const [owner, name] = split(repo);
-    const [runs, statusResponse] = await Promise.all([
-      // Relies on GitHub's default filter=latest (only the latest run per check name, not every
-      // historical run for this ref). That default is load-bearing for this method's contract:
-      // "current state of each check", not a full history.
-      this.kit.paginate(this.kit.checks.listForRef, { owner, repo: name, ref, per_page: 100 }),
-      // Not run through kit.paginate: the combined-status body carries a top-level `url` key
-      // alongside `total_count`, so octokit.paginate's search-shaped normalization (which
-      // requires `total_count` WITHOUT a sibling `url`, see normalizePaginatedListResponse in
-      // @octokit/plugin-paginate-rest) is skipped for it; a manual link-following loop would be
-      // needed to paginate it. Out of scope for v1: a ref rarely has more than 100 distinct
-      // status contexts.
-      this.kit.repos.getCombinedStatusForRef({ owner, repo: name, ref, per_page: 100 }),
-    ]);
-    const fromRuns: CheckResult[] = runs.map((r) => ({ name: r.name, status: checkRunStatus(r.conclusion) }));
-    const fromStatuses: CheckResult[] = statusResponse.data.statuses.map((s) => ({ name: s.context, status: commitStatusStatus(s.state) }));
-    return [...fromRuns, ...fromStatuses];
+    try {
+      const [runs, statusResponse] = await Promise.all([
+        // Relies on GitHub's default filter=latest (only the latest run per check name, not every
+        // historical run for this ref). That default is load-bearing for this method's contract:
+        // "current state of each check", not a full history.
+        this.kit.paginate(this.kit.checks.listForRef, { owner, repo: name, ref, per_page: 100 }),
+        // Not run through kit.paginate: the combined-status body carries a top-level `url` key
+        // alongside `total_count`, so octokit.paginate's search-shaped normalization (which
+        // requires `total_count` WITHOUT a sibling `url`, see normalizePaginatedListResponse in
+        // @octokit/plugin-paginate-rest) is skipped for it; a manual link-following loop would be
+        // needed to paginate it. Out of scope for v1: a ref rarely has more than 100 distinct
+        // status contexts.
+        this.kit.repos.getCombinedStatusForRef({ owner, repo: name, ref, per_page: 100 }),
+      ]);
+      const fromRuns: CheckResult[] = runs.map((r) => ({ name: r.name, status: checkRunStatus(r.conclusion) }));
+      const fromStatuses: CheckResult[] = statusResponse.data.statuses.map((s) => ({ name: s.context, status: commitStatusStatus(s.state) }));
+      return [...fromRuns, ...fromStatuses];
+    } catch (e: any) {
+      // Checks and commit statuses have separate fine-grained permissions. If either endpoint is
+      // unreadable, return evidence that the rollup must fail closed rather than throwing out of
+      // propose mode or, worse, treating an empty list as green.
+      if (e.status === 403) return [{ name: UNREADABLE_CHECKS, status: "failure" }];
+      throw e;
+    }
   }
   async getBranchProtection(repo: string, branch: string): Promise<BranchProtectionSummary | "none" | "unknown"> {
     const [owner, name] = split(repo);
@@ -391,7 +426,7 @@ export class OctokitGateway implements GitHubGateway {
       throw e;
     }
   }
-  async updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict"> {
+  async updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict" | "forbidden"> {
     const [owner, name] = split(repo);
     try {
       await this.kit.pulls.updateBranch({
@@ -403,6 +438,9 @@ export class OctokitGateway implements GitHubGateway {
       // 422 covers both an actual conflict updating the branch and an expected_head_sha
       // mismatch; GitHub does not distinguish the two with different status codes.
       if (e.status === 422) return "conflict";
+      // A least-privilege token or a fork whose head cannot be modified is a policy outcome for
+      // stabilize, not a transport crash. The operation maps it to a visible blocked result.
+      if (e.status === 403) return "forbidden";
       throw e;
     }
   }

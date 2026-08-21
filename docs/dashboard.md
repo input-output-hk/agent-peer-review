@@ -6,6 +6,28 @@ agent-reviewed pull requests into a local SQLite database, and a `serve` command
 database as a read-only HTTP API and UI on localhost. The dashboard reads the same GitHub state
 everyone else sees (labels, reviews, comments); it does not add any state of its own.
 
+## Getting it
+
+:::note[Not published: build it from this repository]
+The `dashboard` package is marked `private: true` and is not published to any registry, so there is
+nothing to `npm install`. Build it from a checkout, and the `agent-review-dashboard` command below
+resolves through the workspace:
+
+```bash
+git clone https://github.com/input-output-hk/agent-peer-review.git
+cd agent-peer-review
+npm install
+npm run build                 # the root package, which the dashboard depends on
+npm run -w dashboard build    # the dashboard's own CLI and UI bundle
+npx -w dashboard agent-review-dashboard sync --repo owner/name
+npx -w dashboard agent-review-dashboard serve
+```
+
+Every `agent-review-dashboard` invocation in the rest of this page assumes that build. Outside the
+workspace, run it as `node dashboard/dist/cli.js` or put `dashboard/node_modules/.bin` on your
+`PATH`.
+:::
+
 ## Sync
 
 ```bash

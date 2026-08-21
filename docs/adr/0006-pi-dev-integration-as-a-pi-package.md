@@ -18,3 +18,9 @@ pi.dev support ships as its own package, `@input-output-hk/agent-review-pi`, und
 ## Consequences
 
 pi.dev users get first-class tools and a skill with one `pi install`, and `core` never imports anything pi-specific. CI and the publish workflow both gained a dedicated `pi` job or step that runs `npm run -w pi ...` after the root package builds, since the pi package's dependency on the root package must resolve before it can type-check, test, or build.
+
+## Update (2026-08-21)
+
+`registerTools` now registers **eleven** tools, not six. The six named above are unchanged; the five added are the expedition tools, `pr_stabilize`, `pr_expedite`, `pr_request_review`, `pr_approve_dep_upgrade`, and `pr_watch`, which move a pull request forward instead of reviewing one. The decision is unchanged: each one still maps onto a matching `core` operation and wraps its result in the same `{ content: [{ type: "text", text }] }` shape.
+
+This is also where the two surfaces stopped being equivalent. The MCP adapter registers only the six review tools, so the expedition half of `core` is reachable from pi.dev and nowhere else, because the [taskflows](../taskflows.md) that drive it are a pi.dev feature. That asymmetry was not part of the original decision and is tracked as [issue #61](https://github.com/input-output-hk/agent-peer-review/issues/61).

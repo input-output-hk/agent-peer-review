@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   protectionSatisfied, countApprovalsByOthers, hasStandingApproval, sortReviews, standingVerdicts,
-  type ApprovalScope,
+  STANDING_VERDICT_STATES, type ApprovalScope,
 } from "./protection.js";
 import type { BranchProtectionSummary } from "../github.js";
 import type { Review } from "../model.js";
@@ -299,6 +299,10 @@ describe("hasStandingApproval", () => {
 });
 
 describe("standingVerdicts", () => {
+  it("publishes the one verdict-state definition used by every standing-review consumer", () => {
+    expect([...STANDING_VERDICT_STATES]).toEqual(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"]);
+  });
+
   it("keeps each login's latest verdict, with the login as reported and the commit it named", () => {
     const reviews = [rev("Alice", "APPROVED", OLDER), rev("Alice", "CHANGES_REQUESTED", HEAD)];
     expect([...standingVerdicts(reviews).entries()]).toEqual([

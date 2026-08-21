@@ -49,7 +49,7 @@ export async function sync(
         const claimByReviewer = new Map<string, ClaimRow>();
         for (const { marker } of claims) {
           claimByReviewer.set(marker.reviewer, {
-            reviewerLogin: marker.reviewer, machine: marker.machine, sha: marker.sha, claimedAt: marker.claimedAt,
+            reviewerLogin: marker.reviewer, machine: marker.machine ?? null, sha: marker.sha, claimedAt: marker.claimedAt,
             model: marker.model ?? null, agent: marker.agent ?? null, toolVersion: marker.toolVersion ?? null,
           });
         }

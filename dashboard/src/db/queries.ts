@@ -21,7 +21,7 @@ export interface PullDetail {
   pull: PullSummary & { repo: { owner: string; name: string }; headSha: string; baseSha: string };
   reviews: ReviewDetail[];
   notes: Array<{ path: string; line: number | null; body: string; author: string }>;
-  claims: Array<{ reviewer: string; machine: string; sha: string; claimedAt: string; model: string | null; agent: string | null; toolVersion: string | null }>;
+  claims: Array<{ reviewer: string; machine: string | null; sha: string; claimedAt: string; model: string | null; agent: string | null; toolVersion: string | null }>;
   participants: Array<{ login: string; role: string }>;
 }
 export interface SyncRunRow { startedAt: string; finishedAt: string | null; ok: boolean; repos: string[]; counts: Record<string, number> }

@@ -40,6 +40,7 @@ function seedPr(gh: FakeGitHubGateway, headSha: string, files: DetailedPullFile[
   gh.seedPr({ number: PR, title: "docs: fix a typo", author: AUTHOR, headSha, baseSha: "base", url: "u", state: "open", labels: [] });
   gh.setDetailedFiles(REPO, PR, files);
   gh.setChecks(REPO, headSha, [{ name: "build", status: "success" }]);
+  gh.setAlertCount(REPO, 0);
 }
 
 /**

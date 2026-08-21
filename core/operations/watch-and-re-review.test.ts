@@ -99,6 +99,28 @@ describe("watchAndReReview", () => {
     expect((await run(gh)).action).toBe("wait"); // the COMMENT did not replace the verdict
   });
 
+  describe("dismissed verdicts", () => {
+    it("hands a dismissed verdict to a human instead of claiming this agent left no verdict", async () => {
+      const gh = seed("sha0002");
+      await reviewAs(gh, ME, "APPROVE", "sha0001");
+      gh.reviews[0].state = "DISMISSED";
+
+      const result = await run(gh);
+      expect(result).toMatchObject({ action: "hold-for-human", headMoved: true });
+      expect(result.reason).toContain("dismissed");
+      expect(result.reason).not.toContain("no verdict");
+    });
+
+    it("uses the latest verdict, so a later approval replaces a dismissal", async () => {
+      const gh = seed("sha0002");
+      await reviewAs(gh, ME, "APPROVE", "sha0001");
+      gh.reviews[0].state = "DISMISSED";
+      await reviewAs(gh, ME, "APPROVE", "sha0002");
+
+      expect(await run(gh)).toMatchObject({ action: "approved", headMoved: false });
+    });
+  });
+
   it("reports re-review once the author pushes", async () => {
     const gh = seed("sha0002");
     await reviewAs(gh, ME, "REQUEST_CHANGES", "sha0001");
@@ -128,6 +150,14 @@ describe("watchAndReReview", () => {
       const gh = seed("sha0002");
       await reviewAs(gh, ME, "REQUEST_CHANGES", "sha0001");
       expect((await run(gh, { maxReviewRounds: 1 })).action).toBe("hold-for-human");
+    });
+
+    it.each([999, Infinity, Number.NaN])("cannot widen the core API cap with %s", async (maxReviewRounds) => {
+      const gh = seed("sha0004");
+      for (const sha of ["sha0001", "sha0002", "sha0003"]) await reviewAs(gh, ME, "REQUEST_CHANGES", sha);
+      const result = await run(gh, { maxReviewRounds });
+      expect(result.action).toBe("hold-for-human");
+      expect(result.reason).toContain(`3 of ${DEFAULT_MAX_REVIEW_ROUNDS}`);
     });
 
     // Issue #52, livelock 3. Counting every review by this login spent the cap on writes that asked

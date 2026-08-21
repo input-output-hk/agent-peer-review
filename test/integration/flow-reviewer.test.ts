@@ -99,7 +99,7 @@ describe("Flow B (pr-reviewer): claim, complete, watch, re-review", () => {
     expect(task.role).toBe("anchor");
     const claimed = parseMarkers(await gh.listComments(REPO, PR));
     expect(claimed).toHaveLength(1);
-    expect(claimed[0].marker).toMatchObject({ v: 1, reviewer: ME, machine: MACHINE, sha: HEAD1, claimedAt: tick(1) });
+    expect(claimed[0].marker).toEqual({ v: 1, reviewer: ME, sha: HEAD1, claimedAt: tick(1) });
 
     await completeReview({ gh, config: config(dir) }, { repo: REPO, pr: PR, event: "request-changes", summary: "needs work" });
     expect(gh.reviews).toHaveLength(1);

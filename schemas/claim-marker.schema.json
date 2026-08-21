@@ -40,7 +40,6 @@
       "required": [
         "v",
         "reviewer",
-        "machine",
         "sha",
         "claimedAt"
       ],

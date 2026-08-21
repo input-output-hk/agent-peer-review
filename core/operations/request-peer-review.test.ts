@@ -141,6 +141,17 @@ describe("requestPeerReview", () => {
       expect((await gh.getPullRequest(REPO, PR)).labels).toContain(TRIGGER);
     });
 
+    it("does not let a caller widen the shared dependency-bot boundary", async () => {
+      const gh = seed();
+      gh.prs.get(`${REPO}#${PR}`)!.author = "github-actions[bot]";
+      gh.setActorType("github-actions[bot]", "Bot");
+      const result = await requestPeerReview(gh, {
+        repo: REPO, pr: PR, reviewers: ["peer-bot"], botAllowlist: ["github-actions[bot]"],
+      });
+      expect(result.status).toBe("requested");
+      expect((await gh.listRequestedReviewers(REPO, PR)).users).toEqual(["peer-bot"]);
+    });
+
     it("does not refuse a human author whose name merely mentions a bot", async () => {
       const gh = seed();
       gh.prs.get(`${REPO}#${PR}`)!.author = "botanist";

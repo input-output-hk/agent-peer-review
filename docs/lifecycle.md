@@ -11,7 +11,7 @@ sequenceDiagram
   participant R as Requester
   participant GH as GitHub (PR)
   participant A as Reviewer agent
-  R->>GH: add `ai-review` label · request review from yshyn-iohk
+  R->>GH: add <i>ai-review</i> label · request review from yshyn-iohk
   A->>GH: list → label:ai-review review-requested:me
   A->>GH: claim → pin head SHA · post claim marker
   GH-->>A: composed task (PR + pinned SHA + skill contents)

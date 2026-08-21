@@ -3,6 +3,7 @@ import { z } from "zod";
 import { hostname } from "node:os";
 import {
   loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, enrichReview, bootstrap,
+  DEFAULT_CLAIM_TTL_MS,
   type GitHubGateway, type Config,
 } from "../core/index.js";
 
@@ -44,7 +45,7 @@ export function buildServer(deps: { gh?: () => GitHubGateway; config?: () => Con
     { title: "Enrich a review", description: "Post a consolidated second opinion once the primary review exists; else returns waiting/promote.",
       inputSchema: { repo: z.string(), pr: z.number(), verdict: z.enum(["agree", "disagree", "mixed"]), summary: z.string(),
         newFindings: z.array(z.object({ path: z.string(), line: z.number(), body: z.string() })).optional() } },
-    async (a) => ok(await enrichReview({ gh: gh(), config: cfg(), ttlMs: 30 * 60_000, nowMs: Date.now() },
+    async (a) => ok(await enrichReview({ gh: gh(), config: cfg(), ttlMs: DEFAULT_CLAIM_TTL_MS, nowMs: Date.now() },
       { repo: a.repo, pr: a.pr, overallVerdict: a.verdict, summary: a.summary, newFindings: a.newFindings })));
 
   server.registerTool("labels_bootstrap",

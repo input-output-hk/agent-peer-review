@@ -20,7 +20,9 @@ run.
   - To **run** the review workflow: a fine-grained personal access token scoped to the target
     repositories with Pull requests (read and write), Issues (read and write, since claim markers
     are issue comments), Contents (read), and Metadata (read). See
-    [`SECURITY.md`](SECURITY.md#recommended-token-scope) for the full rationale. Prefer a separate
+    [`SECURITY.md`](SECURITY.md#recommended-token-scope) for the full rationale. Expedition
+    taskflows additionally need Checks (read), Commit statuses (read), Administration (read), and
+    Dependabot alerts (read); `autonomy=auto` also needs Contents (write) to merge. Prefer a separate
     least-privilege token for the review flow, distinct from the install token, though the same
     token can carry both sets of scopes if that is simpler.
 
@@ -67,10 +69,13 @@ agent-review init --repo owner/name [--repo owner/other] \
   ```
   See [`docs/mcp.md`](docs/mcp.md) for the six exposed tools.
 - **Skill**: `skills/orchestration.md` (printed as an absolute path by `init`). It drives the
-  claim -> review -> complete loop for Claude Code, Codex, and pi.dev. See
-  [`docs/skills.mdx`](docs/skills.mdx) and [`docs/pi.md`](docs/pi.md) for how each host enables it.
+  claim -> review -> complete loop for Claude Code, Codex, and pi.dev. Every shipped skill lives
+  under [`skills/`](skills/) in this repository and is published at
+  [Skills](https://input-output-hk.github.io/agent-peer-review/skills); see
+  [`docs/pi.md`](docs/pi.md) for how each host enables it.
 - **Expedition taskflows** (pi.dev only, optional): three scheduled sweeps that go looking for work
-  instead of reacting to a request, plus five `pr_*` tools they call. Set up separately, see below.
+  instead of reacting to a request, plus five `pr_*` tools they call. Those five are registered by
+  the pi.dev extension only, not by the MCP server. Set up separately, see below.
 
 ## Expedition taskflows (optional)
 
@@ -81,10 +86,11 @@ agent posts one comment explaining what it would do, and changes nothing else.
 
 1. Install the engine explicitly, it is an optional peer dependency and is not installed for you:
    `pi install npm:pi-taskflow` (needs Node.js 22.19.0 or newer).
-2. Copy a flow into the target repository at `.pi/taskflows/<name>/`. The templates ship inside the
-   installed package under `@input-output-hk/agent-review-pi/taskflows/`. Paths inside each flow
-   definition are repository-relative and already point at `.pi/taskflows/<name>/`, so copy the
-   whole directory and nothing needs editing.
+2. Copy all six assets for a flow into the target repository: the sibling definitions
+   `.pi/taskflows/<name>.json` and `.pi/taskflows/<name>.meta.json`, plus the four files under
+   `.pi/taskflows/<name>/`. The templates ship inside the installed package under
+   `@input-output-hk/agent-review-pi/taskflows/`; copying only the directory leaves the flow
+   unresolvable. Paths inside the definition already point at `.pi/taskflows/<name>/`.
 3. Rename that flow's `config.example.json` to `config.json` and list the repositories to sweep.
 4. Make sure the per-repository setup is in place: labels bootstrapped on every repository swept,
    `reviewers` set in `~/.agent-peer-review/config.json` (`pr_request_review` errors without it),

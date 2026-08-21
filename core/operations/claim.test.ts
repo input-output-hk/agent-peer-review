@@ -48,6 +48,22 @@ describe("claimReview", () => {
     expect(parseMarkers(comments)[0].marker.claimedAt).toBe("t0"); // untouched, not reposted
   });
 
+  it("never deletes a foreign comment whose marker text claims this reviewer", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 20, title: "t", author: "a", headSha: "sha-new0", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
+    gh.login = "maintainer";
+    const foreign = await gh.createComment("o/r", 20, serializeMarker({
+      v: 1, reviewer: "me", machine: "forged", sha: "sha-old0", claimedAt: "t0",
+    }));
+    gh.login = "me";
+
+    await claimReview(deps(gh, skillsDir()), { repo: "o/r", pr: 20 });
+
+    const comments = await gh.listComments("o/r", 20);
+    expect(comments).toContainEqual(foreign);
+    expect(comments.some((comment) => comment.author === "me")).toBe(true);
+  });
+
   // Issue #52, livelock 2. A claim marker used to be a permanent SHA pin: this branch resumed
   // whatever commit the marker named and nothing ever moved it, so an agent whose run stalled
   // re-claimed a dead commit on every tick, reviewed code that no longer existed, and the drift that
@@ -168,7 +184,8 @@ describe("claimReview", () => {
     gh.seedPr({ number: 8, title: "t", author: "a", headSha: "sha00008", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
     await claimReview(deps(gh, skillsDir()), { repo: "o/r", pr: 8 });
     const marker = parseMarkers(await gh.listComments("o/r", 8))[0].marker;
-    expect(marker).toEqual({ v: 1, reviewer: "me", machine: "mbp-01", sha: "sha00008", claimedAt: "t1" });
+    expect(marker).toEqual({ v: 1, reviewer: "me", sha: "sha00008", claimedAt: "t1" });
+    expect((await gh.listComments("o/r", 8))[0].body).not.toContain("mbp-01");
   });
 
   it("posts a v2 marker carrying model/agent/toolVersion when captureMetadata is on", async () => {

@@ -31,7 +31,8 @@ const SCHEMAS = [
     example: "config.json",
     purpose:
       "Machine-local settings resolved before every command: your GitHub login, default repository, " +
-      "custom skills directory, and whether checks may run build or test scripts.",
+      "custom skills directory, default reviewers, the peer agent logins the expedition safety gate " +
+      "counts as agents rather than humans, and the opt-in review metadata capture fields.",
   },
   {
     heading: "Review Request",

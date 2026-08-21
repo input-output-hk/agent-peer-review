@@ -15,7 +15,10 @@ export async function completeReview(
   const login = config.githubLogin ?? (await gh.getAuthenticatedLogin());
   const pr = await gh.getPullRequest(req.repo, req.pr);
 
-  const own = sortMarkers(parseMarkers(await gh.listComments(req.repo, req.pr))).filter((m) => m.marker.reviewer === login);
+  // Authenticate marker ownership with the comment author before any later delete. The marker's
+  // reviewer field is untrusted text and is not authority to delete somebody else's comment.
+  const own = sortMarkers(parseMarkers(await gh.listComments(req.repo, req.pr)))
+    .filter((m) => m.marker.reviewer === login && m.comment.author === login);
   const mine = own[0];
   if (!mine) throw new Error(`No active claim by ${login} on ${req.repo}#${req.pr}; claim first.`);
 

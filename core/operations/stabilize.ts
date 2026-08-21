@@ -56,9 +56,13 @@ export async function stabilize(gh: GitHubGateway, input: { repo: string; pr: nu
       // lands between the read and the write is rejected by GitHub rather than silently rebuilt on
       // top of a commit this operation never saw.
       const result = await gh.updateBranch(repo, pr, mergeability.headSha);
-      return result === "updated"
-        ? { status: "updated", detail: `the branch was behind ${mergeability.baseRef} and has been updated` }
-        : { status: "conflict", detail: `the branch could not be updated from ${mergeability.baseRef}: conflict, or the head moved during the update` };
+      if (result === "updated") {
+        return { status: "updated", detail: `the branch was behind ${mergeability.baseRef} and has been updated` };
+      }
+      if (result === "forbidden") {
+        return { status: "blocked", detail: `the branch is behind ${mergeability.baseRef}, but this token is not allowed to update it` };
+      }
+      return { status: "conflict", detail: `the branch could not be updated from ${mergeability.baseRef}: conflict, or the head moved during the update` };
     }
     case "dirty":
       return { status: "conflict", detail: `the branch has merge conflicts with ${mergeability.baseRef} that only the author can resolve` };

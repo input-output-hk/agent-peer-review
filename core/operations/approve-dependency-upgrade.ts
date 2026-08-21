@@ -2,6 +2,7 @@ import type { GitHubGateway } from "../github.js";
 import type { ChangeClassification } from "../expedition/classify.js";
 import { evaluateGates, DEPS_GATE_POLICY, type GateInput } from "../expedition/gate.js";
 import { classifyDependencyUpgrade } from "../expedition/dep-upgrade.js";
+import { standingVerdicts } from "../expedition/protection.js";
 import { gatherRails, postProposal, resolveActingLogin } from "./expedition-shared.js";
 
 // The bots whose dependency pull requests this operation will look at. An allowlist, not a
@@ -92,6 +93,20 @@ export function isAllowlistedDependencyBot(author: string, allowlist: readonly s
   return allowlist.some((entry) => normalizeBotAuthor(entry) === identity);
 }
 
+/**
+ * Resolve a caller's bot list without ever widening the built-in trust boundary.
+ *
+ * The dependency policy deliberately trusts lockfile contents on authorship, so a tool caller must
+ * not be able to name an arbitrary bot in the same invocation that asks this operation to merge.
+ * An explicit list can therefore only remove identities from DEFAULT_BOT_ALLOWLIST. Returning the
+ * canonical default spelling also deduplicates equivalent `app/x` and `x[bot]` entries.
+ */
+export function resolveDependencyBotAllowlist(requested?: readonly string[]): string[] {
+  if (requested === undefined) return [...DEFAULT_BOT_ALLOWLIST];
+  const allowed = new Set(requested.map(normalizeBotAuthor));
+  return DEFAULT_BOT_ALLOWLIST.filter((entry) => allowed.has(normalizeBotAuthor(entry)));
+}
+
 // At most this many package bumps are spelled out in the approving review body; the rest are
 // counted. The body is read by a human, and a bot upgrade sweeping a whole transitive tree would
 // otherwise bury the verdict under a list nobody reads.
@@ -162,7 +177,8 @@ export interface ApproveDependencyUpgradeInput {
   actingLogin?: string;
   /** ISO timestamp supplied by the caller. This operation reads no clock. */
   now: string;
-  botAllowlist?: string[];
+  /** May only tighten DEFAULT_BOT_ALLOWLIST; additional identities are ignored. */
+  botAllowlist?: readonly string[];
   /** Defaults to "propose". An omitted autonomy is NEVER "auto". */
   autonomy?: "auto" | "propose";
   /**
@@ -221,7 +237,7 @@ export async function approveDependencyUpgrade(
 ): Promise<ApproveDependencyUpgradeResult> {
   const { repo, pr } = input;
   const actingLogin = await resolveActingLogin(gh, input.actingLogin);
-  const allowlist = input.botAllowlist ?? [...DEFAULT_BOT_ALLOWLIST];
+  const allowlist = resolveDependencyBotAllowlist(input.botAllowlist);
 
   const pull = await gh.getPullRequest(repo, pr);
   if (pull.state !== "open") {
@@ -334,8 +350,8 @@ export async function approveDependencyUpgrade(
   // which would otherwise make this operation re-approve the very verdict a human just struck down.
   // So it is a hard stop on the auto path. Head-specific on purpose: once the bot force-pushes, the
   // dismissed verdict was about a different diff.
-  const dismissedAtHead = rails.reviews.some((r) =>
-    r.author.toLowerCase() === actingLogin.toLowerCase() && r.state === "DISMISSED" && r.commitId === headSha);
+  const actorVerdict = standingVerdicts(rails.reviews).get(actingLogin.toLowerCase());
+  const dismissedAtHead = actorVerdict?.state === "DISMISSED" && actorVerdict.commitId === headSha;
 
   const reasons = [
     ...decision.reasons,
@@ -360,7 +376,8 @@ export async function approveDependencyUpgrade(
     // be counted, and it still states no verdict on the diff being merged now, so this stays a
     // separate condition rather than a restatement of the first.
     const alreadyApproved = rails.actorHasStandingApproval
-      && rails.reviews.some((r) => r.author.toLowerCase() === actingLogin.toLowerCase() && r.state === "APPROVED" && r.commitId === headSha);
+      && actorVerdict?.state === "APPROVED"
+      && actorVerdict.commitId === headSha;
     // Tracked rather than assumed: every outcome below has to say whether an approval of ours is
     // standing on the pull request, and the two ways it gets there (submitted now, or submitted on
     // an earlier tick at this same head) must not be reported differently.

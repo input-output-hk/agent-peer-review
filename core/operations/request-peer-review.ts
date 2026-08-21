@@ -1,7 +1,7 @@
 import type { GitHubGateway } from "../github.js";
 import { TRIGGER } from "../labels.js";
 import { createReview } from "./create.js";
-import { DEFAULT_BOT_ALLOWLIST, confirmsBotAuthor, isAllowlistedDependencyBot } from "./approve-dependency-upgrade.js";
+import { confirmsBotAuthor, isAllowlistedDependencyBot, resolveDependencyBotAllowlist } from "./approve-dependency-upgrade.js";
 
 export interface RequestPeerReviewInput {
   repo: string;
@@ -10,12 +10,11 @@ export interface RequestPeerReviewInput {
   reviewers: string[];
   skills?: string[];
   /**
-   * The dependency bots the steward path can take off this flow's hands. Defaults to
-   * DEFAULT_BOT_ALLOWLIST, and it must stay the same list `approveDependencyUpgrade` accepts: this is
-   * the only reason a pull request is refused here, so a name on one list and not the other would
-   * leave a pull request refused by both.
+   * The dependency bots the steward path can take off this flow's hands. The value may only tighten
+   * the built-in allowlist, using the same resolver as `approveDependencyUpgrade`; additional
+   * identities are ignored.
    */
-  botAllowlist?: string[];
+  botAllowlist?: readonly string[];
 }
 
 export interface RequestPeerReviewResult {
@@ -89,7 +88,7 @@ export async function requestPeerReview(gh: GitHubGateway, input: RequestPeerRev
   // one: only a listed name can be refused, so an unlisted author never costs the extra actor-type
   // read at all. The bot confirmation is second because a listed NAME could in principle be taken by
   // a human account, and the allowlist has to mean "that bot" rather than "that string".
-  const allowlist = input.botAllowlist ?? [...DEFAULT_BOT_ALLOWLIST];
+  const allowlist = resolveDependencyBotAllowlist(input.botAllowlist);
   if (isAllowlistedDependencyBot(pull.author, allowlist)
     && confirmsBotAuthor(pull.author, await readActorType(gh, pull.author))) {
     return {
