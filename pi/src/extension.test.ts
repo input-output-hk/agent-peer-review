@@ -375,7 +375,7 @@ describe("pi extension", () => {
       addLabels: async () => { calls.labeled = true; },
       requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, reviewers: ["patextreme"] }) as any });
     const requestReview = pi.tools.find((t) => t.name === "pr_request_review");
     const res = await requestReview.execute("id-r3", { repo: "o/r", pr: 7 }, undefined, undefined, undefined);
     const result = JSON.parse(res.content[0].text);
@@ -394,7 +394,7 @@ describe("pi extension", () => {
       addLabels: async () => { calls.labeled = true; },
       requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, reviewers: ["patextreme"] }) as any });
     const requestReview = pi.tools.find((t) => t.name === "pr_request_review");
     const res = await requestReview.execute("id-r4", { repo: "o/r", pr: 8 }, undefined, undefined, undefined);
     expect(JSON.parse(res.content[0].text).status).toBe("requested");
@@ -404,7 +404,7 @@ describe("pi extension", () => {
   it("pr_approve_dep_upgrade cannot widen the size rail past the deps policy cap", async () => {
     const pi = fakePi();
     const gh = fakeDepUpgradeGh();
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
     const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
     // The diff is 26 lines, so a clamped-down maxLines of 1 is what must bite: if 999999 had been
     // taken at face value the tool could widen its own blast radius in the call that asks to merge.
@@ -415,7 +415,7 @@ describe("pi extension", () => {
 
     const tight = fakeDepUpgradeGh();
     const pi2 = fakePi();
-    registerTools(pi2 as any, { gh: () => tight, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(pi2 as any, { gh: () => tight, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
     const res = await pi2.tools.find((t) => t.name === "pr_approve_dep_upgrade")
       .execute("id-d5", { repo: "o/r", pr: 2, autonomy: "auto", maxLines: 1 }, undefined, undefined, undefined);
     const result = JSON.parse(res.content[0].text);
@@ -426,7 +426,7 @@ describe("pi extension", () => {
 
   it("pr_approve_dep_upgrade advertises the deps policy caps, not the general ones", () => {
     const pi = fakePi();
-    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false }) as any });
+    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null }) as any });
     const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
     const params = approveDep.parameters.properties;
     expect(params.maxLines.description).toContain(String(DEPS_GATE_POLICY.maxLines));
