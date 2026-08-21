@@ -509,7 +509,7 @@ Refusals are scoped the other way on purpose: an approval of an old commit does 
 
 Two limits on this diagram are worth naming, because a reader will otherwise wonder:
 
-- **Rail 6 needs a permission the base recommended token scope does not carry.** The alert read needs Dependabot alerts: read, or `security_events` on a classic token. Without it the read 403s, the count is unreadable, and the rail fails closed on every pull request, which makes `autonomy=auto` inert. `SECURITY.md` and the quick start name the scope, and `init` probes for it and warns. The count is also repository-wide rather than scoped to the change, so one unresolved alert anywhere blocks everything; that half is open as [#54](https://github.com/input-output-hk/agent-peer-review/issues/54).
+- **The expedition gate needs four reads beyond the base review scope.** Checks, Commit statuses, Administration (branch protection), and Dependabot alerts read access are needed in propose mode as well as auto mode. Each fails closed when unreadable; checks/statuses become a synthetic failure rather than throwing. `init` preflights all four against the first repository and warns. Contents write is separate and needed only for the auto path's merge. The alert count is repository-wide rather than scoped to the change, so one unresolved alert anywhere blocks everything; that half is open as [#54](https://github.com/input-output-hk/agent-peer-review/issues/54).
 - **Rail 1 refuses any source or test path forever, in both modes.** That is by design. Nothing in this package can ever merge a change carrying code, which is why the flows escalate to a human on any refusal rather than treating rail 1 as the route out.
 
 ---
@@ -548,7 +548,7 @@ sequenceDiagram
 
 The mechanics behind that, precisely:
 
-- **The claim marker** is a hidden HTML comment, `<!-- agent-review:claim … -->`, carrying the reviewer login, the machine, the pinned SHA, and `claimedAt`. Markers are keyed per login, so claiming never blocks another reviewer.
+- **The claim marker** is a hidden HTML comment, `<!-- agent-review:claim … -->`, carrying the reviewer login, the pinned SHA, and `claimedAt`. With `captureMetadata` on it also carries the reviewing machine and the v2 metadata fields; with capture off the hostname is omitted. Markers are keyed per login, so claiming never blocks another reviewer.
 - **The head-SHA pin, and the re-pin.** `claimReview` reads its own earliest marker first. If that marker already names the head, it resumes on it. If it names an older commit, the claim is **re-pinned** to the current head: every marker of this login's is deleted and one is posted carrying the new SHA, in that order (posting first and failing to delete would leave two markers and re-pin once per tick forever). Only the SHA changes, and `claimedAt` in particular is carried over, so a re-pin cannot reorder the panel and an anchor stays the anchor. With no marker at all, the current head is pinned fresh. Every read and every review from then on is against the pinned SHA.
 - **Roles are derived, never stored.** All markers are sorted by `claimedAt`, ties broken by the lower comment id; the earliest claimant is the **anchor** and everyone else is an **enricher**, who additionally receives the `second-opinion` skill. This is recomputed on every claim, which is how a stalled panel un-sticks itself across ticks.
 - **A second claimant is resolved by that same sort**, not by a lock. Two processes under the *same* login sort by `claimedAt` too, and the later one adopts the winner's pinned SHA; both markers are deleted together at completion.
@@ -591,7 +591,7 @@ flowchart TB
 | labels | `ai-review`, the trigger, plus any skill labels from the fixed skill-name list |
 | requested reviewers | users and teams, GitHub-native. Cleared automatically when a review is submitted |
 | reviews | author, state, `commitId`, `submittedAt`, body. The body may end with the primary marker, and may carry an opt-in metadata footer |
-| claim markers | issue comments holding `agent-review:claim`: reviewer, machine, pinned SHA, `claimedAt`, and on v2 the model, agent, and tool version |
+| claim markers | issue comments holding `agent-review:claim`: reviewer, pinned SHA, `claimedAt`, and with metadata capture on, machine, model, agent, and tool version |
 | action markers | issue comments holding `agent-review:action`: kind, `headSha`, decision, timestamp |
 | native fields | `state`, `draft`, `headSha`, `baseRef`, mergeable state, changed files, checks, branch protection |
 
@@ -614,7 +614,7 @@ flowchart TB
 | `botAuthors` | pr-steward only | passed to `gh --author`. Defaults to `app/dependabot` and `app/renovate` |
 | `reviewers` | pr-requester's example only | documentation. It is never read; the global config is what `pr_request_review` uses |
 
-**Per invocation**, an argument and never stored anywhere: `autonomy` (`propose` by default), `mergeMethod`, `botAllowlist` (`pr_approve_dep_upgrade` only), `maxReviewRounds` (`pr_watch` only), and `maxFiles` / `maxLines`. Both merge-capable tools expose the size caps, and both clamp them to their own policy: `pr_expedite` to `DEFAULT_GATE_POLICY` (10 files, 200 lines) and `pr_approve_dep_upgrade` to `DEPS_GATE_POLICY` (10 files, 4000 lines). The clamp is tighten-only in both, so a caller can never widen its own blast radius in the same call that asks for a merge.
+**Per invocation**, an argument and never stored anywhere: `autonomy` (`propose` by default), `mergeMethod`, `botAllowlist` (`pr_approve_dep_upgrade` only), `maxReviewRounds` (`pr_watch` only), and `maxFiles` / `maxLines`. `botAllowlist` is intersected with `DEFAULT_BOT_ALLOWLIST`, so it can remove a trusted bot but never add one. Both merge-capable tools expose the size caps, and both clamp them to their own policy: `pr_expedite` to `DEFAULT_GATE_POLICY` (10 files, 200 lines) and `pr_approve_dep_upgrade` to `DEPS_GATE_POLICY` (10 files, 4000 lines). Every caller-supplied trust or size input is therefore tighten-only: a model cannot widen its own blast radius in the same call that asks for a merge.
 
 **Derived every tick, and never stored:** the classification and its per-file categories; the changed file and line counts; the checks rollup; `protectionSatisfied` and `approvalsByOthers`; `humanReviewPending` and `humanChangesRequested`, both read from `standingVerdicts`; `headShaGuardPassed`; the anchor-or-enricher role; the gate decision and one reason per failed rail; the dependency shape and semver level; the watch action and its `headMoved`; and the detected languages plus the repository context read at the pinned SHA.
 

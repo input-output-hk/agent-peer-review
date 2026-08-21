@@ -54,6 +54,12 @@ describe("deriveReviewFields", () => {
     expect(d.role).toBe("second-opinion");
     expect(d.verdict).toBeNull();
   });
+
+  it("bounds the attacker-controlled second-opinion label", () => {
+    const tooLong = "x".repeat(201);
+    expect(deriveReviewFields(review({ body: `**Second opinion (${tooLong}):** body` })).verdict).toBeNull();
+    expect(deriveReviewFields(review({ body: "**Second opinion (agree\nforged):** body" })).verdict).toBeNull();
+  });
 });
 
 describe("stripMarkers", () => {

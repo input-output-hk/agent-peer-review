@@ -37,18 +37,24 @@ The review flow needs write access to submit reviews, add labels, and create and
 
 Prefer a separate least-privilege token for the review flow, distinct from any token used to install the package. The token is never logged.
 
-### Additional scope for expedition auto mode
+### Additional scope for expedition taskflows
 
-The scope above is everything the review flow (request, claim, complete, enrich) needs. It is NOT everything the expedition taskflows' `autonomy=auto` path needs: before `pr_expedite` or `pr_approve_dep_upgrade` will ever approve or merge anything, their safety gate reads the target repository's open Dependabot alert count, and that read needs a permission the scope above does not grant:
+The scope above is everything the review flow (request, claim, complete, enrich) needs. The expedition safety gate performs four additional reads in both `propose` and `auto` mode. A fine-grained token also needs:
 
-- Fine-grained token: **Dependabot alerts: read**
-- Classic token: **`security_events`**
+- **Checks: read**
+- **Commit statuses: read**
+- **Administration: read** (to read branch protection)
+- **Dependabot alerts: read**
 
-Without it, the read 403s, the alert count comes back unreadable, and the gate fails closed: `autonomy=auto` proposes forever and never approves or merges anything, on any repository, with no error beyond a phrase inside the pull request's own proposal comments (see issue #54). This permission is needed **only** for the `autonomy=auto` path; it changes nothing about requesting, claiming, or completing a review. `agent-review init` makes a best-effort, read-only probe of this endpoint and prints a warning if it cannot read it; see [Quick start](docs/quick-start.md#configure-optional).
+The first three names and access levels come directly from GitHub's endpoint documentation for [check runs](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference), [combined commit status](https://docs.github.com/en/rest/commits/statuses#get-the-combined-status-for-a-specific-reference), and [branch protection](https://docs.github.com/en/rest/branches/branch-protection#get-branch-protection). On a classic token, `repo` covers those reads; Dependabot alerts additionally needs **`security_events`**.
+
+Without any one of those reads, the affected rail fails closed. Unreadable checks and statuses become a synthetic failing check instead of throwing, unreadable protection becomes `unknown`, and unreadable alerts remain a distinct failure reason. Propose mode can therefore still post a truthful proposal rather than crashing.
+
+`autonomy=auto` additionally needs **Contents: write** to merge a pull request ([GitHub's merge endpoint requirement](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request)). `pr_stabilize` uses the already-listed **Pull requests: write** permission to update a behind branch; a 403 is reported as `blocked`. `agent-review init` makes a best-effort, read-only preflight of the four read permissions and prints a warning when it cannot confirm one. It cannot safely probe Contents write without making a write.
 
 ## Out of scope
 
-- **Public repositories or forks with untrusted external authors.** Claim markers are not cryptographically authenticated: a marker's `reviewer` is trusted by login within the organization boundary, so a determined untrusted commenter could forge one. Hardening for that posture (rejecting markers whose comment author differs from the asserted reviewer, and ignoring markers from users who are not requested reviewers) is possible but not enabled by default.
+- **Public repositories or forks with untrusted external authors.** Claim markers are not cryptographically authenticated for role assignment: a marker's `reviewer` is trusted by login within the organization boundary, so a determined untrusted commenter could forge one and confuse panel ordering. Destructive cleanup is stricter and deletes a marker only when the GitHub comment author agrees with its asserted reviewer. Fully rejecting mismatched markers and ignoring markers from users who are not requested reviewers remains out of scope.
 - **The LLM host's own sandboxing.** This project provides guidance and in-task guards; it cannot enforce permissions inside a host it does not control.
 
 ## Reporting

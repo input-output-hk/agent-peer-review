@@ -14,8 +14,8 @@ export const ConfigSchema = z.object({
   agent: z.string().optional(),
   toolVersion: z.string().optional(),
   // Opt-in switch (default off): gates ALL durable metadata capture (the review-meta footer on
-  // complete/enrich, and the claim marker's model/agent/toolVersion fields). When false, the
-  // workflow behaves exactly as before: v1 claim markers, no footer.
+  // complete/enrich, and the claim marker's machine/model/agent/toolVersion fields). When false,
+  // the workflow writes a privacy-preserving v1 marker and no footer.
   captureMetadata: z.boolean().default(false),
   // Global default reviewers to request when a create call (CLI --reviewers, MCP/pi `reviewers`)
   // does not name any. Each adapter falls back to this list; ReviewRequestSchema.reviewers below
@@ -53,7 +53,9 @@ export type ReviewRequest = z.infer<typeof ReviewRequestSchema>;
 export const ClaimMarkerSchema = z.object({
   v: z.union([z.literal(1), z.literal(2)]),
   reviewer: z.string().min(1),
-  machine: z.string().min(1),
+  // Older markers always carried this. New markers omit it unless captureMetadata is enabled, so
+  // the default cannot publish the reviewing machine's hostname.
+  machine: z.string().min(1).optional(),
   sha: z.string().min(7),
   claimedAt: z.string().min(1),
   // v2 only: written when Config.captureMetadata is true (see core/operations/claim.ts). Absent

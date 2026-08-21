@@ -431,6 +431,7 @@ describe("pi extension", () => {
     const params = approveDep.parameters.properties;
     expect(params.maxLines.description).toContain(String(DEPS_GATE_POLICY.maxLines));
     expect(params.maxFiles.description).toContain(String(DEPS_GATE_POLICY.maxFiles));
+    expect(params.botAllowlist.items.description).toContain("Narrows");
     expect(DEPS_GATE_POLICY.maxLines).toBeGreaterThan(DEFAULT_GATE_POLICY.maxLines);
   });
 

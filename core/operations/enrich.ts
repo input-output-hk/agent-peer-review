@@ -13,7 +13,7 @@ export async function enrichReview(
   const login = config.githubLogin ?? (await gh.getAuthenticatedLogin());
 
   const sorted = sortMarkers(parseMarkers(await gh.listComments(input.repo, input.pr)));
-  const mine = sorted.filter((m) => m.marker.reviewer === login)[0];
+  const mine = sorted.filter((m) => m.marker.reviewer === login && m.comment.author === login)[0];
   if (!mine) throw new Error(`No active claim by ${login} on ${input.repo}#${input.pr}; claim first.`);
 
   // This round's primary is another author's tagged review AT THIS ENRICHER'S pinned commit.
@@ -45,7 +45,7 @@ export async function enrichReview(
     const { url } = await gh.submitReview(input.repo, input.pr, { commitId: primary.commitId, event: "COMMENT", body, comments: enrichment.newFindings });
     // Delete every one of our own markers, not just the one we used: a claim race can leave a
     // duplicate behind, and none of them should survive once we have posted our second opinion.
-    for (const m of sorted.filter((x) => x.marker.reviewer === login)) { try { await gh.deleteComment(input.repo, m.comment.id); } catch {} }
+    for (const m of sorted.filter((x) => x.marker.reviewer === login && x.comment.author === login)) { try { await gh.deleteComment(input.repo, m.comment.id); } catch {} }
     return { status: "enriched", url };
   }
 
@@ -60,7 +60,11 @@ export async function enrichReview(
   // then becomes the anchor and this same rule elects it in turn. In normal operation this keeps
   // the panel to a single primary (completeReview's guard degrades a late second completer to a
   // COMMENT); a truly simultaneous double-complete can still race, as completeReview notes.
-  for (const m of sorted.filter((x) => x.marker.reviewer === anchor!.reviewer)) {
+  // A stale agent's genuine marker may be cleaned up, but a maintainer's comment that merely
+  // asserts that reviewer's login must never be deleted. The GitHub author authenticates the
+  // reviewer field for this destructive step.
+  for (const m of sorted.filter((x) =>
+    x.marker.reviewer === anchor!.reviewer && x.comment.author === anchor!.reviewer)) {
     try { await gh.deleteComment(input.repo, m.comment.id); } catch {}
   }
   return { status: "promote" };

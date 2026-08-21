@@ -143,10 +143,10 @@ program.command("init")
     printLine("");
     printLine(`Skill: ${path.join(skillsRoot(cfg()), "orchestration.md")}`);
     printLine("Enable it in your host (Claude Code, Codex, pi.dev) so the reviewing agent knows the claim -> review -> complete loop.");
-    if (result.securityAlertsWarning) {
+    if (result.expeditionPermissionsWarning) {
       printErrLine("");
       printErrLine("!".repeat(72));
-      printErrLine(`WARNING: ${result.securityAlertsWarning}`);
+      printErrLine(`WARNING: ${result.expeditionPermissionsWarning}`);
       printErrLine("!".repeat(72));
     }
   });

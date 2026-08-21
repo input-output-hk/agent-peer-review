@@ -18,7 +18,9 @@ export function stripMarkers(body: string): string {
   return body.replace(META_BLOCK, "").split(PRIMARY_MARKER).join("").trim();
 }
 
-const SECOND_OPINION_PREFIX = /\*\*Second opinion \(([^)]+)\):/;
+// Bound the attacker-controlled label and stop at a newline. Without the bound, repeated prefixes
+// containing "(" create a fresh scan-to-end start point and make dashboard sync quadratic.
+const SECOND_OPINION_PREFIX = /\*\*Second opinion \(([^)\n]{1,200})\):/;
 
 export interface DerivedReview {
   isPrimary: boolean;

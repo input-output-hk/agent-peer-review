@@ -21,6 +21,8 @@ export interface Mergeability {
   headSha: string;
 }
 export interface CheckResult { name: string; status: "success" | "failure" | "pending" | "neutral" }
+/** Synthetic check returned when either checks/status endpoint cannot be read. */
+export const UNREADABLE_CHECKS = "agent-review: checks or commit statuses unreadable";
 export interface BranchProtectionSummary {
   requiresPullRequestReviews: boolean;
   requiredApprovingReviewCount: number;   // 0 is meaningful: PR required, no approvals needed
@@ -45,6 +47,8 @@ export interface AllowedMergeMethods { merge: boolean; squash: boolean; rebase: 
 
 export interface GitHubGateway {
   getAuthenticatedLogin(): Promise<string>;
+  /** Repository's configured default branch, used by init's read-only permission preflight. */
+  getDefaultBranch(repo: string): Promise<string>;
   getPullRequest(repo: string, pr: number): Promise<PullRequest>;
   listReviewRequests(repo: string, login: string): Promise<PullRequest[]>;
   findAgentPulls(repo: string, login: string): Promise<PullRequest[]>;
@@ -74,7 +78,7 @@ export interface GitHubGateway {
   getChecks(repo: string, ref: string): Promise<CheckResult[]>;
   getBranchProtection(repo: string, branch: string): Promise<BranchProtectionSummary | "none" | "unknown">;
   mergePull(repo: string, pr: number, opts: { sha: string; method?: "merge" | "squash" | "rebase"; commitTitle?: string }): Promise<{ merged: boolean; sha: string | null; message: string; reason: "head-moved" | "not-mergeable" | null }>;
-  updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict">;
+  updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict" | "forbidden">;
   listPullFilesDetailed(repo: string, pr: number): Promise<DetailedPullFile[]>;
   removeLabel(repo: string, pr: number, label: string): Promise<void>;
   listRequestedReviewers(repo: string, pr: number): Promise<{ users: string[]; teams: string[] }>;
@@ -217,6 +221,10 @@ export class OctokitGateway implements GitHubGateway {
     if (!this.cachedLogin) this.cachedLogin = (await this.kit.users.getAuthenticated()).data.login;
     return this.cachedLogin;
   }
+  async getDefaultBranch(repo: string): Promise<string> {
+    const [owner, name] = split(repo);
+    return (await this.kit.repos.get({ owner, repo: name })).data.default_branch;
+  }
   async getPullRequest(repo: string, pr: number): Promise<PullRequest> {
     const [owner, name] = split(repo);
     const { data } = await this.kit.pulls.get({ owner, repo: name, pull_number: pr });
@@ -340,22 +348,30 @@ export class OctokitGateway implements GitHubGateway {
   }
   async getChecks(repo: string, ref: string): Promise<CheckResult[]> {
     const [owner, name] = split(repo);
-    const [runs, statusResponse] = await Promise.all([
-      // Relies on GitHub's default filter=latest (only the latest run per check name, not every
-      // historical run for this ref). That default is load-bearing for this method's contract:
-      // "current state of each check", not a full history.
-      this.kit.paginate(this.kit.checks.listForRef, { owner, repo: name, ref, per_page: 100 }),
-      // Not run through kit.paginate: the combined-status body carries a top-level `url` key
-      // alongside `total_count`, so octokit.paginate's search-shaped normalization (which
-      // requires `total_count` WITHOUT a sibling `url`, see normalizePaginatedListResponse in
-      // @octokit/plugin-paginate-rest) is skipped for it; a manual link-following loop would be
-      // needed to paginate it. Out of scope for v1: a ref rarely has more than 100 distinct
-      // status contexts.
-      this.kit.repos.getCombinedStatusForRef({ owner, repo: name, ref, per_page: 100 }),
-    ]);
-    const fromRuns: CheckResult[] = runs.map((r) => ({ name: r.name, status: checkRunStatus(r.conclusion) }));
-    const fromStatuses: CheckResult[] = statusResponse.data.statuses.map((s) => ({ name: s.context, status: commitStatusStatus(s.state) }));
-    return [...fromRuns, ...fromStatuses];
+    try {
+      const [runs, statusResponse] = await Promise.all([
+        // Relies on GitHub's default filter=latest (only the latest run per check name, not every
+        // historical run for this ref). That default is load-bearing for this method's contract:
+        // "current state of each check", not a full history.
+        this.kit.paginate(this.kit.checks.listForRef, { owner, repo: name, ref, per_page: 100 }),
+        // Not run through kit.paginate: the combined-status body carries a top-level `url` key
+        // alongside `total_count`, so octokit.paginate's search-shaped normalization (which
+        // requires `total_count` WITHOUT a sibling `url`, see normalizePaginatedListResponse in
+        // @octokit/plugin-paginate-rest) is skipped for it; a manual link-following loop would be
+        // needed to paginate it. Out of scope for v1: a ref rarely has more than 100 distinct
+        // status contexts.
+        this.kit.repos.getCombinedStatusForRef({ owner, repo: name, ref, per_page: 100 }),
+      ]);
+      const fromRuns: CheckResult[] = runs.map((r) => ({ name: r.name, status: checkRunStatus(r.conclusion) }));
+      const fromStatuses: CheckResult[] = statusResponse.data.statuses.map((s) => ({ name: s.context, status: commitStatusStatus(s.state) }));
+      return [...fromRuns, ...fromStatuses];
+    } catch (e: any) {
+      // Checks and commit statuses have separate fine-grained permissions. If either endpoint is
+      // unreadable, return evidence that the rollup must fail closed rather than throwing out of
+      // propose mode or, worse, treating an empty list as green.
+      if (e.status === 403) return [{ name: UNREADABLE_CHECKS, status: "failure" }];
+      throw e;
+    }
   }
   async getBranchProtection(repo: string, branch: string): Promise<BranchProtectionSummary | "none" | "unknown"> {
     const [owner, name] = split(repo);
@@ -405,7 +421,7 @@ export class OctokitGateway implements GitHubGateway {
       throw e;
     }
   }
-  async updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict"> {
+  async updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict" | "forbidden"> {
     const [owner, name] = split(repo);
     try {
       await this.kit.pulls.updateBranch({
@@ -417,6 +433,9 @@ export class OctokitGateway implements GitHubGateway {
       // 422 covers both an actual conflict updating the branch and an expected_head_sha
       // mismatch; GitHub does not distinguish the two with different status codes.
       if (e.status === 422) return "conflict";
+      // A least-privilege token or a fork whose head cannot be modified is a policy outcome for
+      // stabilize, not a transport crash. The operation maps it to a visible blocked result.
+      if (e.status === 403) return "forbidden";
       throw e;
     }
   }

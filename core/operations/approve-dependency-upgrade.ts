@@ -92,6 +92,20 @@ export function isAllowlistedDependencyBot(author: string, allowlist: readonly s
   return allowlist.some((entry) => normalizeBotAuthor(entry) === identity);
 }
 
+/**
+ * Resolve a caller's bot list without ever widening the built-in trust boundary.
+ *
+ * The dependency policy deliberately trusts lockfile contents on authorship, so a tool caller must
+ * not be able to name an arbitrary bot in the same invocation that asks this operation to merge.
+ * An explicit list can therefore only remove identities from DEFAULT_BOT_ALLOWLIST. Returning the
+ * canonical default spelling also deduplicates equivalent `app/x` and `x[bot]` entries.
+ */
+export function resolveDependencyBotAllowlist(requested?: readonly string[]): string[] {
+  if (requested === undefined) return [...DEFAULT_BOT_ALLOWLIST];
+  const allowed = new Set(requested.map(normalizeBotAuthor));
+  return DEFAULT_BOT_ALLOWLIST.filter((entry) => allowed.has(normalizeBotAuthor(entry)));
+}
+
 // At most this many package bumps are spelled out in the approving review body; the rest are
 // counted. The body is read by a human, and a bot upgrade sweeping a whole transitive tree would
 // otherwise bury the verdict under a list nobody reads.
@@ -162,7 +176,8 @@ export interface ApproveDependencyUpgradeInput {
   actingLogin?: string;
   /** ISO timestamp supplied by the caller. This operation reads no clock. */
   now: string;
-  botAllowlist?: string[];
+  /** May only tighten DEFAULT_BOT_ALLOWLIST; additional identities are ignored. */
+  botAllowlist?: readonly string[];
   /** Defaults to "propose". An omitted autonomy is NEVER "auto". */
   autonomy?: "auto" | "propose";
   /**
@@ -221,7 +236,7 @@ export async function approveDependencyUpgrade(
 ): Promise<ApproveDependencyUpgradeResult> {
   const { repo, pr } = input;
   const actingLogin = await resolveActingLogin(gh, input.actingLogin);
-  const allowlist = input.botAllowlist ?? [...DEFAULT_BOT_ALLOWLIST];
+  const allowlist = resolveDependencyBotAllowlist(input.botAllowlist);
 
   const pull = await gh.getPullRequest(repo, pr);
   if (pull.state !== "open") {

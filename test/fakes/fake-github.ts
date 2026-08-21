@@ -31,7 +31,7 @@ export class FakeGitHubGateway implements GitHubGateway {
   requestedReviewers = new Map<string, { users: string[]; teams: string[] }>();
   actorTypes = new Map<string, "User" | "Bot" | "Organization" | "unknown">();
   alertCount = new Map<string, number | null>();
-  updateBranchResult: "updated" | "conflict" = "updated";
+  updateBranchResult: "updated" | "conflict" | "forbidden" = "updated";
   merges: Array<{ repo: string; pr: number; sha: string; method: "merge" | "squash" | "rebase"; commitTitle?: string }> = [];
   updateBranchCalls: Array<{ repo: string; pr: number; expectedHeadSha?: string; previousHeadSha?: string }> = [];
   removedLabels: Array<{ repo: string; pr: number; label: string }> = [];
@@ -61,9 +61,10 @@ export class FakeGitHubGateway implements GitHubGateway {
   setRequestedReviewers(repo: string, pr: number, r: { users: string[]; teams: string[] }) { this.requestedReviewers.set(this.key(repo, pr), r); }
   setActorType(login: string, type: "User" | "Bot" | "Organization" | "unknown") { this.actorTypes.set(login, type); }
   setAlertCount(repo: string, count: number | null) { this.alertCount.set(repo, count); }
-  setUpdateBranchResult(result: "updated" | "conflict") { this.updateBranchResult = result; }
+  setUpdateBranchResult(result: "updated" | "conflict" | "forbidden") { this.updateBranchResult = result; }
 
   async getAuthenticatedLogin(): Promise<string> { return this.login; }
+  async getDefaultBranch(): Promise<string> { return "main"; }
   async getPullRequest(repo: string, pr: number): Promise<PullRequest> {
     const found = this.prs.get(this.key(repo, pr));
     if (!found) throw new Error(`no PR ${repo}#${pr}`);
@@ -203,7 +204,7 @@ export class FakeGitHubGateway implements GitHubGateway {
     found.mergedAt = FAKE_MERGED_AT;
     return { merged: true, sha: mergeSha, message: "merged", reason: null };
   }
-  async updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict"> {
+  async updateBranch(repo: string, pr: number, expectedHeadSha?: string): Promise<"updated" | "conflict" | "forbidden"> {
     const found = this.prs.get(this.key(repo, pr));
     this.updateBranchCalls.push({ repo, pr, expectedHeadSha, previousHeadSha: found?.headSha });
     if (this.updateBranchResult === "updated" && found) {

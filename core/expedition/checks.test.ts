@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { summarizeChecks } from "./checks.js";
-import type { CheckResult } from "../github.js";
+import { UNREADABLE_CHECKS, type CheckResult } from "../github.js";
 
 const check = (name: string, status: CheckResult["status"]): CheckResult => ({ name, status });
 
@@ -59,6 +59,11 @@ describe("summarizeChecks", () => {
 
     it("a required context that is neutral counts as satisfied", () => {
       expect(summarizeChecks([check("build", "neutral")], ["build"])).toBe("green");
+    });
+
+    it("fails closed on an unreadable-checks sentinel even when it is not a required context", () => {
+      expect(summarizeChecks([check("build", "success"), check(UNREADABLE_CHECKS, "failure")], ["build"]))
+        .toBe("failing");
     });
   });
 });

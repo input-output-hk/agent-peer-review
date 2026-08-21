@@ -72,7 +72,7 @@ agent-review init --repo input-output-hk/some-repo --reviewer patextreme --known
 
 On a token or authentication failure, `init` prints a friendly message ("Could not authenticate to GitHub. Set `GITHUB_TOKEN` or run `gh auth login`.") and exits with a non-zero status instead of a raw stack trace.
 
-`init` also makes a best-effort, read-only probe of the Dependabot alerts endpoint against the first `--repo`, and prints a warning to stderr if the token cannot read it; see [Recommended token scope](https://github.com/input-output-hk/agent-peer-review/blob/main/SECURITY.md#recommended-token-scope) in `SECURITY.md`. The probe never fails `init` itself, and the permission it checks for is unrelated to requesting, claiming, or completing a review.
+`init` also makes a best-effort, read-only preflight against the first `--repo` for the expedition gate's checks, commit-status, branch-protection, and Dependabot-alert reads, and prints a warning to stderr if the token cannot read one; see [Recommended token scope](https://github.com/input-output-hk/agent-peer-review/blob/main/SECURITY.md#recommended-token-scope) in `SECURITY.md`. The preflight never fails `init` itself, and those permissions are unrelated to requesting, claiming, or completing a review. Contents write, needed only for an actual merge, cannot be probed safely without making a write.
 
 ## `request`
 

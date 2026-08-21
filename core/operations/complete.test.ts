@@ -28,6 +28,21 @@ describe("completeReview", () => {
     await expect(completeReview({ gh, config: cfg }, { repo: "o/r", pr: 10, event: "comment", summary: "x" })).rejects.toThrow(/claim/i);
   });
 
+  it("deletes only an authenticated own marker, never a foreign forged marker", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 17, title: "t", author: "a", headSha: "sha0017", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
+    gh.login = "maintainer";
+    const foreign = await gh.createComment("o/r", 17, serializeMarker({
+      v: 1, reviewer: "me", machine: "forged", sha: "sha0017", claimedAt: "t0",
+    }));
+    gh.login = "me";
+    await gh.createComment("o/r", 17, serializeMarker({ v: 1, reviewer: "me", sha: "sha0017", claimedAt: "t1" }));
+
+    await completeReview({ gh, config: cfg }, { repo: "o/r", pr: 17, event: "approve", summary: "lgtm" });
+
+    expect(await gh.listComments("o/r", 17)).toEqual([foreign]);
+  });
+
   it("passes inline comments through to the submitted review", async () => {
     const gh = new FakeGitHubGateway();
     gh.seedPr({ number: 11, title: "t", author: "a", headSha: "pinnedsha", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });

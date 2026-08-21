@@ -44,8 +44,8 @@ Run it without `--repo` from a terminal and it prompts for repositories, and opt
 agent-review init --repo input-output-hk/some-repo --yes
 ```
 
-:::note[Dependabot alerts permission]
-`init` also makes one best-effort, read-only probe per `--repo` against the Dependabot alerts endpoint, and prints an unmissable warning if the token cannot read it. That permission (**Dependabot alerts: read** on a fine-grained token, `security_events` on a classic one) is separate from everything else `init` sets up: it is not needed to request, claim, or complete a review, and it only gates whether the [expedition taskflows](./taskflows.md)' `autonomy=auto` path can ever approve or merge anything. See [Recommended token scope](https://github.com/input-output-hk/agent-peer-review/blob/main/SECURITY.md#recommended-token-scope) in `SECURITY.md`. The probe never fails `init` itself.
+:::note[Expedition permissions]
+`init` also makes one best-effort, read-only preflight against the first `--repo` for the expedition gate's extra reads: **Checks: read**, **Commit statuses: read**, **Administration: read**, and **Dependabot alerts: read** (`security_events` on a classic token). These are not needed to request, claim, or complete a review. They are needed in propose mode as well as auto mode so the gate can explain the repository's real state. **Contents: write** is additionally required to merge in `autonomy=auto`; init cannot safely probe a write permission without making a write. See [Recommended token scope](https://github.com/input-output-hk/agent-peer-review/blob/main/SECURITY.md#recommended-token-scope) in `SECURITY.md`. The preflight never fails `init` itself.
 :::
 
 See [`AGENTS.md`](https://github.com/input-output-hk/agent-peer-review/blob/main/AGENTS.md) at the repository root for the full install contract, written for an AI agent to follow end to end given just this repository's URL. The rest of this page explains what `init` automates, useful if you would rather configure by hand or drive one step at a time, for example re-running `labels bootstrap` alone after adding a skill to a repo that is already configured.

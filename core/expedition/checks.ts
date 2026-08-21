@@ -6,7 +6,7 @@
 // "pending", which the gate treats as a hard stop, so a check that is merely slow can never be
 // mistaken for a check that passed.
 
-import type { CheckResult } from "../github.js";
+import { UNREADABLE_CHECKS, type CheckResult } from "../github.js";
 
 export type ChecksSummary = "green" | "pending" | "failing";
 
@@ -28,6 +28,9 @@ export type ChecksSummary = "green" | "pending" | "failing";
  * treatment of a skipped required check as satisfied.
  */
 export function summarizeChecks(checks: CheckResult[], requiredContexts?: string[]): ChecksSummary {
+  // The sentinel describes the read itself, not an optional CI job. It must fail even when branch
+  // protection names a required subset that naturally does not include the synthetic name.
+  if (checks.some((check) => check.name === UNREADABLE_CHECKS)) return "failing";
   const judged: CheckResult["status"][] = [];
   if (requiredContexts && requiredContexts.length > 0) {
     for (const context of requiredContexts) {

@@ -9,6 +9,13 @@ describe("claim marker", () => {
     expect(parsed).toHaveLength(1);
     expect(parsed[0].marker).toEqual(marker);
   });
+  it("round-trips a privacy-preserving marker with no machine name", () => {
+    const privateMarker = { v: 1 as const, reviewer: "me", sha: "abc1234", claimedAt: "t" };
+    const body = serializeMarker(privateMarker);
+    expect(body).not.toContain("undefined");
+    expect(body).toContain("review agent at t");
+    expect(parseMarkers([{ id: 2, body, author: "me" }])[0].marker).toEqual(privateMarker);
+  });
   it("ignores comments without a valid marker", () => {
     expect(parseMarkers([{ id: 2, body: "just a comment", author: "x" }])).toHaveLength(0);
     expect(parseMarkers([{ id: 3, body: "<!-- agent-review:claim {not json} -->", author: "x" }])).toHaveLength(0);

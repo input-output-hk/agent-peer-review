@@ -5,6 +5,7 @@ import path from "node:path";
 import { FakeGitHubGateway } from "./fakes/fake-github.js";
 import { TRIGGER, SKILL_NAMES } from "../core/labels.js";
 import { loadConfig } from "../core/config.js";
+import { UNREADABLE_CHECKS } from "../core/github.js";
 import { runInit, promptForInit, describeInitFailure, BootstrapFailure } from "../cli/init.js";
 
 const makeHome = (): string => mkdtempSync(path.join(tmpdir(), "agent-home-"));
@@ -209,15 +210,15 @@ describe("runInit", () => {
     expect(deps.reads.get(configPath)).toBe("{"); // untouched
   });
 
-  describe("security alerts probe (issue #54)", () => {
+  describe("expedition permission preflight (issues #54 and #70)", () => {
     it("warns when the gateway cannot read Dependabot alerts (its null sentinel)", async () => {
       const gateway = new FakeGitHubGateway();
       gateway.setAlertCount("o/r", null); // mirrors a 403/404 from GitHub: no access
       const deps = makeDeps(gateway);
       const result = await runInit({ repos: ["o/r"] }, deps);
-      expect(result.securityAlertsWarning).toBeDefined();
-      expect(result.securityAlertsWarning).toContain("Dependabot alerts");
-      expect(result.securityAlertsWarning).toContain("autonomy=auto");
+      expect(result.expeditionPermissionsWarning).toBeDefined();
+      expect(result.expeditionPermissionsWarning).toContain("Dependabot alerts");
+      expect(result.expeditionPermissionsWarning).toContain("autonomy=auto");
     });
 
     it("does not warn when the gateway can read Dependabot alerts, even with alerts open", async () => {
@@ -225,13 +226,13 @@ describe("runInit", () => {
       gateway.setAlertCount("o/r", 3);
       const deps = makeDeps(gateway);
       const result = await runInit({ repos: ["o/r"] }, deps);
-      expect(result.securityAlertsWarning).toBeUndefined();
+      expect(result.expeditionPermissionsWarning).toBeUndefined();
     });
 
     it("does not warn by default (FakeGitHubGateway's unset alert count reads as accessible)", async () => {
       const deps = makeDeps();
       const result = await runInit({ repos: ["o/r"] }, deps);
-      expect(result.securityAlertsWarning).toBeUndefined();
+      expect(result.expeditionPermissionsWarning).toBeUndefined();
     });
 
     it("is best-effort: a thrown error from the probe still warns but never fails init", async () => {
@@ -239,7 +240,7 @@ describe("runInit", () => {
       gateway.listOpenSecurityAlertCount = () => Promise.reject(new Error("network blip"));
       const deps = makeDeps(gateway);
       const result = await runInit({ repos: ["o/r"] }, deps); // must not reject
-      expect(result.securityAlertsWarning).toBeDefined();
+      expect(result.expeditionPermissionsWarning).toBeDefined();
       expect(result.configPath).toBeDefined(); // the rest of init still completed
     });
 
@@ -249,7 +250,22 @@ describe("runInit", () => {
       gateway.setAlertCount("o/r2", null); // would warn if this one were checked instead
       const deps = makeDeps(gateway);
       const result = await runInit({ repos: ["o/r1", "o/r2"] }, deps);
-      expect(result.securityAlertsWarning).toBeUndefined();
+      expect(result.expeditionPermissionsWarning).toBeUndefined();
+    });
+
+    it("warns when checks or commit statuses cannot be read", async () => {
+      const gateway = new FakeGitHubGateway();
+      gateway.getChecks = async () => [{ name: UNREADABLE_CHECKS, status: "failure" }];
+      const result = await runInit({ repos: ["o/r"] }, makeDeps(gateway));
+      expect(result.expeditionPermissionsWarning).toContain("Checks: read");
+      expect(result.expeditionPermissionsWarning).toContain("Commit statuses: read");
+    });
+
+    it("warns when branch protection cannot be read", async () => {
+      const gateway = new FakeGitHubGateway();
+      gateway.setBranchProtection("o/r", "main", "unknown");
+      const result = await runInit({ repos: ["o/r"] }, makeDeps(gateway));
+      expect(result.expeditionPermissionsWarning).toContain("Administration: read");
     });
   });
 

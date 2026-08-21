@@ -3,16 +3,16 @@
 `captureMetadata` is an opt-in config switch, off by default, that makes the review workflow write
 a durable, machine-readable record of who and what produced each review: model, agent, tool
 version, verdict, role, machine, claim time, and whether the review posted after the pull request
-had already moved on (drift). With it off, the workflow behaves exactly as it did before this
-field existed.
+had already moved on (drift). With it off, none of that metadata, including the machine hostname,
+is persisted.
 
 ## What it is
 
 Turning `captureMetadata` on changes two things:
 
 1. The claim-marker comment `review.claim` posts upgrades from v1 to v2, gaining three optional
-   fields, `model`, `agent`, and `toolVersion`, alongside the existing `reviewer`, `machine`,
-   `sha`, and `claimedAt`.
+   fields, `model`, `agent`, and `toolVersion`, and includes the reviewing machine alongside
+   `reviewer`, `sha`, and `claimedAt`. The v1 marker written while capture is off omits `machine`.
 2. `review.complete` and `review.enrich` append a hidden footer to the review body:
 
    ```html
@@ -90,8 +90,8 @@ flight. See [Quick start: Configure](./quick-start.md#configure-optional).
 
 :::caution
 The footer and the v2 claim marker are written straight into the review body and comment text,
-both of which are **public** on a public repository. Enabling `captureMetadata` makes the model,
-agent, and machine name you configure part of the pull request's permanent, public record, not
+both of which are **public** on a public repository. Enabling `captureMetadata` makes the model and
+agent values you configure, plus the reviewing machine's hostname, part of the pull request's permanent, public record, not
 just the value briefly visible on an active claim marker. Enable it only where that is acceptable,
 and avoid putting anything more identifying than you intend into `model`, `agent`, or a machine's
 hostname.

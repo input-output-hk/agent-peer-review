@@ -85,7 +85,7 @@ The flows drive this package's tools, so a repository needs the same setup the r
 
    `captureMetadata` is optional and off by default. Turn it on if you want the durable footer that records which model and agent reviewed, which is also what gives the [dashboard](./dashboard.md) something better than "unknown" to attribute a review to. It writes that metadata into the public review body, so enable it only where that is acceptable.
 
-4. **Authenticate the GitHub CLI** (`gh auth login`) or export `GITHUB_TOKEN`. The discover scripts shell out to `gh`, and the tools need a token with read and write access to pull requests and issues on every repository you sweep.
+4. **Authenticate the GitHub CLI** (`gh auth login`) or export `GITHUB_TOKEN`. The discover scripts shell out to `gh`. Beyond the review flow's pull-request and issue access, the expedition gate needs Checks, Commit statuses, Administration, and Dependabot alerts read access on every repository swept. Auto-merge also needs Contents write. See [`SECURITY.md`](https://github.com/input-output-hk/agent-peer-review/blob/main/SECURITY.md#additional-scope-for-expedition-taskflows) for the exact fine-grained and classic-token scopes.
 
 A quick way to check the discovery half before involving a model at all: run a flow's discover script directly. It spends no tokens, prints its candidate count to stderr, and emits the candidate array on stdout.
 

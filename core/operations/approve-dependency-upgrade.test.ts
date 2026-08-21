@@ -192,12 +192,17 @@ describe("approveDependencyUpgrade", () => {
       expect(gh.reviews).toEqual([]);
     });
 
-    it("honors a caller-supplied allowlist", async () => {
+    it("lets a caller tighten the built-in allowlist but never add a new trusted bot", async () => {
       const gh = seedBotBump();
-      gh.prs.get(`${REPO}#${PR}`)!.author = "my-bot[bot]";
-      gh.setActorType("my-bot[bot]", "Bot");
-      expect((await run(gh, { botAllowlist: ["my-bot[bot]"] })).action).toBe("proposed");
-      expect((await run(gh, { botAllowlist: ["other[bot]"] })).action).toBe("not-eligible");
+      expect((await run(gh, { botAllowlist: ["app/dependabot"] })).action).toBe("proposed");
+      expect((await run(gh, { botAllowlist: ["renovate[bot]"] })).action).toBe("not-eligible");
+
+      gh.prs.get(`${REPO}#${PR}`)!.author = "totally-unrelated[bot]";
+      gh.setActorType("totally-unrelated[bot]", "Bot");
+      const widened = await run(gh, { autonomy: "auto", botAllowlist: ["totally-unrelated[bot]"] });
+      expect(widened.action).toBe("not-eligible");
+      expect(gh.reviews).toEqual([]);
+      expect(gh.merges).toEqual([]);
     });
 
     it("refuses a closed pull request", async () => {

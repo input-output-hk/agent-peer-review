@@ -18,7 +18,8 @@ export function isPrimaryReview(body: string): boolean {
 }
 
 export function serializeMarker(m: ClaimMarker): string {
-  const human = `Claimed by ${m.reviewer}'s review agent (${m.machine}) at ${m.claimedAt}, pinned to ${m.sha}.`;
+  const machine = m.machine ? ` (${m.machine})` : "";
+  const human = `Claimed by ${m.reviewer}'s review agent${machine} at ${m.claimedAt}, pinned to ${m.sha}.`;
   return `${human}\n<!-- agent-review:claim ${JSON.stringify(m)} -->`;
 }
 

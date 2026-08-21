@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { OctokitGateway } from "./github.js";
+import { OctokitGateway, UNREADABLE_CHECKS } from "./github.js";
 import type { LabelSpec } from "./model.js";
 
 describe("OctokitGateway construction", () => {
@@ -294,6 +294,23 @@ describe("OctokitGateway.getChecks", () => {
       { name: "status-error", status: "failure" },
     ]);
   });
+
+  it("maps a 403 from either checks endpoint to a fail-closed sentinel", async () => {
+    const fetch = (async () => new Response(JSON.stringify({ message: "Resource not accessible" }), {
+      status: 403, headers: { "content-type": "application/json; charset=utf-8" },
+    })) as typeof globalThis.fetch;
+    const gw = new OctokitGateway("fake-token", fetch);
+    expect(await gw.getChecks("o/r", "deadbeef")).toEqual([
+      { name: UNREADABLE_CHECKS, status: "failure" },
+    ]);
+  });
+
+  it("still propagates non-permission failures", async () => {
+    const fetch = (async () => new Response(JSON.stringify({ message: "server error" }), {
+      status: 500, headers: { "content-type": "application/json; charset=utf-8" },
+    })) as typeof globalThis.fetch;
+    await expect(new OctokitGateway("fake-token", fetch).getChecks("o/r", "deadbeef")).rejects.toThrow();
+  });
 });
 
 // A fake fetch for a two-page checks.listForRef result (check_runs, not items), each page with its
@@ -526,6 +543,12 @@ describe("OctokitGateway.updateBranch", () => {
     const { fetch } = fakeUpdateBranchFetch({ 3: { status: 422, body: { message: "mismatch" } } });
     const gw = new OctokitGateway("fake-token", fetch);
     expect(await gw.updateBranch("o/r", 3, "stalesha")).toBe("conflict");
+  });
+
+  it('maps 403 to "forbidden" instead of throwing', async () => {
+    const { fetch } = fakeUpdateBranchFetch({ 4: { status: 403, body: { message: "Resource not accessible" } } });
+    const gw = new OctokitGateway("fake-token", fetch);
+    expect(await gw.updateBranch("o/r", 4, "headsha")).toBe("forbidden");
   });
 });
 

@@ -37,6 +37,15 @@ describe("stabilize", () => {
     expect((await gh.getPullRequest(REPO, 1)).headSha).toBe("sha0001"); // unchanged
   });
 
+  it("reports blocked instead of throwing when this token cannot update a behind branch", async () => {
+    const gh = seed("behind");
+    gh.setUpdateBranchResult("forbidden");
+    const result = await stabilize(gh, { repo: REPO, pr: 1 });
+    expect(result.status).toBe("blocked");
+    expect(result.detail).toContain("not allowed");
+    expect((await gh.getPullRequest(REPO, 1)).headSha).toBe("sha0001");
+  });
+
   it("reports a conflict for a dirty branch without attempting an update", async () => {
     const gh = seed("dirty");
     const result = await stabilize(gh, { repo: REPO, pr: 1 });

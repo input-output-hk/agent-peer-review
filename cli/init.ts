@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { GitHubGateway } from "../core/github.js";
+import { UNREADABLE_CHECKS, type GitHubGateway } from "../core/github.js";
 import { bootstrap } from "../core/index.js";
 
 export interface InitInput {
@@ -33,9 +33,9 @@ export interface InitResult {
   defaultRepo?: string;
   reviewers: string[];
   knownAgentLogins: string[];
-  // Set when the best-effort Dependabot alerts probe below could not confirm the token can read
-  // that endpoint. Never thrown: a probe failure must not fail init itself, only warn about it.
-  securityAlertsWarning?: string;
+  // Set when the best-effort expedition permission preflight below cannot confirm all read rails.
+  // Never thrown: a probe failure must not fail init itself, only warn about it.
+  expeditionPermissionsWarning?: string;
 }
 
 const REPO_SHAPE = /^[^\s/]+\/[^\s/]+$/;
@@ -120,7 +120,7 @@ export async function runInit(input: InitInput, deps: InitDeps): Promise<InitRes
     bootstrapped.push({ repo, created: [...profile.created, ...profile.updated], unchanged: profile.unchanged });
   }
 
-  const securityAlertsWarning = await probeSecurityAlertsAccess(deps.gateway, input.repos);
+  const expeditionPermissionsWarning = await probeExpeditionPermissions(deps.gateway, input.repos);
 
   return {
     configPath,
@@ -133,7 +133,7 @@ export async function runInit(input: InitInput, deps: InitDeps): Promise<InitRes
     defaultRepo: typeof config.defaultRepo === "string" ? config.defaultRepo : undefined,
     reviewers: stringList(config.reviewers),
     knownAgentLogins: stringList(config.knownAgentLogins),
-    securityAlertsWarning,
+    expeditionPermissionsWarning,
   };
 }
 
@@ -244,32 +244,55 @@ export async function promptForInit(ask: (question: string) => Promise<string>):
   };
 }
 
-// Best-effort, read-only check that this token can read the Dependabot alerts endpoint: the
-// permission the expedition auto paths (pr_expedite / pr_approve_dep_upgrade with
-// autonomy: "auto") need before their security-alert rail can ever pass, on a fine-grained token
-// "Dependabot alerts: read", on a classic one "security_events" (see SECURITY.md and issue #54).
-// Neither permission is needed to request, claim, or complete a review.
+// Best-effort, read-only preflight for the four extra reads the expedition gate performs. Checks,
+// commit statuses, and branch protection are needed in propose mode too; Dependabot alerts is a
+// fail-closed rail in both modes. Contents:write is required only for a real merge and cannot be
+// tested without making a write, so it is documented rather than probed here.
 //
-// Checked against the first repo only: the permission itself is a property of the token, not of
-// any one repository, so one sample is enough to tell whether the token can reach this endpoint at
-// all. Never allowed to fail init: any thrown error is treated exactly like the gateway's own
-// "cannot tell" sentinel (null) rather than propagating, since this is advisory, not a
-// precondition for the rest of setup.
-async function probeSecurityAlertsAccess(gateway: GitHubGateway, repos: string[]): Promise<string | undefined> {
+// Checked against the first repo only. Never allowed to fail init: each thrown error becomes an
+// unreadable permission rather than propagating, since this is advisory, not a setup precondition.
+async function probeExpeditionPermissions(gateway: GitHubGateway, repos: string[]): Promise<string | undefined> {
   if (repos.length === 0) return undefined;
   const repo = repos[0];
-  let alertCount: number | null;
+  const unreadable: string[] = [];
+  let branch: string | undefined;
   try {
-    alertCount = await gateway.listOpenSecurityAlertCount(repo);
+    branch = await gateway.getDefaultBranch(repo);
   } catch {
-    alertCount = null;
+    unreadable.push("repository default branch (Metadata: read)");
   }
-  if (alertCount !== null) return undefined;
+
+  if (branch !== undefined) {
+    try {
+      const checks = await gateway.getChecks(repo, branch);
+      if (checks.some((check) => check.name === UNREADABLE_CHECKS)) {
+        unreadable.push("checks or commit statuses (Checks: read and Commit statuses: read)");
+      }
+    } catch {
+      unreadable.push("checks or commit statuses (Checks: read and Commit statuses: read)");
+    }
+    try {
+      if (await gateway.getBranchProtection(repo, branch) === "unknown") {
+        unreadable.push("branch protection (Administration: read)");
+      }
+    } catch {
+      unreadable.push("branch protection (Administration: read)");
+    }
+  }
+
+  try {
+    if (await gateway.listOpenSecurityAlertCount(repo) === null) {
+      unreadable.push('Dependabot alerts ("Dependabot alerts: read" or classic "security_events")');
+    }
+  } catch {
+    unreadable.push('Dependabot alerts ("Dependabot alerts: read" or classic "security_events")');
+  }
+
+  if (unreadable.length === 0) return undefined;
   return (
-    `Could not read Dependabot alerts on ${repo}. This token may be missing "Dependabot alerts: read" ` +
-    `(fine-grained) or "security_events" (classic); see SECURITY.md. This does NOT affect requesting, ` +
-    `claiming, or completing reviews. It only means autonomy=auto on the expedition taskflows ` +
-    `(pr_expedite, pr_approve_dep_upgrade) can never approve or merge anything: that safety rail ` +
-    `fails closed whenever it cannot read the alert count.`
+    `Could not confirm the expedition permissions on ${repo}: ${unreadable.join("; ")}. See SECURITY.md. ` +
+    `This does NOT affect requesting, claiming, or completing reviews. Expedition operations fail ` +
+    `closed when a safety read is unavailable. Contents: write is additionally required for an ` +
+    `autonomy=auto merge and cannot be probed safely by init.`
   );
 }

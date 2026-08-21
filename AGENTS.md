@@ -20,7 +20,9 @@ run.
   - To **run** the review workflow: a fine-grained personal access token scoped to the target
     repositories with Pull requests (read and write), Issues (read and write, since claim markers
     are issue comments), Contents (read), and Metadata (read). See
-    [`SECURITY.md`](SECURITY.md#recommended-token-scope) for the full rationale. Prefer a separate
+    [`SECURITY.md`](SECURITY.md#recommended-token-scope) for the full rationale. Expedition
+    taskflows additionally need Checks (read), Commit statuses (read), Administration (read), and
+    Dependabot alerts (read); `autonomy=auto` also needs Contents (write) to merge. Prefer a separate
     least-privilege token for the review flow, distinct from the install token, though the same
     token can carry both sets of scopes if that is simpler.
 

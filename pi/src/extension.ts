@@ -190,7 +190,10 @@ export function registerTools(
       pr: Type.Number(),
       autonomy: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("propose")])),
       mergeMethod: Type.Optional(Type.Union([Type.Literal("merge"), Type.Literal("squash"), Type.Literal("rebase")])),
-      botAllowlist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+      botAllowlist: Type.Optional(Type.Array(Type.String({
+        minLength: 1,
+        description: "Narrows the built-in dependency-bot allowlist; additional bot identities are ignored.",
+      }))),
       maxFiles: Type.Optional(Type.Integer({
         minimum: 1,
         description: `At most the dependency policy's max files cap (${DEPS_GATE_POLICY.maxFiles}); narrows the size rail, never widens it.`,
