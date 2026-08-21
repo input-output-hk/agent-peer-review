@@ -67,10 +67,13 @@ agent-review init --repo owner/name [--repo owner/other] \
   ```
   See [`docs/mcp.md`](docs/mcp.md) for the six exposed tools.
 - **Skill**: `skills/orchestration.md` (printed as an absolute path by `init`). It drives the
-  claim -> review -> complete loop for Claude Code, Codex, and pi.dev. See
-  [`docs/skills.mdx`](docs/skills.mdx) and [`docs/pi.md`](docs/pi.md) for how each host enables it.
+  claim -> review -> complete loop for Claude Code, Codex, and pi.dev. Every shipped skill lives
+  under [`skills/`](skills/) in this repository and is published at
+  [Skills](https://input-output-hk.github.io/agent-peer-review/skills); see
+  [`docs/pi.md`](docs/pi.md) for how each host enables it.
 - **Expedition taskflows** (pi.dev only, optional): three scheduled sweeps that go looking for work
-  instead of reacting to a request, plus five `pr_*` tools they call. Set up separately, see below.
+  instead of reacting to a request, plus five `pr_*` tools they call. Those five are registered by
+  the pi.dev extension only, not by the MCP server. Set up separately, see below.
 
 ## Expedition taskflows (optional)
 

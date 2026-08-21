@@ -54,7 +54,7 @@ Then copy the three flows into the repository you want to sweep. They live in th
 The paths inside each flow definition are repository-relative and point at `.pi/taskflows/<name>/`, so copy the whole directory to that location and the flow resolves without editing. Finally, rename `config.example.json` to `config.json` and list your repositories:
 
 ```json
-{ "repos": ["input-output-hk/agent-peer-review"], "botAuthors": ["app/dependabot"] }
+{ "repos": ["input-output-hk/agent-peer-review"], "botAuthors": ["app/dependabot", "app/renovate"] }
 ```
 
 `config.json` is the only file in the flow directory you have to edit. It never carries an autonomy setting; see [The safety model](#the-safety-model).
@@ -121,7 +121,7 @@ The case those lines exist for is a pull request that was neither merged nor han
 | Line under the counts | What it means | What to do about it |
 | --- | --- | --- |
 | `no reviewers are configured, so nobody was asked` | `requested: "unconfigured"`. `pr_request_review` throws before its first GitHub call when no reviewer list is configured, so nothing was written anywhere and the pull request carries no trace of the attempt. | Set `reviewers` in `~/.agent-peer-review/config.json`, or export `AGENT_REVIEW_REVIEWERS`. See [Before your first run](#before-your-first-run-on-a-new-repository). |
-| `held for a review in flight` | A review the gate reads as a human's is holding the decision. Counted as `human-review-hold`. | Nothing, if a person really is reviewing. If nobody is, a peer agent is missing from `knownAgentLogins`, and the hold is permanent: a GitHub review is history and never expires. |
+| `held for a review in flight` | A review the gate reads as a human's is holding the decision: either an open review request nobody has answered, or a standing `CHANGES_REQUESTED`. Counted as `human-review-hold`. | Nothing, if a person really is reviewing. If nobody is, a peer agent is missing from `knownAgentLogins`, and the hold lasts as long as that state does: an open request until it is answered, a refusal until that person replaces the verdict. Neither clears on its own while the login is misread as a human's. |
 | `the gate never ran` | `expedite: "not-eligible"`: the pull request turned out to be closed, merged, or a draft, so no rail was evaluated. | Nothing, beyond confirming that is the state you expect. |
 | `proposed, and no reviewer was asked` | The gate refused and the item still ended with nobody engaged. | Read the run's log. The executor did not do what the flow's step 3 tells it to. |
 

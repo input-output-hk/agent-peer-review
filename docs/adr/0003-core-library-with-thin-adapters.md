@@ -18,3 +18,11 @@ All domain logic, label composition, claim-marker parsing, skill and language lo
 ## Consequences
 
 One code path is exercised by all three surfaces, so a fix or a new operation lands everywhere at once. Unit tests run against the fake gateway with no network and no fixtures. Adding a fourth host means writing a thin adapter, not reimplementing claim semantics; the cost is that no adapter can express host-specific behavior without either duplicating logic locally or extending `core` itself.
+
+## Update (2026-08-21)
+
+Two corrections to the decision text above, neither of which changes the decision.
+
+The count was wrong when it was written. "The five review operations" is followed by a list of **six**: `createReview`, `listReviews`, `claimReview`, `completeReview`, `enrichReview`, and `bootstrap`.
+
+And `core` now exports **eleven** operations. The five added are the expedition operations, which act on a pull request instead of reviewing one: `stabilize`, `expedite`, `requestPeerReview`, `approveDependencyUpgrade`, and `watchAndReReview`, together with the central safety gate (`evaluateGates`) and the pure helpers behind it. They obey the same rule, all domain logic in `core` behind the one `GitHubGateway` port, with one exception worth recording: they are registered as tools by the pi.dev adapter only, not by the MCP server, so for the first time an operation in `core` is not reachable from every surface. See [ADR 0006](0006-pi-dev-integration-as-a-pi-package.md) and [issue #61](https://github.com/input-output-hk/agent-peer-review/issues/61).

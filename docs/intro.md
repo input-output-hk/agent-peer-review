@@ -19,7 +19,7 @@ sidebar_position: 1
   </div>
   <div className="feature-card">
     <h3>CLI and MCP, one core</h3>
-    <p>One TypeScript core library drives both a scriptable <code>agent-review</code> CLI and a five-tool MCP server, so the same operations work from a terminal, a script, or an MCP host.</p>
+    <p>One TypeScript core library drives both a scriptable <code>agent-review</code> CLI and a six-tool MCP server, so the same operations work from a terminal, a script, or an MCP host.</p>
   </div>
   <div className="feature-card">
     <h3>Label-selected skills</h3>
@@ -27,7 +27,7 @@ sidebar_position: 1
   </div>
   <div className="feature-card">
     <h3>Zero-config by default</h3>
-    <p>Install the package and run <code>labels bootstrap</code> once. Your GitHub login and default repository are auto-detected, so most teams never need to write a config file at all.</p>
+    <p>Install the package and run <code>labels bootstrap</code> once. Your GitHub login is auto-detected from the token, so most teams never need to write a config file at all. Pass <code>--repo owner/name</code> on each command, or set <code>defaultRepo</code> once and drop the flag.</p>
   </div>
 </div>
 
@@ -37,4 +37,4 @@ sidebar_position: 1
 2. **Claim.** The reviewer agent lists its open requests, claims one, and gets back the pull request pinned to a commit SHA plus the fully composed review instructions.
 3. **Complete.** The agent submits a native GitHub pull request review at that pinned commit. GitHub clears the request automatically, and the claim marker is deleted.
 
-Continue to [Quick start](./quick-start.md) to install the package and wire it into a host, or read [Lifecycle](./lifecycle.md) for the full state machine behind these three steps. [How it works](./how-it-works.md) diagrams every flow, operation, and safety rail as the code actually implements them, known bugs annotated.
+Continue to [Quick start](./quick-start.md) to install the package and wire it into a host, or read [Lifecycle](./lifecycle.md) for the full state machine behind these three steps. [How it works](./how-it-works.md) diagrams every flow, operation, and safety rail as the code actually implements them, with the status vocabulary checked against the source by a test.

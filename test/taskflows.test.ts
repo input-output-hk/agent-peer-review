@@ -463,25 +463,35 @@ describe("taskflow instructions and the code they drive", () => {
   // members, and the instructions must name every one of them. So renaming a status, splitting one
   // in two, or adding a new one fails here rather than in a live run, which is how the Task 2 fix
   // (stabilize's "gone" / "blocked" split) has to stay pinned.
-  const OUTCOME_CONTRACTS: Array<{ what: string; file: string; field: string; end: string; flow: string; outcomes: string[] }> = [
+  //
+  // `doc` names the operation as docs/how-it-works.md's side-by-side table spells it, and the
+  // status-vocabulary contract below holds that table to the same union. Rows without a `doc` are
+  // vocabularies the table does not enumerate (a claim role is not a reported status, and
+  // enrichReview's verdict is an input rather than an outcome).
+  const OUTCOME_CONTRACTS: Array<{ what: string; file: string; field: string; end: string; flow: string; doc?: string; outcomes: string[] }> = [
     {
       what: "stabilize status", file: "core/operations/stabilize.ts", field: "status:", end: ";", flow: "pr-requester",
+      doc: "stabilize",
       outcomes: ["up-to-date", "updated", "conflict", "blocked", "draft", "gone"],
     },
     {
       what: "expedite action", file: "core/operations/expedite.ts", field: "action:", end: ";", flow: "pr-requester",
+      doc: "expedite",
       outcomes: ["merged", "proposed", "already-proposed", "not-eligible", "blocked"],
     },
     {
       what: "requestPeerReview status", file: "core/operations/request-peer-review.ts", field: "status:", end: ";", flow: "pr-requester",
+      doc: "requestPeerReview",
       outcomes: ["requested", "already-requested", "bot-authored"],
     },
     {
       what: "watchAndReReview action", file: "core/operations/watch-and-re-review.ts", field: "action:", end: ";", flow: "pr-reviewer",
+      doc: "watchAndReReview",
       outcomes: ["re-review", "wait", "hold-for-human", "abandoned", "approved", "none"],
     },
     {
       what: "enrichReview status", file: "core/operations/enrich.ts", field: "status:", end: ";", flow: "pr-reviewer",
+      doc: "enrichReview",
       outcomes: ["enriched", "waiting", "promote"],
     },
     {
@@ -489,7 +499,11 @@ describe("taskflow instructions and the code they drive", () => {
       outcomes: ["anchor", "enricher"],
     },
     {
+      // completeReview is the one operation with no status union: it returns a url plus the
+      // `drifted` and `superseded` booleans. The value it REPORTS is the review event it submitted,
+      // so that enum is what the docs table carries for it, and what this holds it to.
       what: "completeReview event", file: "core/model.ts", field: "event: z.enum([", end: "]", flow: "pr-reviewer",
+      doc: "completeReview",
       outcomes: ["approve", "request-changes", "comment"],
     },
     {
@@ -498,6 +512,7 @@ describe("taskflow instructions and the code they drive", () => {
     },
     {
       what: "approveDependencyUpgrade action", file: "core/operations/approve-dependency-upgrade.ts", field: "action:", end: ";", flow: "pr-steward",
+      doc: "approveDependencyUpgrade",
       outcomes: ["approved-and-merged", "approved", "proposed", "already-proposed", "not-eligible", "blocked"],
     },
   ];
@@ -516,6 +531,67 @@ describe("taskflow instructions and the code they drive", () => {
           expect(spans.has(outcome), `${label}/${contract.flow} does not name \`${outcome}\``).toBe(true);
         }
       }
+    });
+  }
+});
+
+// The status-vocabulary contract between the code and the page that documents it.
+//
+// docs/how-it-works.md is prose: nothing validated it, and every behavior-changing commit updated
+// docs/taskflows.md instead, so the page's own side-by-side table drifted four separate times in one
+// audit. `approved` (approveDependencyUpgrade) and `bot-authored` (requestPeerReview) had been added
+// to the code and never to the table; `runChecks` had been deleted from the schema and never from
+// the config table; `watchAndReReview`'s `headMoved` was undocumented. Each one told an operator
+// something the code does not do.
+//
+// So the table is now derived material, checked rather than trusted. Each row is compared against
+// the union parsed out of the operation's own TypeScript source, as SET EQUALITY in both directions,
+// and the set of documented operations is compared against the contract too. A status added,
+// renamed, or removed in the code therefore fails the build here, on the same commit, instead of
+// aging quietly in a document nobody re-reads.
+describe("docs/how-it-works.md status vocabulary", () => {
+  const HOW_IT_WORKS = path.join(REPO_ROOT, "docs", "how-it-works.md");
+  const TABLE_HEADING = "### All seven, side by side";
+  // Kept deliberately smaller than the flow contract above: this table only needs enough
+  // information to read the authoritative union and find its documentation row. The flow-specific
+  // fields and expected outcomes stay in the instruction contract, where they are used.
+  const DOC_CONTRACTS = [
+    { doc: "stabilize", file: "core/operations/stabilize.ts", field: "status:", end: ";" },
+    { doc: "expedite", file: "core/operations/expedite.ts", field: "action:", end: ";" },
+    { doc: "approveDependencyUpgrade", file: "core/operations/approve-dependency-upgrade.ts", field: "action:", end: ";" },
+    { doc: "watchAndReReview", file: "core/operations/watch-and-re-review.ts", field: "action:", end: ";" },
+    { doc: "requestPeerReview", file: "core/operations/request-peer-review.ts", field: "status:", end: ";" },
+    { doc: "enrichReview", file: "core/operations/enrich.ts", field: "status:", end: ";" },
+    { doc: "completeReview", file: "core/model.ts", field: "event: z.enum([", end: "]" },
+  ] as const;
+  const documented = docStatusTable(readFileSync(HOW_IT_WORKS, "utf8"), TABLE_HEADING);
+
+  it("finds the side-by-side table at all", () => {
+    // A guard on the parser itself: without it, a renamed heading or a reshaped table would make
+    // every assertion below pass against an empty map, which is the failure mode this whole
+    // describe block exists to rule out.
+    expect(documented.size).toBeGreaterThanOrEqual(7);
+    expect([...documented.keys()]).toContain("stabilize");
+    expect(documented.get("stabilize")?.statuses.length).toBeGreaterThan(0);
+  });
+
+  it("documents exactly the operations the contract names, and no others", () => {
+    expect([...documented.keys()].sort()).toEqual(DOC_CONTRACTS.map((c) => c.doc).sort());
+  });
+
+  for (const contract of DOC_CONTRACTS) {
+    it(`${contract.doc}: the table lists exactly the union declared in ${contract.file}`, () => {
+      const row = documented.get(contract.doc);
+      expect(row, `no row for \`${contract.doc}\` in "${TABLE_HEADING}"`).toBeDefined();
+      const declared = literalsAfter(readFileSync(path.join(REPO_ROOT, contract.file), "utf8"), contract.field, contract.end);
+      // Both directions at once. A status the code has and the table lacks misleads by omission; a
+      // status the table has and the code lacks misleads by invention. Neither is acceptable, and
+      // the audit found both.
+      expect([...new Set(row!.statuses)].sort(), `${contract.doc} row vs ${contract.file}`)
+        .toEqual([...new Set(declared)].sort());
+      // The row's own "declared in" column has to point at the file this compared against, or a
+      // reader chasing a status lands somewhere it is not defined.
+      expect(row!.sources, `${contract.doc} row does not cite ${contract.file}`).toContain(contract.file);
     });
   }
 });
@@ -607,6 +683,53 @@ function literalsAfter(source: string, field: string, end: string): string[] {
   }
   if (literals.length === 0) throw new Error(`no string literals follow "${field}"`);
   return literals;
+}
+
+interface DocumentedStatusRow {
+  statuses: string[];
+  sources: string[];
+}
+
+/**
+ * Parse the operation/status/source columns from one Markdown table below `heading`.
+ *
+ * This intentionally understands only the small table shape it protects. A missing heading,
+ * malformed row, or renamed column produces an empty/incomplete map and a focused test failure
+ * above instead of a permissive best-effort parse.
+ */
+function docStatusTable(markdown: string, heading: string): Map<string, DocumentedStatusRow> {
+  const headingAt = markdown.indexOf(heading);
+  if (headingAt === -1) return new Map();
+
+  const rows = new Map<string, DocumentedStatusRow>();
+  for (const line of markdown.slice(headingAt + heading.length).split("\n")) {
+    if (line === "---") break;
+    if (!line.startsWith("|")) continue;
+    const cells = line.slice(1, -1).split("|").map((cell) => cell.trim());
+    if (cells.length !== 4 || cells[0] === "operation" || cells[0].startsWith("---")) continue;
+    const operation = inlineCodeTokens(cells[0])[0];
+    if (!operation) continue;
+    rows.set(operation, {
+      statuses: inlineCodeTokens(cells[1]),
+      sources: inlineCodeTokens(cells[2]),
+    });
+  }
+  return rows;
+}
+
+/** Inline-code contents in encounter order. The protected table contains no fenced blocks. */
+function inlineCodeTokens(markdown: string): string[] {
+  const tokens: string[] = [];
+  let from = 0;
+  for (;;) {
+    const open = markdown.indexOf("`", from);
+    if (open === -1) break;
+    const close = markdown.indexOf("`", open + 1);
+    if (close === -1) break;
+    tokens.push(markdown.slice(open + 1, close));
+    from = close + 1;
+  }
+  return tokens;
 }
 
 /** Every file under a directory, recursively, sorted for a stable failure message. */

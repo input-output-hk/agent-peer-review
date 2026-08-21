@@ -113,7 +113,9 @@ function firstReason(result) {
  * operation owns the wording of its reasons and this has to keep working when that wording changes.
  * The hold is worth singling out: it is the one an operator can cause by configuration alone. A peer
  * agent missing from `knownAgentLogins` reads as a human, so its review holds the loop on a pull
- * request no human has touched, and a GitHub review is permanent, so the hold never expires.
+ * request no human has touched. The hold is an open review request, which clears natively when it is
+ * answered, or a standing CHANGES_REQUESTED, which clears when that verdict is replaced; a login the
+ * operation misreads as a human's supplies neither, so nothing arrives to clear it.
  */
 function heldForReviewInFlight(result) {
   const reasons = result !== null && Array.isArray(result.reasons) ? result.reasons : [];

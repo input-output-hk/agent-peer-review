@@ -18,3 +18,11 @@ GitHub itself holds every piece of workflow state, across exactly three states. 
 ## Consequences
 
 Restart-safe by construction, with no queue or database to keep in sync with reality, and every transition stays visible in the ordinary GitHub PR UI. The cost is bounded by GitHub itself: listing work relies on the search API and its eventual consistency, and claim races are resolved by comparing timestamps and comment ids rather than a true lock (see [ADR 0004](0004-panel-review-concurrent-reviewers.md)).
+
+## Update (2026-08-21)
+
+Two notes on the claim marker, neither of which changes the decision.
+
+**The marker carries a version, and there are two.** `ClaimMarkerSchema` accepts `"v": 1 | 2`, so the example above shows one of two shapes. A v2 marker carries three optional extra fields, `model`, `agent`, and `toolVersion`, and is written only when the opt-in `captureMetadata` config switch is on; with it off, a v1 marker is written exactly as shown. Every marker of either version parses through the same linear pass. See [Review metadata capture](../metadata-capture.md).
+
+**The pin moves when it falls behind.** As originally written, a restarted agent resumed on whatever commit its own marker named, and nothing ever moved it, so an agent whose run stalled re-claimed a dead commit on every tick and reviewed code that no longer existed. `claimReview` now re-pins its own marker to the current head when the pinned commit is no longer the head: every marker of that login's is deleted and one is posted carrying the new SHA, in that order. The marker format is untouched and `claimedAt` is carried over, so a re-pin cannot reorder the panel and an anchor stays the anchor. Resuming an *unchanged* head is still exactly what it was.

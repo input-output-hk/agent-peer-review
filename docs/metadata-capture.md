@@ -51,8 +51,11 @@ or for a single invocation, without touching the file:
 AGENT_REVIEW_CAPTURE_METADATA=1 agent-review complete --repo owner/name --pr 42 --event approve --summary "LGTM"
 ```
 
-Any of `1`, `true`, or `yes` (case-insensitive) turns it on; anything else, or leaving the variable
-unset, leaves the config file's value (default `false`) in place.
+Any of `1`, `true`, or `yes` (case-insensitive) turns it on. **Any other value, an empty string
+included, turns it off**, overriding a `true` in the config file, which is how a single invocation
+opts out as well as in. Only leaving the variable unset falls through to the config file's value
+(default `false`). That rule is deliberately different from the three string fields below, where an
+unset *or blank* variable falls through: a boolean needs a way to say "off", and a string does not.
 
 `captureMetadata` only turns capture on or off; it does not say what to capture. Populate the
 fields with either the matching config key or environment variable (the environment variable wins
@@ -60,6 +63,7 @@ when both are set):
 
 | Field | Config key | Environment variable | Example |
 | --- | --- | --- | --- |
+| Capture on or off | `captureMetadata` | `AGENT_REVIEW_CAPTURE_METADATA` | `1`, `true`, or `yes` |
 | Model | `model` | `AGENT_REVIEW_MODEL` | `claude-opus-4-8` |
 | Agent or host | `agent` | `AGENT_REVIEW_AGENT` | `claude-code` |
 | Tool version | `toolVersion` | `AGENT_REVIEW_TOOL_VERSION` | `2.1.0` |
@@ -68,8 +72,8 @@ A field left unset on both sides is simply omitted from the footer and the marke
 fails a claim or a completion because a field is missing.
 
 :::note[Similarly-shaped overrides, unrelated to metadata capture]
-Two more variables follow the same convention as the ones above (unset or blank falls through to
-the config file's value), but have nothing to do with `captureMetadata`:
+Two more variables follow the same convention as the three string fields above (unset or blank
+falls through to the config file's value), but have nothing to do with `captureMetadata`:
 
 | Field | Config key | Environment variable | Example |
 | --- | --- | --- | --- |
