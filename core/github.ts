@@ -27,6 +27,14 @@ export interface BranchProtectionSummary {
   requiredChecks: string[];
   enforceAdmins: boolean;
   requiresConversationResolution: boolean;
+  /**
+   * GitHub's `dismiss_stale_reviews`: the branch retires an approving review as soon as a new commit
+   * is pushed. Read because it answers "has staleness already been handled for me": where it is on,
+   * a standing approval cannot be about an older commit, and where it is off, an approval of a commit
+   * the author has since pushed past says nothing about the code that would merge (issue #53). See
+   * ApprovalScope in expedition/protection.ts, which is what consumes it.
+   */
+  dismissesStaleReviews: boolean;
 }
 export interface DetailedPullFile { filename: string; status: string; additions: number; deletions: number; patch?: string }
 // Which merge methods a repository's own settings permit right now. Read by the pi adapter
@@ -348,6 +356,11 @@ export class OctokitGateway implements GitHubGateway {
         requiredChecks: data.required_status_checks?.contexts ?? data.required_status_checks?.checks?.map((c) => c.context) ?? [],
         enforceAdmins: data.enforce_admins?.enabled ?? false,
         requiresConversationResolution: data.required_conversation_resolution?.enabled ?? false,
+        // Absent whenever `required_pull_request_reviews` is, which is the honest false: a branch that
+        // requires no review dismisses nothing. Defaulting to false is also the conservative
+        // direction for the one caller that reads it (see countApprovalsByOthers): it means "assume
+        // GitHub is NOT retiring stale approvals for us", so a stale approval is not counted.
+        dismissesStaleReviews: data.required_pull_request_reviews?.dismiss_stale_reviews ?? false,
       };
     } catch (e: any) {
       if (e.status === 404) return "none"; // branch has no protection configured

@@ -337,6 +337,10 @@ describe("Flow A (pr-requester): stabilize, expedite, request a peer review", ()
       gh.setBranchProtection(REPO, "main", {
         requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
         requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
+        // false is the GitHub default: a push does not dismiss standing approvals. The rail that
+        // reads this is about whether an approval of an older commit still counts, which is not
+        // what this test is about, but the field is required so it has to say which world it means.
+        dismissesStaleReviews: false,
       });
 
       expect((await stabilize(gh, { repo: REPO, pr: PR })).status).toBe("blocked");
@@ -413,6 +417,7 @@ describe("Flow A (pr-requester): stabilize, expedite, request a peer review", ()
       gh.setBranchProtection(REPO, "main", {
         requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
         requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
+        dismissesStaleReviews: false,
       });
 
       const blocked = await stabilize(gh, { repo: REPO, pr: PR });

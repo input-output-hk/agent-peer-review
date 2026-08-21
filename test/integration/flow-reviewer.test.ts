@@ -142,28 +142,42 @@ describe("Flow B (pr-reviewer): claim, complete, watch, re-review", () => {
   });
 
   describe("handing over to a human", () => {
-    it("holds when an unrecognized login has reviewed, and does not hold for a configured agent", async () => {
+    it("holds when an unrecognized login has ruled against the change, and does not hold for a configured agent", async () => {
       const dir = skillsDir();
       const gh = new FakeGitHubGateway();
       seedRequestedPr(gh, HEAD1);
       await reviewRound(gh, dir, tick(1), "request-changes");
       push(gh, HEAD2); // past the "wait" branch: without a push the answer is wait either way
 
-      // A human review, with no footer of any kind: an unknown login is a human, full stop.
-      await reviewBy(gh, "carol", "COMMENT", HEAD2);
+      // A human verdict, with no footer of any kind: an unknown login is a human, full stop.
+      await reviewBy(gh, "carol", "REQUEST_CHANGES", HEAD2);
       const held = await watch(gh);
       expect(held.action).toBe("hold-for-human");
-      expect(held.reason).toContain("human review");
+      expect(held.reason).toContain("a human has requested changes");
       expect(gh.reviews).toHaveLength(2); // this agent wrote nothing further
 
-      // The same review by a login the caller lists as an agent does not hold the pull request.
+      // The same verdict by a login the caller lists as an agent does not hold the pull request.
       const gh2 = new FakeGitHubGateway();
       seedRequestedPr(gh2, HEAD1);
       await reviewRound(gh2, skillsDir(), tick(1), "request-changes");
       push(gh2, HEAD2);
-      await reviewBy(gh2, "peer-bot", "COMMENT", HEAD2);
+      await reviewBy(gh2, "peer-bot", "REQUEST_CHANGES", HEAD2);
       expect((await watch(gh2, { knownAgentLogins: ["peer-bot"] })).action).toBe("re-review");
       expect((await watch(gh2)).action).toBe("hold-for-human"); // and the same state without the config entry
+    });
+
+    // Issue #57 on the reviewer side. "A human has engaged at all" was the old test, and a GitHub
+    // review is permanent history, so one drive-by note or one approval by a passing maintainer ended
+    // this agent's involvement with that pull request for good, however many times the author pushed.
+    it("does not hold for a human's finished review, so a later push still starts a round", async () => {
+      for (const event of ["APPROVE", "COMMENT"] as const) {
+        const gh = new FakeGitHubGateway();
+        seedRequestedPr(gh, HEAD1);
+        await reviewRound(gh, skillsDir(), tick(1), "request-changes");
+        await reviewBy(gh, "carol", event, HEAD1);
+        push(gh, HEAD2);
+        expect((await watch(gh)).action, event).toBe("re-review");
+      }
     });
 
     it("holds once the round cap is spent, naming the cap", async () => {

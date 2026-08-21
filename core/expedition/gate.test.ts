@@ -13,7 +13,8 @@ function baseInput(overrides: Partial<GateInput> = {}): GateInput {
     mergeableState: "clean",
     branchProtectionSatisfied: true,
     hasNewSecurityAlert: false,
-    humanReviewInFlight: false,
+    humanReviewPending: false,
+    humanChangesRequested: false,
     autonomy: "auto",
     headShaGuardPassed: true,
     actingLogin: "agent-bot",
@@ -207,12 +208,39 @@ describe("evaluateGates", () => {
     });
   });
 
-  describe("rail 7: humanReviewInFlight", () => {
-    it("true forces propose", () => {
-      const decision = evaluateGates(baseInput({ humanReviewInFlight: true }));
+  // Issue #57: this rail used to take one boolean that was true as soon as any human had left any
+  // review, in any state. A GitHub review is permanent history, so on any repository that requires an
+  // approving review the review that satisfied rail 5 was the same event that failed this rail, and
+  // the auto path was unreachable. The two facts it really asks about are separate inputs now, with a
+  // reason each.
+  describe("rail 7: a human mid-review, and a human's standing refusal", () => {
+    it("a pending human review forces propose, and says a review is in flight", () => {
+      const decision = evaluateGates(baseInput({ humanReviewPending: true }));
       expect(decision.action).toBe("propose");
-      expect(decision.reasons).toHaveLength(1);
-      expect(decision.reasons[0]).toContain("human review");
+      expect(decision.reasons).toEqual(["a human review is in flight"]);
+    });
+
+    it("a human's standing CHANGES_REQUESTED forces propose, with its own reason", () => {
+      const decision = evaluateGates(baseInput({ humanChangesRequested: true }));
+      expect(decision.action).toBe("propose");
+      expect(decision.reasons).toEqual(["a human has requested changes"]);
+      // The wording matters as much as the refusal: a proposal comment claiming somebody is mid-review
+      // when they have finished and said no is a comment that misinforms the maintainer reading it.
+      expect(decision.reasons[0]).not.toContain("in flight");
+    });
+
+    it("both at once stay one rail, and name both causes", () => {
+      const decision = evaluateGates(baseInput({ humanReviewPending: true, humanChangesRequested: true }));
+      expect(decision.reasons).toEqual(["a human review is in flight; a human has requested changes"]);
+    });
+
+    // The regression guard for the deadlock itself, at the gate's own level: neither half may be
+    // inferred from anything else. A finished, favourable human review reaches this function as
+    // nothing at all, and the gate says auto.
+    it("neither half fires on its own baseline: a finished human review is not an obstacle here", () => {
+      expect(evaluateGates(baseInput())).toEqual({ action: "auto", reasons: [] });
+      expect(evaluateGates(baseInput({ humanReviewPending: false, humanChangesRequested: false })))
+        .toEqual({ action: "auto", reasons: [] });
     });
   });
 
@@ -271,7 +299,10 @@ describe("evaluateGates", () => {
       mergeableState: "dirty",
       branchProtectionSatisfied: false,
       hasNewSecurityAlert: true,
-      humanReviewInFlight: true,
+      // Both halves of rail 7 at once, which is still one rail and one reason: the count below is the
+      // number of RAILS that can refuse, not the number of facts they are read from.
+      humanReviewPending: true,
+      humanChangesRequested: true,
       autonomy: "propose",
       headShaGuardPassed: false,
       actingLogin: "same-login",

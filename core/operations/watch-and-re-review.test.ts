@@ -162,6 +162,10 @@ describe("watchAndReReview", () => {
     });
   });
 
+  // "Is a human involved" is the safety gate's rail 7 question, answered from the same place
+  // (humanReviewStatus), so the two cannot drift. Issue #57: it used to be true as soon as any human
+  // had left any review, in any state, and a GitHub review is permanent history, so one drive-by note
+  // froze this operation on that pull request for good.
   describe("human handover", () => {
     it("holds when a human has an open review request", async () => {
       const gh = seed("sha0002");
@@ -179,26 +183,50 @@ describe("watchAndReReview", () => {
       expect((await run(gh)).action).toBe("hold-for-human");
     });
 
-    it("holds when a human has already reviewed", async () => {
+    it("holds on a human's standing CHANGES_REQUESTED, with its own reason", async () => {
       const gh = seed("sha0002");
       await reviewAs(gh, ME, "REQUEST_CHANGES", "sha0001");
-      await reviewAs(gh, "alice", "COMMENT", "sha0001");
-      expect((await run(gh)).action).toBe("hold-for-human");
+      await reviewAs(gh, "alice", "REQUEST_CHANGES", "sha0001");
+      const result = await run(gh);
+      expect(result.action).toBe("hold-for-human");
+      expect(result.reason).toContain("a human has requested changes");
+      expect(result.reason).not.toContain("in flight"); // nobody is mid-review; a person has ruled
     });
 
-    it("does not hold for a known peer agent's review", async () => {
+    it("does not hold on a human's finished approval, or on a comment-only review", async () => {
+      const approved = seed("sha0002");
+      await reviewAs(approved, ME, "REQUEST_CHANGES", "sha0001");
+      await reviewAs(approved, "alice", "APPROVE", "sha0001");
+      expect((await run(approved)).action).toBe("re-review");
+
+      const commented = seed("sha0002");
+      await reviewAs(commented, ME, "REQUEST_CHANGES", "sha0001");
+      await reviewAs(commented, "alice", "COMMENT", "sha0001");
+      expect((await run(commented)).action).toBe("re-review");
+    });
+
+    it("stops holding once the human replaces a refusal with an approval", async () => {
       const gh = seed("sha0002");
       await reviewAs(gh, ME, "REQUEST_CHANGES", "sha0001");
-      await reviewAs(gh, "peer-bot", "COMMENT", "sha0001");
+      await reviewAs(gh, "alice", "REQUEST_CHANGES", "sha0001");
+      expect((await run(gh)).action).toBe("hold-for-human");
+      await reviewAs(gh, "alice", "APPROVE", "sha0002"); // the latest verdict wins
+      expect((await run(gh)).action).toBe("re-review");
+    });
+
+    it("does not hold for a known peer agent's refusal", async () => {
+      const gh = seed("sha0002");
+      await reviewAs(gh, ME, "REQUEST_CHANGES", "sha0001");
+      await reviewAs(gh, "peer-bot", "REQUEST_CHANGES", "sha0001");
       expect((await run(gh, { knownAgentLogins: ["peer-bot"] })).action).toBe("re-review");
     });
 
     // The meta footer is self-asserted, so it cannot promote an unrecognized login to "agent".
     // Holding for an agent the caller forgot to configure is the deliberate conservative direction.
-    it("HOLDS for an agent-footered review by a login not in knownAgentLogins", async () => {
+    it("HOLDS for an agent-footered refusal by a login not in knownAgentLogins", async () => {
       const gh = seed("sha0002");
       await reviewAs(gh, ME, "REQUEST_CHANGES", "sha0001");
-      await reviewAs(gh, "mystery-agent", "COMMENT", "sha0001", `notes\n\n${serializeMeta({ v: 1, role: "second-opinion", verdict: "comment" })}`);
+      await reviewAs(gh, "mystery-agent", "REQUEST_CHANGES", "sha0001", `notes\n\n${serializeMeta({ v: 1, role: "second-opinion", verdict: "request-changes" })}`);
       expect((await run(gh)).action).toBe("hold-for-human");
       // ... and naming that same login clears it, without any footer being involved.
       expect((await run(gh, { knownAgentLogins: ["mystery-agent"] })).action).toBe("re-review");
@@ -209,6 +237,56 @@ describe("watchAndReReview", () => {
       for (const sha of ["sha0001", "sha0002", "sha0003"]) await reviewAs(gh, ME, "REQUEST_CHANGES", sha);
       gh.setRequestedReviewers(REPO, PR, { users: ["alice"], teams: [] });
       expect((await run(gh)).reason).toContain("cap");
+    });
+  });
+
+  // Issue #53. The gate no longer merges a commit nobody approved, so the reviewer side has to be able
+  // to say plainly that its approval is about a commit that is gone. The flag is what a flow can branch
+  // on; the prose is for the human reading the run.
+  describe("headMoved", () => {
+    it("is false while the head still sits at this agent's own verdict", async () => {
+      const waiting = seed("sha0001");
+      await reviewAs(waiting, ME, "REQUEST_CHANGES", "sha0001");
+      expect(await run(waiting)).toMatchObject({ action: "wait", headMoved: false });
+
+      const approved = seed("sha0001");
+      await reviewAs(approved, ME, "APPROVE", "sha0001");
+      expect(await run(approved)).toMatchObject({ action: "approved", headMoved: false });
+    });
+
+    it("is true on an approval the author has pushed past: the stale approval the gate will not count", async () => {
+      const gh = seed("sha0003");
+      await reviewAs(gh, ME, "APPROVE", "sha0002");
+      const result = await run(gh);
+      expect(result).toMatchObject({ action: "approved", headMoved: true });
+      expect(result.reason).toContain("sha0002");
+      expect(result.reason).toContain("sha0003");
+    });
+
+    it("is true wherever the head has moved past the verdict, whatever the answer is", async () => {
+      const rereview = seed("sha0002");
+      await reviewAs(rereview, ME, "REQUEST_CHANGES", "sha0001");
+      expect(await run(rereview)).toMatchObject({ action: "re-review", headMoved: true });
+
+      const held = seed("sha0002");
+      await reviewAs(held, ME, "REQUEST_CHANGES", "sha0001");
+      held.setRequestedReviewers(REPO, PR, { users: ["alice"], teams: [] });
+      expect(await run(held)).toMatchObject({ action: "hold-for-human", headMoved: true });
+
+      const capped = seed("sha0004");
+      for (const sha of ["sha0001", "sha0002", "sha0003"]) await reviewAs(capped, ME, "REQUEST_CHANGES", sha);
+      expect(await run(capped)).toMatchObject({ action: "hold-for-human", headMoved: true });
+    });
+
+    it("is false where this agent has no verdict for the head to have moved past", async () => {
+      const none = seed("sha0002");
+      await reviewAs(none, "alice", "REQUEST_CHANGES", "sha0001");
+      expect(await run(none)).toMatchObject({ action: "none", headMoved: false });
+
+      const abandoned = seed("sha0002");
+      abandoned.prs.get(`${REPO}#${PR}`)!.state = "merged";
+      await reviewAs(abandoned, ME, "APPROVE", "sha0001");
+      expect(await run(abandoned)).toMatchObject({ action: "abandoned", headMoved: false });
     });
   });
 });

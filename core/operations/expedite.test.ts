@@ -3,11 +3,40 @@ import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
 import { expedite } from "./expedite.js";
 import { findActionMarkers } from "../expedition/action-marker.js";
 import { serializeMeta } from "../review-meta.js";
+import type { BranchProtectionSummary } from "../github.js";
 
 const REPO = "o/r";
 const PR = 1;
 const ME = "me"; // FakeGitHubGateway.login: comments and reviews it writes are authored by this login
 const HEAD = "sha0001";
+
+/** Branch protection with nothing set but what a test names. */
+const protection = (over: Partial<BranchProtectionSummary> = {}): BranchProtectionSummary => ({
+  requiresPullRequestReviews: false,
+  requiredApprovingReviewCount: 0,
+  requiredChecks: [],
+  enforceAdmins: false,
+  requiresConversationResolution: false,
+  dismissesStaleReviews: false,
+  ...over,
+});
+
+/** Protection requiring one approving review, with GitHub's own state while that review is missing. */
+function seedProtectedAwaitingReview(gh: FakeGitHubGateway, over: Partial<BranchProtectionSummary> = {}): void {
+  gh.setBranchProtection(REPO, "main", protection({ requiresPullRequestReviews: true, requiredApprovingReviewCount: 1, ...over }));
+  gh.setMergeability(REPO, PR, { state: "blocked", mergeable: false, draft: false, baseRef: "main", headSha: HEAD });
+}
+
+/** A review by `author`, recorded under that login exactly as GitHub records it. */
+async function reviewAs(gh: FakeGitHubGateway, author: string, event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT", commitId = HEAD, body = "looks fine") {
+  const previous = gh.login;
+  gh.login = author;
+  try {
+    await gh.submitReview(REPO, PR, { commitId, event, body });
+  } finally {
+    gh.login = previous;
+  }
+}
 
 // A docs-only pull request that clears every rail except autonomy: green checks, no protection, no
 // alerts, no reviewers. Each test below breaks exactly one thing.
@@ -153,10 +182,7 @@ describe("expedite", () => {
     // approve some other pull request.
     it("still fails the protection rail on a repository that requires an approving review", async () => {
       const gh = seedGreenDocsPr();
-      gh.setBranchProtection(REPO, "main", {
-        requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
-        requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
-      });
+      gh.setBranchProtection(REPO, "main", protection({ requiresPullRequestReviews: true, requiredApprovingReviewCount: 1 }));
       const result = await run(gh, { autonomy: "auto" });
       expect(result.action).toBe("proposed");
       expect(result.reasons).toEqual(["branch protection requirements are not satisfied"]);
@@ -169,11 +195,7 @@ describe("expedite", () => {
     // rather than approves, so nothing it does would remove the block.
     it("still refuses a blocked mergeable state, which it can never be the one to clear", async () => {
       const gh = seedGreenDocsPr();
-      gh.setBranchProtection(REPO, "main", {
-        requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
-        requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
-      });
-      gh.setMergeability(REPO, PR, { state: "blocked", mergeable: false, draft: false, baseRef: "main", headSha: HEAD });
+      seedProtectedAwaitingReview(gh);
 
       const result = await run(gh, { autonomy: "auto" });
       expect(result.action).toBe("proposed");
@@ -192,53 +214,12 @@ describe("expedite", () => {
       expect(gh.merges).toEqual([]);
     });
 
-    it("merges once a real approval by someone else satisfies that requirement", async () => {
-      const gh = seedGreenDocsPr();
-      gh.setBranchProtection(REPO, "main", {
-        requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
-        requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
-      });
-      gh.login = "peer-bot";
-      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "fine by me" });
-      gh.login = ME;
-      const result = await run(gh, { autonomy: "auto", knownAgentLogins: ["peer-bot"] });
-      expect(result.action).toBe("merged");
-    });
-
     it("judges only the required contexts when the base branch declares them", async () => {
       const gh = seedGreenDocsPr();
-      gh.setBranchProtection(REPO, "main", {
-        requiresPullRequestReviews: false, requiredApprovingReviewCount: 0,
-        requiredChecks: ["build"], enforceAdmins: false, requiresConversationResolution: false,
-      });
+      gh.setBranchProtection(REPO, "main", protection({ requiredChecks: ["build"] }));
       gh.setChecks(REPO, HEAD, [{ name: "build", status: "success" }, { name: "optional-perf", status: "failure" }]);
       const result = await run(gh, { autonomy: "auto" });
       expect(result.action).toBe("merged"); // the failing check is not required, so it does not block
-    });
-
-    it("holds off when a human has an open review request", async () => {
-      const gh = seedGreenDocsPr();
-      gh.setRequestedReviewers(REPO, PR, { users: ["alice"], teams: [] });
-      const result = await run(gh, { autonomy: "auto" });
-      expect(result.action).toBe("proposed");
-      expect(result.reasons.some((r) => r.includes("human review"))).toBe(true);
-    });
-
-    it("holds off when a team has an open review request, whose members it cannot enumerate", async () => {
-      const gh = seedGreenDocsPr();
-      gh.setRequestedReviewers(REPO, PR, { users: [], teams: ["backend"] });
-      const result = await run(gh, { autonomy: "auto" });
-      expect(result.action).toBe("proposed");
-      expect(result.reasons.some((r) => r.includes("human review"))).toBe(true);
-    });
-
-    it("does not treat a known peer agent's review as a human in flight", async () => {
-      const gh = seedGreenDocsPr();
-      gh.login = "peer-bot";
-      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "COMMENT", body: `looked at it\n\n${serializeMeta({ v: 1, role: "second-opinion", verdict: "comment" })}` });
-      gh.login = ME;
-      const result = await run(gh, { autonomy: "auto", knownAgentLogins: ["peer-bot"] });
-      expect(result.action).toBe("merged");
     });
 
     it("reads protection for the pull request's OWN base ref, not an assumed default branch", async () => {
@@ -279,6 +260,153 @@ describe("expedite", () => {
       const result = await run(gh, { autonomy: "auto", policy: { maxLines: 1 } });
       expect(result.action).toBe("proposed");
       expect(result.reasons.some((r) => r.includes("too many changed lines"))).toBe(true);
+    });
+  });
+
+  // Issue #57, the verified repro, row by row. The pull request is identical in every row: docs only,
+  // green checks, a clean mergeable state, protection requiring one approving review, autonomy auto,
+  // and exactly one approval present. Only the approver's identity differed, and it used to decide
+  // everything, because the approval that satisfied rail 5 was the same event that failed rail 7 and a
+  // GitHub review is permanent history: the human row could never merge on any later tick either.
+  describe("the one approval that satisfies protection (issue #57)", () => {
+    async function approvedBy(approver: string, over: Partial<Parameters<typeof expedite>[1]> = {}) {
+      const gh = seedGreenDocsPr();
+      gh.setBranchProtection(REPO, "main", protection({ requiresPullRequestReviews: true, requiredApprovingReviewCount: 1 }));
+      await reviewAs(gh, approver, "APPROVE");
+      return { gh, result: await run(gh, { autonomy: "auto", ...over }) };
+    }
+
+    it("merges on a HUMAN maintainer's approval: the normal case, and the whole deadlock", async () => {
+      const { gh, result } = await approvedBy("alice");
+      expect(result).toEqual({ action: "merged", reasons: [], headSha: HEAD });
+      expect(gh.merges).toEqual([{ repo: REPO, pr: PR, sha: HEAD, method: "merge", commitTitle: undefined }]);
+      expect(await gh.listComments(REPO, PR)).toEqual([]); // no proposal: nothing held it back
+    });
+
+    it("merges on a peer agent's approval whether or not the caller listed the login", async () => {
+      // knownAgentLogins used to be the difference between merging and proposing on this exact state.
+      // It no longer decides this rail at all, so a peer agent the operator forgot to configure is no
+      // longer a permanent obstacle either.
+      expect((await approvedBy("peer-bot", { knownAgentLogins: ["peer-bot"] })).result.action).toBe("merged");
+      expect((await approvedBy("peer-bot")).result.action).toBe("merged");
+    });
+
+    it("still holds off while a human's review request is outstanding: that IS a review in flight", async () => {
+      const gh = seedGreenDocsPr();
+      gh.setRequestedReviewers(REPO, PR, { users: ["alice"], teams: [] });
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons).toEqual(["a human review is in flight"]);
+      expect(gh.merges).toEqual([]);
+    });
+
+    it("still holds off for a requested team, whose members it cannot enumerate", async () => {
+      const gh = seedGreenDocsPr();
+      gh.setRequestedReviewers(REPO, PR, { users: [], teams: ["backend"] });
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons).toEqual(["a human review is in flight"]);
+      expect(gh.merges).toEqual([]);
+    });
+
+    // Unprotected on purpose, so rail 7 is the only rail that can refuse: on a branch that requires no
+    // review, GitHub really does report "clean" with a CHANGES_REQUESTED review outstanding.
+    it("holds off on a human's standing CHANGES_REQUESTED, with its own reason rather than a claim of a race", async () => {
+      const gh = seedGreenDocsPr();
+      await reviewAs(gh, "alice", "REQUEST_CHANGES", HEAD, "not like this");
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons).toEqual(["a human has requested changes"]);
+      expect(gh.merges).toEqual([]);
+      // The maintainer reads this comment: it must not tell them somebody is mid-review.
+      expect((await gh.listComments(REPO, PR))[0].body).toContain("a human has requested changes");
+      expect((await gh.listComments(REPO, PR))[0].body).not.toContain("in flight");
+    });
+
+    it("merges once that same human replaces the refusal with an approval", async () => {
+      const gh = seedGreenDocsPr();
+      await reviewAs(gh, "alice", "REQUEST_CHANGES", HEAD, "not like this");
+      await reviewAs(gh, "alice", "APPROVE", HEAD, "better now"); // the latest verdict wins
+      expect((await run(gh, { autonomy: "auto" })).action).toBe("merged");
+    });
+
+    it("does not hold off for a comment-only review, by a human or by a known agent", async () => {
+      const human = seedGreenDocsPr();
+      await reviewAs(human, "alice", "COMMENT", HEAD, "drive-by note");
+      expect((await run(human, { autonomy: "auto" })).action).toBe("merged");
+
+      const agent = seedGreenDocsPr();
+      await reviewAs(agent, "peer-bot", "COMMENT", HEAD, `looked at it\n\n${serializeMeta({ v: 1, role: "second-opinion", verdict: "comment" })}`);
+      expect((await run(agent, { autonomy: "auto", knownAgentLogins: ["peer-bot"] })).action).toBe("merged");
+    });
+
+    // The regression guard for the bug itself: a standing approval must never again be read as
+    // anything a rail can refuse. Stated over every login it could come from, so no future change can
+    // quietly restore the conflation for one of them, and asserted on the ACTION as well as on the
+    // wording, so re-labelling the old boolean as some other kind of human obstacle fails here too.
+    it.each(["alice", "peer-bot", ME])("never treats a standing approval by %s as an obstacle", async (approver) => {
+      const { gh, result } = await approvedBy(approver);
+      expect(result.action).toBe("merged");
+      expect(result.reasons).toEqual([]);
+      expect(result.reasons.some((r) => r.includes("human") || r.includes("in flight"))).toBe(false);
+      expect(gh.merges).toHaveLength(1);
+    });
+  });
+
+  // Issue #53: a peer approved sha0001, the author pushed sha0009, and the gate merged sha0009 on the
+  // strength of the approval of sha0001. Nobody had approved the code that merged.
+  describe("an approval of a commit that is no longer the head (issue #53)", () => {
+    const PUSHED = "sha0009";
+
+    /** The repro: an approval at HEAD, then a push to PUSHED with the checks green there too. */
+    async function approvedThenPushed(over: Partial<Parameters<typeof expedite>[1]> = {}, protectionOver: Partial<BranchProtectionSummary> = {}) {
+      const gh = seedGreenDocsPr();
+      gh.setBranchProtection(REPO, "main", protection({
+        requiresPullRequestReviews: true, requiredApprovingReviewCount: 1, ...protectionOver,
+      }));
+      await reviewAs(gh, "peer-bot", "APPROVE");
+      gh.prs.get(`${REPO}#${PR}`)!.headSha = PUSHED;
+      gh.setChecks(REPO, PUSHED, [{ name: "build", status: "success" }]);
+      gh.setMergeability(REPO, PR, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: PUSHED });
+      return { gh, result: await run(gh, { autonomy: "auto", knownAgentLogins: ["peer-bot"], ...over }) };
+    }
+
+    it("does not satisfy the required-approvals rule, so the change proposes instead of merging", async () => {
+      const { gh, result } = await approvedThenPushed();
+      expect(result.action).toBe("proposed");
+      expect(result.reasons).toEqual(["branch protection requirements are not satisfied"]);
+      expect(result.headSha).toBe(PUSHED);
+      expect(gh.merges).toEqual([]); // the commit nobody approved is not merged
+    });
+
+    it("does not block either: nobody approved this code, and nobody is mid-review", async () => {
+      const { result } = await approvedThenPushed();
+      expect(result.reasons.some((r) => r.includes("human"))).toBe(false);
+    });
+
+    it("counts again on a branch that dismisses stale reviews, where GitHub retires them itself", async () => {
+      const { gh, result } = await approvedThenPushed({}, { dismissesStaleReviews: true });
+      expect(result.action).toBe("merged");
+      expect(gh.merges).toEqual([{ repo: REPO, pr: PR, sha: PUSHED, method: "merge", commitTitle: undefined }]);
+    });
+
+    it("merges once someone approves the commit that would actually merge", async () => {
+      const { gh } = await approvedThenPushed();
+      await reviewAs(gh, "peer-bot", "APPROVE", PUSHED, "checked the new head too");
+      const second = await run(gh, { autonomy: "auto", knownAgentLogins: ["peer-bot"] });
+      expect(second.action).toBe("merged");
+      expect(gh.merges).toEqual([{ repo: REPO, pr: PR, sha: PUSHED, method: "merge", commitTitle: undefined }]);
+    });
+
+    it("is unaffected where protection asks for no approving review at all", async () => {
+      // Nothing was counting the approval, so nothing changes: an unprotected repository merges on the
+      // other nine rails exactly as it always did.
+      const gh = seedGreenDocsPr();
+      await reviewAs(gh, "peer-bot", "APPROVE");
+      gh.prs.get(`${REPO}#${PR}`)!.headSha = PUSHED;
+      gh.setChecks(REPO, PUSHED, [{ name: "build", status: "success" }]);
+      gh.setMergeability(REPO, PR, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: PUSHED });
+      expect((await run(gh, { autonomy: "auto" })).action).toBe("merged");
     });
   });
 

@@ -151,7 +151,7 @@ function renderApprovalBody(input: {
     // The protection clause is conditional because the honest statement differs: on a branch with no
     // protection, or none that requires an approving review, this approval was counted toward
     // nothing at all, and a fixed sentence claiming otherwise would be false on most repositories.
-    `Rails that passed: the diff is a version-only dependency change (every changed manifest line is a paired dependency version edit, every other changed file a lockfile); it fits the dependency size policy; required checks are green; GitHub reports a clean mergeable state; ${input.pendingApprovalCounted ? "branch protection is satisfied, counting this approval toward its required-approvals rule (the merge is judged separately, without it)" : "branch protection is satisfied"}; the security-alert rail is clear; no human review is in flight; autonomy "auto" was passed explicitly on this call; the head has not moved since the evaluation; and the approving login is not the author.`,
+    `Rails that passed: the diff is a version-only dependency change (every changed manifest line is a paired dependency version edit, every other changed file a lockfile); it fits the dependency size policy; required checks are green; GitHub reports a clean mergeable state; ${input.pendingApprovalCounted ? "branch protection is satisfied, counting this approval toward its required-approvals rule (the merge is judged separately, without it)" : "branch protection is satisfied"}; the security-alert rail is clear; no human review is pending and no human has requested changes; autonomy "auto" was passed explicitly on this call; the head has not moved since the evaluation; and the approving login is not the author.`,
   ].join("\n");
 }
 
@@ -315,7 +315,8 @@ export async function approveDependencyUpgrade(
     pendingApprovalFromActor: rails.pendingApprovalFromActor,
     branchProtectionSatisfied: rails.branchProtectionSatisfied,
     hasNewSecurityAlert: rails.hasNewSecurityAlert,
-    humanReviewInFlight: rails.humanReviewInFlight,
+    humanReviewPending: rails.humanReviewPending,
+    humanChangesRequested: rails.humanChangesRequested,
     autonomy: input.autonomy ?? "propose",
     headShaGuardPassed: rails.headShaGuardPassed,
     actingLogin,
@@ -348,14 +349,16 @@ export async function approveDependencyUpgrade(
     // briefly unmergeable) re-runs everything above, and the standing approval at this exact commit
     // must not turn into a second one.
     //
-    // Two conditions, and both are needed. The standing verdict has to BE an approval, which is the
-    // same question rail 5 asked when it granted the pending approval, so the two cannot disagree:
-    // an APPROVED row at this head followed by a CHANGES_REQUESTED at the same head leaves rail 5
-    // counting a pending approval that this guard would otherwise decide not to submit, and the
+    // Two conditions, and both are needed. The standing verdict has to BE an approval that counts,
+    // which is the same question rail 5 asked when it granted the pending approval, so the two cannot
+    // disagree: an APPROVED row at this head followed by a CHANGES_REQUESTED at the same head leaves
+    // rail 5 counting a pending approval that this guard would otherwise decide not to submit, and the
     // operation would then report "approved" on every tick forever while its own outstanding
-    // CHANGES_REQUESTED kept the pull request blocked. And it has to be at THIS head, because
-    // protection counts a standing approval whatever commit it was left on, while an approval left on
-    // a commit the bot has since force-pushed past states no verdict on the diff being merged now.
+    // CHANGES_REQUESTED kept the pull request blocked. And the approval has to be at THIS head, which
+    // rail 5 now also requires of an approval it counts (see ApprovalScope) except on a branch that
+    // dismisses stale reviews itself. On such a branch an approval left on an earlier commit can still
+    // be counted, and it still states no verdict on the diff being merged now, so this stays a
+    // separate condition rather than a restatement of the first.
     const alreadyApproved = rails.actorHasStandingApproval
       && rails.reviews.some((r) => r.author.toLowerCase() === actingLogin.toLowerCase() && r.state === "APPROVED" && r.commitId === headSha);
     // Tracked rather than assumed: every outcome below has to say whether an approval of ours is
@@ -423,7 +426,8 @@ export async function approveDependencyUpgrade(
         mergeableState: afterMergeability.state,
         branchProtectionSatisfied: after.branchProtectionSatisfied,
         hasNewSecurityAlert: after.hasNewSecurityAlert,
-        humanReviewInFlight: after.humanReviewInFlight,
+        humanReviewPending: after.humanReviewPending,
+        humanChangesRequested: after.humanChangesRequested,
         headShaGuardPassed: after.headShaGuardPassed,
         isApproving: false,
         // Both allowances are off here, stated explicitly rather than left to follow from isApproving.

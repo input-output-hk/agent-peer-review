@@ -382,7 +382,7 @@ describe("OctokitGateway.getBranchProtection", () => {
       strict: {
         status: 200,
         body: {
-          required_pull_request_reviews: { required_approving_review_count: 0 },
+          required_pull_request_reviews: { required_approving_review_count: 0, dismiss_stale_reviews: true },
           required_status_checks: { contexts: ["ci/build", "ci/test"] },
           enforce_admins: { enabled: true },
           required_conversation_resolution: { enabled: true },
@@ -396,6 +396,7 @@ describe("OctokitGateway.getBranchProtection", () => {
       requiredChecks: ["ci/build", "ci/test"],
       enforceAdmins: true,
       requiresConversationResolution: true,
+      dismissesStaleReviews: true,
     });
   });
 
@@ -408,7 +409,23 @@ describe("OctokitGateway.getBranchProtection", () => {
       requiredChecks: [],
       enforceAdmins: false,
       requiresConversationResolution: false,
+      dismissesStaleReviews: false,
     });
+  });
+
+  // Read for issue #53: it is what says whether GitHub is already retiring approvals on push, and so
+  // whether an approval of an older commit may be counted. It is nested under
+  // required_pull_request_reviews, so a branch that requires no review reports nothing here, and the
+  // false that produces is both the honest and the conservative reading.
+  it.each([
+    ["explicitly false", { required_pull_request_reviews: { dismiss_stale_reviews: false } }, false],
+    ["absent from the reviews block", { required_pull_request_reviews: {} }, false],
+    ["absent with no reviews block at all", {}, false],
+    ["enabled", { required_pull_request_reviews: { dismiss_stale_reviews: true } }, true],
+  ])("maps dismiss_stale_reviews %s to %s", async (_label, body, expected) => {
+    const { fetch } = fakeBranchProtectionFetch({ b: { status: 200, body } });
+    const gw = new OctokitGateway("fake-token", fetch);
+    expect(await gw.getBranchProtection("o/r", "b")).toMatchObject({ dismissesStaleReviews: expected });
   });
 
   it("does not mistake an explicit null required_pull_request_reviews for reviews being required", async () => {

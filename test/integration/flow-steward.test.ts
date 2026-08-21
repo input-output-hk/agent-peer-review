@@ -133,6 +133,9 @@ describe("Flow C (pr-steward): approve a bot dependency upgrade", () => {
   const PROTECTED_ONE_APPROVAL: BranchProtectionSummary = {
     requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
     requiredChecks: ["build"], enforceAdmins: false, requiresConversationResolution: false,
+    // GitHub's default, and the one that matters here: on this branch an approval counts only for the
+    // commit it was left on, so the approval this flow submits is an approval of the head it judged.
+    dismissesStaleReviews: false,
   };
   const blockedState = { state: "blocked" as const, mergeable: false, draft: false, baseRef: "main", headSha: HEAD };
 
@@ -213,6 +216,7 @@ describe("Flow C (pr-steward): approve a bot dependency upgrade", () => {
     gh.setBranchProtection(REPO, "main", {
       requiresPullRequestReviews: true, requiredApprovingReviewCount: 2,
       requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
+      dismissesStaleReviews: false,
     });
     gh.setMergeability(REPO, PR, blockedState);
 
