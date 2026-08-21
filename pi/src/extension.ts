@@ -3,7 +3,8 @@ import { Type } from "typebox";
 import { hostname } from "node:os";
 import {
   loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, enrichReview, bootstrap,
-  stabilize, expedite, requestPeerReview, approveDependencyUpgrade, watchAndReReview, DEFAULT_GATE_POLICY,
+  stabilize, expedite, requestPeerReview, approveDependencyUpgrade, watchAndReReview,
+  DEFAULT_GATE_POLICY, DEPS_GATE_POLICY,
   type GitHubGateway, type Config, type AllowedMergeMethods,
 } from "@input-output-hk/agent-review";
 
@@ -163,7 +164,7 @@ export function registerTools(
 
   pi.registerTool({
     name: "pr_request_review", label: "Request a peer review",
-    description: "Request an agent peer review (idempotent); reviewers default to the configured \"reviewers\" when omitted.",
+    description: "Request an agent peer review (idempotent); reviewers default to the configured \"reviewers\" when omitted. Returns \"bot-authored\" and requests nothing on a bot-authored PR: that one belongs to pr_approve_dep_upgrade, which may approve it itself.",
     parameters: Type.Object({
       repo: Type.String(), pr: Type.Number(),
       skills: Type.Optional(Type.Array(Type.String())),
@@ -183,25 +184,43 @@ export function registerTools(
   pi.registerTool({
     name: "pr_approve_dep_upgrade",
     label: "Approve a dependency upgrade",
-    description: "Evaluate a bot dependency-upgrade PR; propose (default) or, only when explicitly asked, approve and merge.",
+    description: "Evaluate a bot dependency-upgrade PR; propose (default) or, only when explicitly asked, approve and merge. Returns approved-and-merged, approved (the approval landed but the merge did not), proposed, already-proposed, not-eligible, or blocked.",
     parameters: Type.Object({
       repo: Type.String(),
       pr: Type.Number(),
       autonomy: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("propose")])),
       mergeMethod: Type.Optional(Type.Union([Type.Literal("merge"), Type.Literal("squash"), Type.Literal("rebase")])),
       botAllowlist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+      maxFiles: Type.Optional(Type.Integer({
+        minimum: 1,
+        description: `At most the dependency policy's max files cap (${DEPS_GATE_POLICY.maxFiles}); narrows the size rail, never widens it.`,
+      })),
+      maxLines: Type.Optional(Type.Integer({
+        minimum: 1,
+        description: `At most the dependency policy's max lines cap (${DEPS_GATE_POLICY.maxLines}); narrows the size rail, never widens it.`,
+      })),
     }),
     async execute(_id, p) {
-      // See the same note on pr_expedite: captured once so the merge-method probe (when it runs)
-      // and the operation itself share one client, and resolved only when autonomy is "auto".
+      // Captured once so the merge-method probe (when it runs) and the operation itself share one
+      // client, and resolved only when autonomy is "auto"; see the same note on pr_expedite.
       const github = gh();
       const config = cfg();
       const mergeMethod = p.autonomy === "auto"
         ? await resolveMergeMethod(github, config, p.repo, p.mergeMethod)
         : p.mergeMethod;
+      // Clamped to the DEPENDENCY policy, the same tighten-only way pr_expedite clamps to the
+      // general one: the operation's own default is DEPS_GATE_POLICY (a lockfile's line count is
+      // mechanical churn, not reviewable surface), and a caller may narrow that but never widen it.
+      const policy = p.maxFiles !== undefined || p.maxLines !== undefined
+        ? {
+          maxFiles: p.maxFiles === undefined ? undefined : Math.min(p.maxFiles, DEPS_GATE_POLICY.maxFiles),
+          maxLines: p.maxLines === undefined ? undefined : Math.min(p.maxLines, DEPS_GATE_POLICY.maxLines),
+        }
+        : undefined;
       return ok(await approveDependencyUpgrade(github, {
         repo: p.repo, pr: p.pr, now: new Date().toISOString(),
         autonomy: p.autonomy ?? "propose", mergeMethod, botAllowlist: p.botAllowlist,
+        policy,
         knownAgentLogins: config.knownAgentLogins,
       }));
     },

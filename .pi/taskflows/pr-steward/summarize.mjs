@@ -114,7 +114,10 @@ function main() {
     return;
   }
 
-  const counts = { proposed: 0, "approved-and-merged": 0, "not-eligible": 0, blocked: 0, failed: 0 };
+  // "approved" is counted apart from "approved-and-merged" on purpose: the approval landed and the
+  // merge did not, so folding the two together would report an upgrade as shipped when it is only
+  // unblocked.
+  const counts = { proposed: 0, approved: 0, "approved-and-merged": 0, "not-eligible": 0, blocked: 0, failed: 0 };
   const attention = [];
 
   for (const item of items) {
@@ -129,6 +132,7 @@ function main() {
     const reason = firstReason(result);
 
     if (action === "proposed" || action === "already-proposed") counts.proposed += 1;
+    else if (action === "approved") counts.approved += 1;
     else if (action === "approved-and-merged") counts["approved-and-merged"] += 1;
     else if (action === "not-eligible") counts["not-eligible"] += 1;
     else if (action === "blocked") counts.blocked += 1;
@@ -136,6 +140,14 @@ function main() {
 
     if (action === "blocked") {
       attention.push(`${label(item)}: the merge was refused${reason ? ` (${reason})` : ""}`);
+    } else if (action === "approved") {
+      attention.push(`${label(item)}: approved, not merged${reason ? ` (${reason})` : ""}`);
+    } else if (action === "not-eligible") {
+      // A hand-off, not a failure: a major bump, an unreadable version, or a diff that is not
+      // version-only is exactly what this path is supposed to leave to a person. But it writes
+      // nothing at all on the pull request, so without a line here the hand-off is invisible and
+      // permanent, and it lands on precisely the upgrades the flow exists for (issue #50).
+      attention.push(`${label(item)}: not eligible for the automated path, so a human decides it${reason ? ` (${reason})` : ""}`);
     } else if (action === "" || action === "error") {
       attention.push(`${label(item)}: a tool call failed${reason ? ` (${reason})` : ""}`);
     }

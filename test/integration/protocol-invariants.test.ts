@@ -59,15 +59,18 @@ function skillsDir(): string {
 /**
  * A docs-only pull request that clears every rail except autonomy.
  *
- * Mergeability is deliberately left unseeded: the fake then derives it from the pull request itself
- * (clean, at whatever the current head is), so a simulated push does not need a second arrangement
- * to stay coherent.
+ * The base branch is unprotected, so "clean" is the honest mergeable state and it is seeded once: the
+ * fake's unseeded default is "unknown", which fails rail 4 on purpose. One arrangement covers both
+ * heads, because nothing in the operations compares the mergeability response's own headSha (the head
+ * guard re-reads the pull request instead), so a simulated push stays coherent without a second
+ * arrangement. The fake stops reporting clean by itself once the pull request is merged.
  */
 function seedDocsPr(gh: FakeGitHubGateway, files: DetailedPullFile[] = [DOCS_FILE]): void {
   gh.seedPr({ number: PR, title: "docs: fix a typo", author: AUTHOR, headSha: HEAD, baseSha: "base", url: "u", state: "open", labels: [TRIGGER] });
   gh.setDetailedFiles(REPO, PR, files);
   gh.setChecks(REPO, HEAD, [{ name: "build", status: "success" }]);
   gh.setChecks(REPO, HEAD2, [{ name: "build", status: "success" }]);
+  gh.setMergeability(REPO, PR, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: HEAD });
 }
 
 const runExpedite = (gh: FakeGitHubGateway, now: string, over: Partial<Parameters<typeof expedite>[1]> = {}) =>

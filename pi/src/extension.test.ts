@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { serializeMarker, PRIMARY_MARKER, DEFAULT_GATE_POLICY } from "@input-output-hk/agent-review";
+import { serializeMarker, PRIMARY_MARKER, DEFAULT_GATE_POLICY, DEPS_GATE_POLICY, DEFAULT_BOT_ALLOWLIST } from "@input-output-hk/agent-review";
 import { registerTools, once } from "./extension.js";
 
 function fakePi() {
@@ -315,6 +315,7 @@ describe("pi extension", () => {
     const calls: any = {};
     const gh = {
       getPullRequest: async () => ({ number: 7, title: "t", author: "a", headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
+      getActorType: async () => "User" as const, // a human author, so the bot-authored guard passes
       addLabels: async () => {},
       requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
     } as any;
@@ -362,6 +363,75 @@ describe("pi extension", () => {
     expect(gh.merges).toEqual([{ repo: "o/r", pr: 2, sha: HEAD, method: "merge" }]);
     expect(gh.reviews).toHaveLength(1);
     expect(gh.reviews[0]).toMatchObject({ author: "me", state: "APPROVED", commitId: HEAD });
+  });
+
+  it("pr_request_review reports bot-authored and requests nothing for a dependency bot's pull request", async () => {
+    const pi = fakePi();
+    const calls: any = {};
+    const author = DEFAULT_BOT_ALLOWLIST[1]; // renovate[bot], the REST login behind issue #48
+    const gh = {
+      getPullRequest: async () => ({ number: 7, title: "t", author, headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
+      getActorType: async () => "Bot" as const,
+      addLabels: async () => { calls.labeled = true; },
+      requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
+    } as any;
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    const requestReview = pi.tools.find((t) => t.name === "pr_request_review");
+    const res = await requestReview.execute("id-r3", { repo: "o/r", pr: 7 }, undefined, undefined, undefined);
+    const result = JSON.parse(res.content[0].text);
+    expect(result.status).toBe("bot-authored");
+    expect(result.reason).toContain("steward");
+    expect(calls.reviewers).toBeUndefined(); // nobody was asked
+    expect(calls.labeled).toBeUndefined();   // nothing was labeled
+  });
+
+  it("pr_request_review still requests a review for a bot outside the dependency allowlist", async () => {
+    const pi = fakePi();
+    const calls: any = {};
+    const gh = {
+      getPullRequest: async () => ({ number: 8, title: "t", author: "github-actions[bot]", headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
+      getActorType: async () => "Bot" as const, // a bot, but not one the steward path can take
+      addLabels: async () => { calls.labeled = true; },
+      requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
+    } as any;
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    const requestReview = pi.tools.find((t) => t.name === "pr_request_review");
+    const res = await requestReview.execute("id-r4", { repo: "o/r", pr: 8 }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).status).toBe("requested");
+    expect(calls.reviewers).toEqual(["patextreme"]);
+  });
+
+  it("pr_approve_dep_upgrade cannot widen the size rail past the deps policy cap", async () => {
+    const pi = fakePi();
+    const gh = fakeDepUpgradeGh();
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
+    // The diff is 26 lines, so a clamped-down maxLines of 1 is what must bite: if 999999 had been
+    // taken at face value the tool could widen its own blast radius in the call that asks to merge.
+    const wide = await approveDep.execute("id-d4", { repo: "o/r", pr: 2, autonomy: "auto", maxLines: 999999 }, undefined, undefined, undefined);
+    expect(JSON.parse(wide.content[0].text).action).toBe("approved-and-merged"); // 26 lines is inside the deps cap
+    expect(JSON.parse(wide.content[0].text).reasons).toEqual([]);
+    expect(gh.merges).toHaveLength(1);
+
+    const tight = fakeDepUpgradeGh();
+    const pi2 = fakePi();
+    registerTools(pi2 as any, { gh: () => tight, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    const res = await pi2.tools.find((t) => t.name === "pr_approve_dep_upgrade")
+      .execute("id-d5", { repo: "o/r", pr: 2, autonomy: "auto", maxLines: 1 }, undefined, undefined, undefined);
+    const result = JSON.parse(res.content[0].text);
+    expect(result.action).toBe("proposed"); // a caller may still tighten
+    expect(result.reasons.some((r: string) => r.includes("too many changed lines"))).toBe(true);
+    expect(tight.merges).toEqual([]);
+  });
+
+  it("pr_approve_dep_upgrade advertises the deps policy caps, not the general ones", () => {
+    const pi = fakePi();
+    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false }) as any });
+    const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
+    const params = approveDep.parameters.properties;
+    expect(params.maxLines.description).toContain(String(DEPS_GATE_POLICY.maxLines));
+    expect(params.maxFiles.description).toContain(String(DEPS_GATE_POLICY.maxFiles));
+    expect(DEPS_GATE_POLICY.maxLines).toBeGreaterThan(DEFAULT_GATE_POLICY.maxLines);
   });
 
   it("pr_watch resolves the acting login from the token when config has none, and returns a decision", async () => {

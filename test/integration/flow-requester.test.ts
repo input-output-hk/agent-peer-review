@@ -183,6 +183,114 @@ describe("Flow A (pr-requester): stabilize, expedite, request a peer review", ()
     });
   });
 
+  // Issue #52, livelock 1: this flow calls requestPeerReview every tick, and the peer's flow reviews
+  // whatever it is asked to. Keyed on an OPEN request alone, the tick after the peer answered saw a
+  // labeled pull request with no outstanding request and asked again, because submitting a review
+  // clears the request natively. That cost one full agent invocation per tick, per pull request,
+  // forever, with the head never moving. What has to hold is that the sequence converges on its own
+  // and that a real author push still starts a real round.
+  describe("the review round, tick over tick", () => {
+    /** The peer's flow answering the request, recorded under its own login as GitHub records it. */
+    async function peerReviews(gh: FakeGitHubGateway, commitId: string): Promise<void> {
+      const mine = gh.login;
+      gh.login = PEER;
+      try {
+        await gh.submitReview(REPO, PR, { commitId, event: "REQUEST_CHANGES", body: "needs work" });
+      } finally {
+        gh.login = mine;
+      }
+    }
+
+    it("asks once per head: the peer answers, later ticks ask nothing, a push asks again", async () => {
+      const gh = new FakeGitHubGateway();
+      seedPr(gh, HEAD, [DOCS_FILE, SOURCE_FILE]);
+      seedClean(gh, HEAD);
+
+      // -- Tick 1: the change carries source, so the peer is asked.
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] })).status).toBe("requested");
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [PEER], teams: [] });
+
+      // The peer's flow reviews at that head, which clears its own request.
+      await peerReviews(gh, HEAD);
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
+
+      // -- Ticks 2 and 3: the label is still there and no request is outstanding, and neither tick
+      // may ask for anything. This is the loop: before the fix each of these answered "requested".
+      for (const _ of [2, 3]) {
+        expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] })).status).toBe("already-requested");
+      }
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
+      expect(gh.reviews).toHaveLength(1); // one review, not one per tick
+      expect((await gh.getPullRequest(REPO, PR)).labels).toEqual([TRIGGER]);
+
+      // -- Tick 4: the author pushed, which is a genuine new round.
+      push(gh, PUSHED);
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] })).status).toBe("requested");
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [PEER], teams: [] });
+
+      // ... and that round converges the same way.
+      await peerReviews(gh, PUSHED);
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] })).status).toBe("already-requested");
+      expect(gh.reviews).toHaveLength(2); // exactly one review per head, across four ticks
+      expect(gh.reviews.map((r) => r.commitId)).toEqual([HEAD, PUSHED]);
+    });
+  });
+
+  // Issue #48: a dependency bot's pull request is not a peer's to review. GitHub only forbids
+  // approving your OWN pull request, so this agent may review and approve such a change itself, which
+  // is the steward flow's job. Handing it to another engineer's agent adds a round trip and a person's
+  // queue for nothing.
+  describe("a pull request from a dependency bot", () => {
+    it("is never handed to a peer, even when the gate asks for a review", async () => {
+      const gh = new FakeGitHubGateway();
+      seedPr(gh, HEAD, [DOCS_FILE, SOURCE_FILE]);
+      gh.prs.get(`${REPO}#${PR}`)!.author = "renovate[bot]"; // the REST login behind issue #48
+      gh.setActorType("renovate[bot]", "Bot");
+      seedClean(gh, HEAD);
+
+      // Steps 1 and 2 are unchanged: a real open pull request, and a gate verdict that names the
+      // source path, which is exactly the reason step 3 would normally ask for a reviewer.
+      expect((await stabilize(gh, { repo: REPO, pr: PR })).status).toBe("up-to-date");
+      const proposed = await runExpedite(gh, tick(1));
+      expect(proposed.action).toBe("proposed");
+      expect(proposed.reasons.some((r) => r.startsWith("not auto-eligible:") && r.includes("source"))).toBe(true);
+
+      // Step 3 refuses, and nothing at all is written on the pull request.
+      const requested = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] });
+      expect(requested.status).toBe("bot-authored");
+      expect(requested.reason).toContain("steward");
+      expect((await gh.getPullRequest(REPO, PR)).labels).toEqual([]); // no trigger label
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
+      expect(await gh.listReviewRequests(REPO, PEER)).toEqual([]); // the peer's queue never sees it
+      expect(gh.merges).toEqual([]);
+
+      // A second tick reports the same thing and still writes nothing: this is a stable outcome, not
+      // a state to be retried into existence.
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] })).status).toBe("bot-authored");
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
+      // The only durable trace of the tick is the proposal comment step 2 posted.
+      expect((await soleMarker(gh)).marker.kind).toBe("expedite-proposal");
+    });
+
+    // The refusal is only as wide as the steward's allowlist. A bot outside it would be declined
+    // there too, so this flow has to keep handling it or the pull request gets no attention at all.
+    it("still hands a bot the steward cannot take to a peer, source changes and all", async () => {
+      const gh = new FakeGitHubGateway();
+      seedPr(gh, HEAD, [DOCS_FILE, SOURCE_FILE]);
+      gh.prs.get(`${REPO}#${PR}`)!.author = "github-actions[bot]";
+      gh.setActorType("github-actions[bot]", "Bot");
+      seedClean(gh, HEAD);
+
+      const proposed = await runExpedite(gh, tick(1));
+      expect(proposed.reasons.some((r) => r.startsWith("not auto-eligible:") && r.includes("source"))).toBe(true);
+
+      const requested = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] });
+      expect(requested.status).toBe("requested");
+      expect((await gh.getPullRequest(REPO, PR)).labels).toEqual([TRIGGER]);
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [PEER], teams: [] });
+    });
+  });
+
   describe("conflict", () => {
     it("stops the item at step 1 for a dirty branch, without even attempting a sync", async () => {
       const gh = new FakeGitHubGateway();

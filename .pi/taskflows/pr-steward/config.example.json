@@ -2,6 +2,6 @@
   "_setup": "Copy this whole directory and pr-steward.json and pr-steward.meta.json into your repository's .pi/taskflows/, rename this file to config.json, and list your repositories. The flow needs pi-taskflow installed in the host: pi install npm:pi-taskflow.",
   "_comment_repos": "Every repository the flow looks in for open bot dependency upgrades, as owner/name.",
   "repos": ["owner/name"],
-  "_comment_botAuthors": "The bot authors to discover, as gh --author values. Omit the key to get the default, [\"app/dependabot\"]. An empty array means no authors, so nothing is discovered.",
-  "botAuthors": ["app/dependabot"]
+  "_comment_botAuthors": "The bot authors to discover, as gh --author values. Omit the key to get the default, [\"app/dependabot\", \"app/renovate\"]. Keep this list to bots the tool's own allowlist accepts, or a discovered pull request will be declined as not an allowlisted dependency bot. An empty array means no authors, so nothing is discovered.",
+  "botAuthors": ["app/dependabot", "app/renovate"]
 }

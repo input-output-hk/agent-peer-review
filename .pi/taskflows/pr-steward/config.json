@@ -1,6 +1,6 @@
 {
   "_comment_repos": "Every repository this flow looks in for open bot dependency upgrades, as owner/name.",
   "repos": ["input-output-hk/agent-peer-review"],
-  "_comment_botAuthors": "The bot authors to discover, as gh --author values. An empty array means no authors, so nothing is discovered.",
-  "botAuthors": ["app/dependabot"]
+  "_comment_botAuthors": "The bot authors to discover, as gh --author values. Keep this list to bots the tool's own allowlist accepts. An empty array means no authors, so nothing is discovered.",
+  "botAuthors": ["app/dependabot", "app/renovate"]
 }

@@ -13,7 +13,12 @@ import { join } from "node:path";
 
 const HERE = import.meta.dirname;
 const CONFIG_PATH = join(HERE, "config.json");
-const DEFAULT_BOT_AUTHORS = ["app/dependabot"];
+// The bot authors discovered by default, as `gh --author` values. These are GitHub's GraphQL names
+// for an App integration, which is what `gh` matches on and prints; the same bots reach the tool as
+// the REST logins `dependabot[bot]` and `renovate[bot]`, which is the allowlist the gate trusts. Both
+// lists have to name the same bots: an author discovered here that the tool then declines, or a bot
+// the tool would take that is never discovered, is a pull request nobody looks at.
+const DEFAULT_BOT_AUTHORS = ["app/dependabot", "app/renovate"];
 const MAX_PER_REPO = 100;
 const MAX_BUFFER = 32 * 1024 * 1024;
 

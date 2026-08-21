@@ -29,6 +29,13 @@ export interface GateInput {
   actingLogin: string;
   author: string;
   isApproving: boolean;
+  /**
+   * True when this call is about to submit an approving review of its own that no standing approval
+   * already covers: the same allowance ProtectionState.pendingApprovalFromActor grants rail 5, passed
+   * here because rail 4 needs it for the same reason (see the rail itself). Only ever set by an
+   * operation that really approves, and only honored together with `isApproving`.
+   */
+  pendingApprovalFromActor?: boolean;
   policy?: { maxFiles?: number; maxLines?: number };
 }
 
@@ -38,6 +45,32 @@ export interface GateDecision {
 }
 
 export const DEFAULT_GATE_POLICY = { maxFiles: 10, maxLines: 200 } as const;
+
+/**
+ * The size policy for a dependency upgrade (`approveDependencyUpgrade`). Same file cap, a much
+ * larger line cap.
+ *
+ * Be precise about what is and is not verified here, because the larger cap rests on it.
+ * classifyDependencyUpgrade reads every changed line of every `package.json` and requires each one
+ * to be a paired -/+ dependency version edit. It does NOT read lockfile content at all: a lockfile
+ * is accepted on its FILE NAME, and its thousands of changed lines are never inspected by anything
+ * in this package. So those lines are not "reviewed and found harmless"; they are trusted, and what
+ * they are trusted on is the authorship rail: the pull request must come from an allowlisted
+ * dependency bot whose actor type GitHub itself confirms, and such a bot regenerates a lockfile
+ * mechanically from the manifest edit that was verified.
+ *
+ * The practical difference this makes is worth stating plainly. At the general 200-line cap, a full
+ * lockfile regeneration exceeded the rail and every such pull request went to a human. At 4000 it
+ * does not, so the human no longer sees it. That is the trade being made deliberately: a line count
+ * was never evidence about lockfile content either way, it was a coarse brake, and this replaces the
+ * brake with the authorship and content rails plus a sanity bound (a diff far past 4000 lines is not
+ * the change it claims to be).
+ *
+ * Everything else is unchanged, including the file-count cap: the NUMBER of touched files still says
+ * something a content check does not (how many manifests and lockfiles a change reaches across), and
+ * every other rail applies exactly as before.
+ */
+export const DEPS_GATE_POLICY = { maxFiles: 10, maxLines: 4000 } as const;
 
 // Fails closed: a count only passes when it is a non-negative integer within its cap. A bare
 // `n > cap` comparison would fail OPEN on a negative or non-numeric count (e.g. -5 > 10 is false),
@@ -82,10 +115,36 @@ export function evaluateGates(input: GateInput): GateDecision {
   // 3. Required checks must be green; pending or failing both fail. Never merge on red or unknown.
   if (input.checks !== "green") reasons.push(`required checks are ${input.checks} (need green)`);
 
-  // 4. GitHub's own mergeable state must be clean.
-  if (input.mergeableState !== "clean") reasons.push(`mergeable state is ${input.mergeableState} (need clean)`);
+  // 4. GitHub's own mergeable state must be clean, with one narrow exception: "blocked" is tolerated
+  // when this decision is the approval that is about to remove the block.
+  //
+  // Why the exception has to exist. GitHub reports "blocked" for an open pull request whose base
+  // branch requires an approving review while none stands (the same fact stabilize.ts reports as its
+  // own "blocked" status, and the everyday state of a pull request waiting for review). So on a
+  // protected repository this rail is unsatisfiable before the approval, for the same reason rail 5
+  // was: the operation that supplies the missing review cannot pass a rail that is failing because
+  // the review is missing. Tolerating it only for the approver keeps the deadlock fixed without
+  // widening the rail for anything else.
+  //
+  // Be honest about the limit of what is known here: mergeStateStatus does not say WHY it is blocked.
+  // A missing required review is the common cause and the one this call is about to fix, but a
+  // repository ruleset or some other requirement this package cannot read could be the real reason.
+  // That is why the tolerance buys only the APPROVAL, never the merge: the caller re-reads state
+  // after approving, without this allowance, and a state that is still "blocked" then is the honest
+  // answer that no merge may happen (see approveDependencyUpgrade, which reports "approved").
+  //
+  // Every other state still fails, including "dirty" (conflicts), "unstable" (a failing
+  // non-required check), "behind", and "unknown" (nothing is known, so nothing is assumed).
+  const mergeableStateOk = input.mergeableState === "clean"
+    || (input.mergeableState === "blocked" && input.isApproving && input.pendingApprovalFromActor === true);
+  if (!mergeableStateOk) reasons.push(`mergeable state is ${input.mergeableState} (need clean)`);
 
   // 5. Branch protection (required reviews/checks/conversations/enforce_admins) must be satisfied.
+  // The input is computed by protectionSatisfied, which accounts for an approving review the caller
+  // is about to submit when the caller is itself the approver (see
+  // ProtectionState.pendingApprovalFromActor): otherwise the operation that supplies the approval
+  // could never satisfy the requirement its own approval exists to satisfy. Nothing else about this
+  // rail changes, and a requirement of two approvals with none present still fails.
   if (!input.branchProtectionSatisfied) reasons.push("branch protection requirements are not satisfied");
 
   // 6. The security alert rail must be satisfied. The wording stays neutral because the input is

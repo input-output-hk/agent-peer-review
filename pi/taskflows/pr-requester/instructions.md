@@ -10,7 +10,7 @@ Three tools, and nothing else:
 
 - `pr_stabilize` (`repo`, `pr`) syncs the branch with its base.
 - `pr_expedite` (`repo`, `pr`, `autonomy`) evaluates the expedition gate, then proposes or, only when autonomy is `auto` and every rail passes, merges.
-- `pr_request_review` (`repo`, `pr`, optional `skills`, optional `reviewers`) requests an agent peer review. It is idempotent.
+- `pr_request_review` (`repo`, `pr`, optional `skills`, optional `reviewers`) requests an agent peer review. It is idempotent, and it refuses a pull request authored by one of the dependency bots the `pr-steward` flow handles.
 
 Never use `gh`, `git`, or any other command to merge, approve, comment on, label, close, or push. Those are the tools' job, and only the tools keep the safety gate in the loop. A read-only `gh` call is acceptable to read state when a tool is unavailable, but a missing tool is never a reason to act by hand: report it instead.
 
@@ -34,7 +34,10 @@ Do not pass `maxFiles` or `maxLines` to `pr_expedite` unless you have a reason t
    - `blocked`: a merge was attempted and refused. Stop, and report `requested` as `skipped`.
 
 3. **Hand real code to a peer.** Look at the `reasons` from step 2, whatever the action was. Request a review when **any** reason begins with `not auto-eligible:` and names source or test paths. That reason is the gate saying the change carries code no automated path may merge, so it wants a reviewer. The exact wording after the prefix varies with the classes present, so match on the prefix and on whether the words `source` or `test` appear in that reason, not on a fixed sentence.
-   - When it matches, call `pr_request_review` with just `repo` and `pr`. Leave `reviewers` out so the configured default reviewers are used. The `status` is `requested` or `already-requested`; report it. Calling it on a pull request that already has an open request is safe and returns `already-requested`, so do not spend a call checking first.
+   - When it matches, call `pr_request_review` with just `repo` and `pr`. Leave `reviewers` out so the configured default reviewers are used. The `status` is `requested`, `already-requested`, or `bot-authored`; report it. Calling it on a pull request that already has an open request is safe and returns `already-requested`, so do not spend a call checking first.
+   - `bot-authored` means the author is one of the dependency bots the `pr-steward` flow handles, so nothing was requested and nothing was labeled. That flow owns this pull request, because this agent may review and approve such a change itself (GitHub only forbids approving your **own** pull request), and asking another engineer's agent instead would add a round trip and a person's queue for nothing. Report `requested` as `bot-authored` and stop. Do not work around the refusal by requesting a reviewer another way.
+
+     A bot author the tool does **not** refuse is not a mistake. Only the dependency bots the steward path can actually take are refused; a codegen or release bot opens pull requests carrying real source changes, which no automated path may merge, so those go to a peer reviewer exactly like a person's would.
    - When no reason matches, report `requested` as `skipped`.
    - If the call fails with a no-reviewers error (the tool throws when no reviewers are passed and none are configured), that is configuration missing, not a fault of yours. Report `requested` as `skipped`, say so in one sentence, and do not report `error`. This case overrides the general rule below.
 
@@ -50,6 +53,6 @@ Your final line must be exactly one JSON object on one line, and nothing after i
 
 - `stabilize`: `up-to-date`, `updated`, `blocked`, `conflict`, `draft`, `gone`, or `error`.
 - `expedite`: `merged`, `proposed`, `already-proposed`, `not-eligible`, `blocked`, `escalate-human`, `skipped`, or `error`.
-- `requested`: `requested`, `already-requested`, `skipped`, or `error`.
+- `requested`: `requested`, `already-requested`, `bot-authored`, `skipped`, or `error`.
 
 Keep it on one line, and do not start any other line with `###`. The summary script reads those markers.

@@ -10,7 +10,7 @@
 import type { GitHubGateway, Mergeability, DetailedPullFile } from "../github.js";
 import type { Review } from "../model.js";
 import { summarizeChecks, type ChecksSummary } from "../expedition/checks.js";
-import { protectionSatisfied, countApprovalsByOthers } from "../expedition/protection.js";
+import { protectionSatisfied, countApprovalsByOthers, hasStandingApproval } from "../expedition/protection.js";
 import { humanReviewInFlight } from "../expedition/human-review.js";
 import { findActionMarkers, type ActionMarker } from "../expedition/action-marker.js";
 import { renderProposal } from "../expedition/proposal.js";
@@ -22,6 +22,32 @@ export interface RailInputs {
   approvalsByOthers: number;
   /** Every review on the pull request, in GitHub's chronological order. Already fetched for the rails above. */
   reviews: Review[];
+  /**
+   * Whether `willApproveAs`'s standing verdict is already an approval, so a caller can reuse the
+   * answer instead of recomputing it. `false` when no `willApproveAs` was given: the question was
+   * never asked, because only an operation that intends to approve has an approver to ask about.
+   */
+  actorHasStandingApproval: boolean;
+  /**
+   * Whether this call may count an approving review it is about to submit: `willApproveAs` was given,
+   * it is not the pull request's author, and it holds no standing approval already.
+   *
+   * Reported because two rails need it, and they must not disagree. Rail 5 (branch protection) gets
+   * it through protectionSatisfied, computed here; rail 4 (GitHub's mergeable state) needs the same
+   * answer, because a branch requiring a review that nobody has given yet reads as "blocked", and the
+   * caller passes it into GateInput. False for every non-approving caller, which leaves both rails
+   * exactly as they were.
+   */
+  pendingApprovalFromActor: boolean;
+  /**
+   * Whether the pending approval was actually NEEDED: it was granted (see willApproveAs) and the
+   * base branch really does require at least one approving review. False on an unprotected branch,
+   * or one whose protection asks for zero approvals, where the approval changes no arithmetic.
+   *
+   * Reported so a caller can describe its own decision honestly rather than claiming, on every
+   * repository alike, that its approval was counted toward a rule that may not exist.
+   */
+  pendingApprovalCounted: boolean;
   branchProtectionSatisfied: boolean;
   hasNewSecurityAlert: boolean;
   /** The specific cause behind `hasNewSecurityAlert`, so a caller can say which one it is. Null when the rail passes. */
@@ -68,6 +94,14 @@ export async function gatherRails(
     mergeability: Mergeability;
     files: DetailedPullFile[];
     knownAgentLogins?: string[];
+    /**
+     * The login this call is about to submit an approving review as, passed ONLY by an operation
+     * that really does approve (today: approveDependencyUpgrade). It changes exactly one thing: the
+     * required-approvals comparison inside protectionSatisfied counts that approval, because it is
+     * an action about to be taken rather than a hypothetical. Omit it and every rail below is
+     * computed exactly as it always was.
+     */
+    willApproveAs?: string;
   },
 ): Promise<RailInputs> {
   const { repo, pr, headSha, mergeability, files } = input;
@@ -87,6 +121,24 @@ export async function gatherRails(
   const requiredChecks = typeof protection === "object" ? protection.requiredChecks : undefined;
   const checksSummary = summarizeChecks(checks, requiredChecks);
   const approvalsByOthers = countApprovalsByOthers(reviews, input.author);
+
+  // Whether the approval this caller is about to add counts toward the required-approvals rule.
+  // Three conditions, all necessary:
+  //
+  //   willApproveAs given      - only an operation that really submits an approval may claim one.
+  //   not the pull's author    - GitHub refuses a self-approval, so it would never be counted
+  //                              (rail 10 refuses the whole action too).
+  //   no standing approval     - one already there is already inside approvalsByOthers; adding it
+  //                              again would count a single approval twice.
+  //
+  // The standing check is deliberately not filtered by commit SHA: protection counts a standing
+  // approval whatever commit it was left on, and countApprovalsByOthers does not filter either, so
+  // filtering here is what would produce the double count. Whether to POST a fresh approval at this
+  // head is a different question, and its caller answers it separately.
+  const actorHasStandingApproval = input.willApproveAs !== undefined && hasStandingApproval(reviews, input.willApproveAs);
+  const pendingApprovalFromActor = input.willApproveAs !== undefined
+    && input.willApproveAs !== input.author
+    && !actorHasStandingApproval;
 
   // null means the alert API could not be read at all (disabled, or no access). "We do not know"
   // is never "safe", so it fails the rail exactly like a real alert would, with a different reason
@@ -112,7 +164,13 @@ export async function gatherRails(
     checksSummary,
     approvalsByOthers,
     reviews,
-    branchProtectionSatisfied: protectionSatisfied(protection, { approvalsByOthers, checksSummary }),
+    actorHasStandingApproval,
+    pendingApprovalFromActor,
+    pendingApprovalCounted: pendingApprovalFromActor
+      && typeof protection === "object"
+      && protection.requiresPullRequestReviews
+      && protection.requiredApprovingReviewCount > 0,
+    branchProtectionSatisfied: protectionSatisfied(protection, { approvalsByOthers, checksSummary, pendingApprovalFromActor }),
     hasNewSecurityAlert: securityDetail !== null,
     securityDetail,
     // A requested TEAM is a human review in flight too. Its members cannot be enumerated from here

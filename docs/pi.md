@@ -45,11 +45,16 @@ Five more tools have no MCP or CLI counterpart. They move a pull request forward
 | --- | --- |
 | `pr_stabilize` | Sync a pull request's branch with its base branch, and report what stands in the way when it cannot be done. |
 | `pr_expedite` | Evaluate the expedition gate, then propose the merge in a comment (the default) or, only when explicitly asked, merge a trivial change. |
-| `pr_request_review` | Request an agent peer review, at most once per round. Reviewers default to the configured `reviewers` when omitted. |
-| `pr_approve_dep_upgrade` | Evaluate a bot dependency-upgrade pull request, then propose (the default) or, only when explicitly asked, approve and merge it. |
+| `pr_request_review` | Request an agent peer review, at most once per round: `requested`, `already-requested`, or `bot-authored`. Reviewers default to the configured `reviewers` when omitted. |
+| `pr_approve_dep_upgrade` | Evaluate a bot dependency-upgrade pull request, then propose (the default) or, only when explicitly asked, approve and merge it: `approved-and-merged`, `approved`, `proposed`, `already-proposed`, `not-eligible`, or `blocked`. |
 | `pr_watch` | Decide the reviewer's next action for a pull request this agent already reviewed: `re-review`, `wait`, `hold-for-human`, `abandoned`, `approved`, or `none`. Reads only. |
 
-`pr_expedite` and `pr_approve_dep_upgrade` take an `autonomy` parameter that defaults to `propose` and is never read from the config file, so a caller has to ask for the merge path explicitly on every single call. Their optional `maxFiles` and `maxLines` parameters can only tighten the default size caps, never widen them.
+`pr_expedite` and `pr_approve_dep_upgrade` take an `autonomy` parameter that defaults to `propose` and is never read from the config file, so a caller has to ask for the merge path explicitly on every single call. Their optional `maxFiles` and `maxLines` parameters can only tighten that tool's own size caps, never widen them: `pr_expedite` clamps to 10 files and 200 lines, `pr_approve_dep_upgrade` to 10 files and 4000 lines (for a dependency change the manifest lines are read and verified while lockfile content is not read at all, so the larger cap rests on the authorship and content rails rather than on a line count; see [the deps policy](./taskflows.md#pr-steward)).
+
+Two of these statuses are worth reading closely.
+
+- `pr_request_review` returns **`bot-authored`** and writes nothing when the author is one of the dependency bots `pr_approve_dep_upgrade` accepts. GitHub only forbids approving your *own* pull request, so your agent may review and approve such a change itself; that work belongs to the steward tool, not to a peer's queue. Any other bot is still requested normally: a bot that opens pull requests carrying real source changes needs a reviewer exactly as much as a person does.
+- `pr_approve_dep_upgrade` returns **`approved`** when the approval was submitted and the merge was not. The tool approves, then re-reads every rail input and runs the whole gate again, merging only if that second evaluation still says `auto`, so `approved` means the pull request is now unblocked for whoever merges it next and `reasons` names the rail that refused: protection the approval did not satisfy, a check that went red, a human review that arrived in the meantime, a new alert, or a moved head. See [the safety model](./taskflows.md#the-safety-model) for why the approval itself counts toward a required-approvals rule while the merge decision does not inherit that allowance.
 
 These five are what the three [expedition taskflows](./taskflows.md) call. The flows are the scheduled way to use them across a set of repositories, and they default to propose-only as well.
 

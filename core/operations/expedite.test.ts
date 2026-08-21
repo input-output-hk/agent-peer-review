@@ -11,11 +11,16 @@ const HEAD = "sha0001";
 
 // A docs-only pull request that clears every rail except autonomy: green checks, no protection, no
 // alerts, no reviewers. Each test below breaks exactly one thing.
+//
+// The mergeable state is seeded explicitly, as it has to be everywhere: the fake's unseeded default
+// is "unknown", which fails rail 4, precisely so no test can assert a state combination GitHub cannot
+// produce. "clean" is the honest one here because this pull request's base branch has no protection.
 function seedGreenDocsPr(): FakeGitHubGateway {
   const gh = new FakeGitHubGateway();
   gh.seedPr({ number: PR, title: "docs: fix a typo", author: "human-author", headSha: HEAD, baseSha: "base", url: "u", state: "open", labels: [] });
   gh.setDetailedFiles(REPO, PR, [{ filename: "README.md", status: "modified", additions: 2, deletions: 1, patch: "@@\n-a\n+b" }]);
   gh.setChecks(REPO, HEAD, [{ name: "build", status: "success" }]);
+  gh.setMergeability(REPO, PR, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: HEAD });
   return gh;
 }
 
@@ -139,6 +144,65 @@ describe("expedite", () => {
       gh.setBranchProtection(REPO, "main", "unknown");
       const result = await run(gh, { autonomy: "auto" });
       expect(result.reasons.some((r) => r.includes("branch protection"))).toBe(true);
+    });
+
+    // The other side of the issue #48 fix: a required approval is only ever counted for the
+    // operation that is about to SUPPLY it. expedite merges rather than approves, so it passes no
+    // willApproveAs to gatherRails and rail 5 is exactly what it always was: a missing required
+    // approval holds the change back, even under autonomy auto, even from an agent that could
+    // approve some other pull request.
+    it("still fails the protection rail on a repository that requires an approving review", async () => {
+      const gh = seedGreenDocsPr();
+      gh.setBranchProtection(REPO, "main", {
+        requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
+        requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
+      });
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons).toEqual(["branch protection requirements are not satisfied"]);
+      expect(gh.merges).toEqual([]);
+      expect(gh.reviews).toEqual([]); // and it certainly does not approve anything to get there
+    });
+
+    // The rail 4 half of the same rule. GitHub reports "blocked" while a required review is missing,
+    // and the approver's allowance to tolerate that is exactly what expedite must not have: it merges
+    // rather than approves, so nothing it does would remove the block.
+    it("still refuses a blocked mergeable state, which it can never be the one to clear", async () => {
+      const gh = seedGreenDocsPr();
+      gh.setBranchProtection(REPO, "main", {
+        requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
+        requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
+      });
+      gh.setMergeability(REPO, PR, { state: "blocked", mergeable: false, draft: false, baseRef: "main", headSha: HEAD });
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons).toContain("mergeable state is blocked (need clean)");
+      expect(result.reasons).toContain("branch protection requirements are not satisfied");
+      expect(gh.merges).toEqual([]);
+      expect(gh.reviews).toEqual([]);
+    });
+
+    it.each(["dirty", "unstable", "unknown"] as const)("still refuses a %s mergeable state", async (state) => {
+      const gh = seedGreenDocsPr();
+      gh.setMergeability(REPO, PR, { state, mergeable: false, draft: false, baseRef: "main", headSha: HEAD });
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("proposed");
+      expect(result.reasons).toEqual([`mergeable state is ${state} (need clean)`]);
+      expect(gh.merges).toEqual([]);
+    });
+
+    it("merges once a real approval by someone else satisfies that requirement", async () => {
+      const gh = seedGreenDocsPr();
+      gh.setBranchProtection(REPO, "main", {
+        requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
+        requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
+      });
+      gh.login = "peer-bot";
+      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "fine by me" });
+      gh.login = ME;
+      const result = await run(gh, { autonomy: "auto", knownAgentLogins: ["peer-bot"] });
+      expect(result.action).toBe("merged");
     });
 
     it("judges only the required contexts when the base branch declares them", async () => {
@@ -284,6 +348,7 @@ describe("expedite", () => {
       gh.seedPr({ number: PR, title: "docs", author: "human-author", headSha: HEAD, baseSha: "base", url: "u", state: "open", labels: [] });
       gh.setDetailedFiles(REPO, PR, [{ filename: "README.md", status: "modified", additions: 1, deletions: 1, patch: "@@" }]);
       gh.setChecks(REPO, HEAD, [{ name: "build", status: "success" }]);
+      gh.setMergeability(REPO, PR, { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: HEAD });
 
       const result = await run(gh, { autonomy: "auto" });
       expect(result.action).toBe("blocked");

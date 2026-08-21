@@ -21,7 +21,8 @@ export interface WatchAndReReviewResult {
 export const DEFAULT_MAX_REVIEW_ROUNDS = 3;
 
 // States that carry a verdict. A COMMENTED review is a note or a second opinion, not a position on
-// the change, so it never becomes the review this operation follows up on.
+// the change, so it never becomes the review this operation follows up on and it never spends a
+// round of the cap below.
 const VERDICT_STATES: ReadonlySet<string> = new Set(["APPROVED", "CHANGES_REQUESTED"]);
 
 /**
@@ -33,6 +34,13 @@ const VERDICT_STATES: ReadonlySet<string> = new Set(["APPROVED", "CHANGES_REQUES
  * The round cap is what keeps an agent and an author from ping-ponging forever. It is checked
  * before the human-review test so that an agent that has already used its rounds hands over for
  * that reason, whether or not a human happens to be looking right now.
+ *
+ * A round is a VERDICT, not a review. Counting every review by this login spent the cap on writes
+ * that asked the author for nothing (issue #52): a second opinion is a COMMENTED review, and so is
+ * a primary that `completeReview` downgraded because a competing one already existed, so two of
+ * those plus one real verdict exhausted a cap meant for three rounds of back-and-forth. The count
+ * only ever grows, which made `hold-for-human` permanent for that pull request no matter what the
+ * human then did.
  *
  * Two boundaries worth stating, because both look like omissions:
  *
@@ -59,7 +67,10 @@ export async function watchAndReReview(gh: GitHubGateway, input: WatchAndReRevie
   const mine = sortReviews(reviews).filter((r) => r.author === myLogin);
   if (mine.length === 0) return { action: "none", reason: "this agent has not reviewed this pull request" };
 
-  const latest: Review | undefined = mine.filter((r) => VERDICT_STATES.has(r.state)).at(-1);
+  // Every verdict this agent has left, oldest first: the last one is the standing position, and how
+  // many there are is how many rounds have been spent.
+  const verdicts = mine.filter((r) => VERDICT_STATES.has(r.state));
+  const latest: Review | undefined = verdicts.at(-1);
   if (!latest) return { action: "none", reason: "this agent has left comments but no verdict on this pull request" };
   if (latest.state === "APPROVED") {
     return pull.headSha === latest.commitId
@@ -74,10 +85,10 @@ export async function watchAndReReview(gh: GitHubGateway, input: WatchAndReRevie
     return { action: "wait", reason: `no push since this agent requested changes at ${latest.commitId}` };
   }
 
-  if (mine.length >= maxRounds) {
+  if (verdicts.length >= maxRounds) {
     return {
       action: "hold-for-human",
-      reason: `review round cap reached (${mine.length} of ${maxRounds}); handing this pull request to a human`,
+      reason: `review round cap reached (${verdicts.length} of ${maxRounds}); handing this pull request to a human`,
     };
   }
 

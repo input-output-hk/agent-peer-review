@@ -131,18 +131,30 @@ export class FakeGitHubGateway implements GitHubGateway {
   async listDir(repo: string, ref: string, path: string): Promise<string[]> { return this.dirs.get(`${repo}@${ref}:${path}`) ?? []; }
 
   // -- Expedition methods (PR 3) -----------------------------------------------------------
+  /**
+   * The mergeable state seeded with setMergeability, or "unknown" when a test never said.
+   *
+   * The default is deliberately a state that FAILS the gate. It used to be "clean", and that one
+   * default hid a production deadlock through two review passes: a test could seed branch protection
+   * requiring an approving review and still be handed a clean mergeable state, which is a combination
+   * GitHub cannot produce (it reports "blocked" for a pull request awaiting its required review). The
+   * tests asserted an impossible world and passed. A test that cares about the mergeable state now
+   * has to say which one it means.
+   */
   async getMergeability(repo: string, pr: number): Promise<Mergeability> {
     const key = this.key(repo, pr);
-    const explicit = this.mergeability.get(key);
-    if (explicit) return { ...explicit };
     const found = this.prs.get(key);
     if (found && found.state !== "open") {
-      // A merged/closed PR is never cleanly mergeable. There is no literal "closed" member of
-      // Mergeability["state"], so "unknown" is the closest honest signal; mergeable: false makes
-      // the practical consequence unambiguous regardless of which state string a caller checks.
+      // A merged/closed PR is never cleanly mergeable, and this outranks whatever was seeded: a stale
+      // "clean" left over from before the merge is exactly the kind of impossible state that must not
+      // be reachable. There is no literal "closed" member of Mergeability["state"], so "unknown" is
+      // the closest honest signal; mergeable: false makes the consequence unambiguous whichever field
+      // a caller reads.
       return { state: "unknown", mergeable: false, draft: false, baseRef: "main", headSha: found.headSha };
     }
-    return { state: "clean", mergeable: true, draft: false, baseRef: "main", headSha: found?.headSha ?? "" };
+    const explicit = this.mergeability.get(key);
+    if (explicit) return { ...explicit };
+    return { state: "unknown", mergeable: null, draft: false, baseRef: "main", headSha: found?.headSha ?? "" };
   }
   async getChecks(repo: string, ref: string): Promise<CheckResult[]> {
     return (this.checks.get(`${repo}@${ref}`) ?? []).map((c) => ({ ...c }));

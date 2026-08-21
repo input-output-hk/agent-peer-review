@@ -130,11 +130,35 @@ describe("watchAndReReview", () => {
       expect((await run(gh, { maxReviewRounds: 1 })).action).toBe("hold-for-human");
     });
 
-    it("counts this agent's COMMENT reviews toward the cap", async () => {
+    // Issue #52, livelock 3. Counting every review by this login spent the cap on writes that asked
+    // the author for nothing: a second opinion is a COMMENTED review, and so is a primary that
+    // completeReview downgraded because a competing one already existed. The count only grows, so
+    // once it was spent, hold-for-human was permanent for that pull request whatever the human did.
+    it("does not count this agent's COMMENT reviews toward the cap", async () => {
       const gh = seed("sha0003");
       await reviewAs(gh, ME, "REQUEST_CHANGES", "sha0001");
       await reviewAs(gh, ME, "COMMENT", "sha0002");
-      expect((await run(gh, { maxReviewRounds: 2 })).action).toBe("hold-for-human");
+      expect((await run(gh, { maxReviewRounds: 2 })).action).toBe("re-review");
+    });
+
+    it("two second opinions plus one verdict do not exhaust a cap of three", async () => {
+      const gh = seed("sha0004");
+      await reviewAs(gh, ME, "COMMENT", "sha0001");
+      await reviewAs(gh, ME, "COMMENT", "sha0002");
+      await reviewAs(gh, ME, "REQUEST_CHANGES", "sha0003");
+      const result = await run(gh, { maxReviewRounds: 3 });
+      expect(result.action).toBe("re-review");
+      expect(result.reason).toContain("sha0003"); // the verdict is what it follows up on
+      expect(result.reason).toContain("sha0004");
+    });
+
+    it("counts only the verdicts when it does report the cap", async () => {
+      const gh = seed("sha0004");
+      await reviewAs(gh, ME, "COMMENT", "sha0001");
+      for (const sha of ["sha0001", "sha0002", "sha0003"]) await reviewAs(gh, ME, "REQUEST_CHANGES", sha);
+      const result = await run(gh, { maxReviewRounds: 3 });
+      expect(result.action).toBe("hold-for-human");
+      expect(result.reason).toContain("3 of 3"); // not "4 of 3": the COMMENT was never a round
     });
   });
 

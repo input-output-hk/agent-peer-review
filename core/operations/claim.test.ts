@@ -37,12 +37,90 @@ describe("claimReview", () => {
     expect(task.contentPolicy).toMatch(/untrusted/i); // standing injection-resistance policy served
   });
 
-  it("resumes when the same login already holds the claim", async () => {
+  it("resumes the pinned SHA while it is still the head", async () => {
     const gh = new FakeGitHubGateway();
     gh.seedPr({ number: 6, title: "t", author: "a", headSha: "cafe1234", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
-    await gh.createComment("o/r", 6, serializeMarker({ v: 1, reviewer: "me", machine: "other", sha: "old1234", claimedAt: "t0" }));
+    await gh.createComment("o/r", 6, serializeMarker({ v: 1, reviewer: "me", machine: "other", sha: "cafe1234", claimedAt: "t0" }));
     const task = await claimReview(deps(gh, skillsDir()), { repo: "o/r", pr: 6 });
-    expect(task.headSha).toBe("old1234"); // resumes the pinned SHA
+    expect(task.headSha).toBe("cafe1234");
+    const comments = await gh.listComments("o/r", 6);
+    expect(comments).toHaveLength(1);
+    expect(parseMarkers(comments)[0].marker.claimedAt).toBe("t0"); // untouched, not reposted
+  });
+
+  // Issue #52, livelock 2. A claim marker used to be a permanent SHA pin: this branch resumed
+  // whatever commit the marker named and nothing ever moved it, so an agent whose run stalled
+  // re-claimed a dead commit on every tick, reviewed code that no longer existed, and the drift that
+  // produced then read to the watch path as an author push, manufacturing another round.
+  describe("re-pinning a stale claim", () => {
+    it("re-pins to the current head, leaving exactly one marker", async () => {
+      const gh = new FakeGitHubGateway();
+      gh.seedPr({ number: 6, title: "t", author: "a", headSha: "sha0004", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
+      await gh.createComment("o/r", 6, serializeMarker({ v: 1, reviewer: "me", machine: "mbp-01", sha: "sha0001", claimedAt: "t0" }));
+
+      const task = await claimReview(deps(gh, skillsDir(), "mbp-01", "t5"), { repo: "o/r", pr: 6 });
+      expect(task.headSha).toBe("sha0004"); // the CURRENT head, not the dead commit
+      const comments = await gh.listComments("o/r", 6);
+      expect(comments).toHaveLength(1); // the stale marker is gone, not merely outnumbered
+      // claimedAt is carried over: the re-pin moves the commit, not the agent's place in the queue.
+      expect(parseMarkers(comments)[0].marker).toEqual({ v: 1, reviewer: "me", machine: "mbp-01", sha: "sha0004", claimedAt: "t0" });
+      expect(comments[0].body).toContain("pinned to sha0004"); // and the human line says so too
+      expect(task.role).toBe("anchor");
+      expect(task.repoContext).toEqual([]); // context is gathered at the new pin, not the old one
+    });
+
+    it("carries v2 metadata across the re-pin", async () => {
+      const gh = new FakeGitHubGateway();
+      gh.seedPr({ number: 9, title: "t", author: "a", headSha: "sha0002", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
+      const original = { v: 2, reviewer: "me", machine: "mbp-01", sha: "sha0001", claimedAt: "t0", model: "claude-opus-4-8", agent: "claude-code", toolVersion: "1.0.0" } as const;
+      await gh.createComment("o/r", 9, serializeMarker(original));
+
+      const task = await claimReview(deps(gh, skillsDir()), { repo: "o/r", pr: 9 });
+      expect(task.headSha).toBe("sha0002");
+      expect(parseMarkers(await gh.listComments("o/r", 9))[0].marker).toEqual({ ...original, sha: "sha0002" });
+    });
+
+    it("keeps the anchor the anchor: a re-pin does not reorder the panel", async () => {
+      const dir = skillsDir();
+      const gh = new FakeGitHubGateway();
+      gh.seedPr({ number: 5, title: "t", author: "a", headSha: "sha0001", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
+      gh.login = "alice";
+      expect((await claimReview({ gh, config: cfg(dir), machine: "m1", now: "2026-07-30T00:00:00Z" }, { repo: "o/r", pr: 5 })).role).toBe("anchor");
+      gh.login = "bob";
+      expect((await claimReview({ gh, config: cfg(dir), machine: "m2", now: "2026-07-30T00:01:00Z" }, { repo: "o/r", pr: 5 })).role).toBe("enricher");
+
+      // The author pushes. Both agents re-claim, later than the other's original claim, and the roles
+      // must not swap: an anchor that became an enricher would leave the round with no primary.
+      gh.prs.get("o/r#5")!.headSha = "sha0002";
+      gh.login = "alice";
+      const alice = await claimReview({ gh, config: cfg(dir), machine: "m1", now: "2026-07-30T01:00:00Z" }, { repo: "o/r", pr: 5 });
+      expect(alice.role).toBe("anchor");
+      expect(alice.headSha).toBe("sha0002");
+      gh.login = "bob";
+      const bob = await claimReview({ gh, config: cfg(dir), machine: "m2", now: "2026-07-30T01:01:00Z" }, { repo: "o/r", pr: 5 });
+      expect(bob.role).toBe("enricher");
+      expect(bob.headSha).toBe("sha0002");
+      expect(await gh.listComments("o/r", 5)).toHaveLength(2); // one marker each, still
+    });
+
+    it("collapses a duplicate claim of its own onto the current head", async () => {
+      // A claim race can leave two markers by the same reviewer. Re-pinning only the earliest would
+      // put the stale one back at the front of the queue on the next tick, and re-pin every tick.
+      const gh = new FakeGitHubGateway();
+      gh.seedPr({ number: 7, title: "t", author: "a", headSha: "sha0003", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
+      await gh.createComment("o/r", 7, serializeMarker({ v: 1, reviewer: "me", machine: "mbp-01", sha: "sha0001", claimedAt: "t0" }));
+      await gh.createComment("o/r", 7, serializeMarker({ v: 1, reviewer: "me", machine: "mbp-02", sha: "sha0002", claimedAt: "t1" }));
+
+      const task = await claimReview(deps(gh, skillsDir()), { repo: "o/r", pr: 7 });
+      expect(task.headSha).toBe("sha0003");
+      const markers = parseMarkers(await gh.listComments("o/r", 7));
+      expect(markers).toHaveLength(1);
+      expect(markers[0].marker).toMatchObject({ sha: "sha0003", claimedAt: "t0" }); // the earliest claim survives
+
+      // And it is stable: a second tick at the same head resumes without writing anything.
+      await claimReview(deps(gh, skillsDir()), { repo: "o/r", pr: 7 });
+      expect(await gh.listComments("o/r", 7)).toHaveLength(1);
+    });
   });
 
   it("lets a second login also claim; earliest is anchor, next is enricher", async () => {
