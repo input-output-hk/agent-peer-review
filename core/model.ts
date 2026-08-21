@@ -4,7 +4,6 @@ export const ConfigSchema = z.object({
   githubLogin: z.string().nullable().default(null),
   defaultRepo: z.string().optional(),
   skillsDir: z.string().nullable().default(null),
-  runChecks: z.boolean().default(false),
   model: z.string().optional(),
   agent: z.string().optional(),
   toolVersion: z.string().optional(),
@@ -22,6 +21,17 @@ export const ConfigSchema = z.object({
   // merge is a per-invocation argument (the shipped pr-requester/pr-reviewer/pr-steward taskflows
   // pass their own `autonomy` flow argument down to the tool), never a value read from this config.
   knownAgentLogins: z.array(z.string().min(1)).default([]),
+  // Per-repository default merge method ("owner/name" -> method), read by the pi adapter
+  // (pi/src/extension.ts) when an expedition auto-merge call (pr_expedite,
+  // pr_approve_dep_upgrade) omits an explicit mergeMethod. A repository restricted to squash-only
+  // or rebase-only merge policies 405s on the operations' own "merge" default, so this lets an
+  // operator pin the permitted method per repository instead of relying solely on the adapter's
+  // own read of the repository's allowed merge methods (which wins only when this is unset).
+  // Optional rather than defaulted to {}: unlike reviewers/knownAgentLogins, nothing besides the
+  // pi adapter's own optional chaining (`config.mergeMethodByRepo?.[repo]`) ever reads this, so
+  // leaving it undefined when unset avoids widening every other Config literal across the
+  // codebase with a field it does not use.
+  mergeMethodByRepo: z.record(z.string(), z.enum(["merge", "squash", "rebase"])).optional(),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

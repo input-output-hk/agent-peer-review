@@ -9,6 +9,7 @@ export interface InitInput {
   agent?: string;
   toolVersion?: string;
   reviewers?: string[]; // default reviewers to request when a create call omits --reviewers
+  knownAgentLogins?: string[]; // logins the expedition human-review rail should treat as agents
 }
 
 export interface InitDeps {
@@ -23,6 +24,14 @@ export interface InitResult {
   configPath: string;
   login: string;
   bootstrapped: Array<{ repo: string; created: string[]; unchanged: string[] }>;
+  // The knownAgentLogins now on record after this call's merge, whether just written or carried
+  // over from an existing config.json, so the CLI can name it in the printed summary: it is easy to
+  // forget (see AGENTS.md's install contract), and the summary is the one place every install path
+  // reads.
+  knownAgentLogins: string[];
+  // Set when the best-effort Dependabot alerts probe below could not confirm the token can read
+  // that endpoint. Never thrown: a probe failure must not fail init itself, only warn about it.
+  securityAlertsWarning?: string;
 }
 
 const REPO_SHAPE = /^[^\s/]+\/[^\s/]+$/;
@@ -75,6 +84,7 @@ export async function runInit(input: InitInput, deps: InitDeps): Promise<InitRes
   if (input.agent !== undefined) config.agent = input.agent;
   if (input.toolVersion !== undefined) config.toolVersion = input.toolVersion;
   if (input.reviewers !== undefined) config.reviewers = input.reviewers;
+  if (input.knownAgentLogins !== undefined) config.knownAgentLogins = input.knownAgentLogins;
 
   deps.writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
 
@@ -86,5 +96,44 @@ export async function runInit(input: InitInput, deps: InitDeps): Promise<InitRes
     bootstrapped.push({ repo, created: [...created, ...updated], unchanged });
   }
 
-  return { configPath, login, bootstrapped };
+  // The value now on record, not just what this call passed: a re-run of `init` without
+  // --known-agent-login still reports whatever an earlier run (or a hand edit) already set, so the
+  // summary always reflects the file just written rather than only this invocation's input.
+  const knownAgentLogins = Array.isArray(config.knownAgentLogins)
+    ? config.knownAgentLogins.filter((v): v is string => typeof v === "string")
+    : [];
+
+  const securityAlertsWarning = await probeSecurityAlertsAccess(deps.gateway, input.repos);
+
+  return { configPath, login, bootstrapped, knownAgentLogins, securityAlertsWarning };
+}
+
+// Best-effort, read-only check that this token can read the Dependabot alerts endpoint: the
+// permission the expedition auto paths (pr_expedite / pr_approve_dep_upgrade with
+// autonomy: "auto") need before their security-alert rail can ever pass, on a fine-grained token
+// "Dependabot alerts: read", on a classic one "security_events" (see SECURITY.md and issue #54).
+// Neither permission is needed to request, claim, or complete a review.
+//
+// Checked against the first repo only: the permission itself is a property of the token, not of
+// any one repository, so one sample is enough to tell whether the token can reach this endpoint at
+// all. Never allowed to fail init: any thrown error is treated exactly like the gateway's own
+// "cannot tell" sentinel (null) rather than propagating, since this is advisory, not a
+// precondition for the rest of setup.
+async function probeSecurityAlertsAccess(gateway: GitHubGateway, repos: string[]): Promise<string | undefined> {
+  if (repos.length === 0) return undefined;
+  const repo = repos[0];
+  let alertCount: number | null;
+  try {
+    alertCount = await gateway.listOpenSecurityAlertCount(repo);
+  } catch {
+    alertCount = null;
+  }
+  if (alertCount !== null) return undefined;
+  return (
+    `Could not read Dependabot alerts on ${repo}. This token may be missing "Dependabot alerts: read" ` +
+    `(fine-grained) or "security_events" (classic); see SECURITY.md. This does NOT affect requesting, ` +
+    `claiming, or completing reviews. It only means autonomy=auto on the expedition taskflows ` +
+    `(pr_expedite, pr_approve_dep_upgrade) can never approve or merge anything: that safety rail ` +
+    `fails closed whenever it cannot read the alert count.`
+  );
 }

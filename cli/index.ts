@@ -78,12 +78,13 @@ program.command("init")
   .description("Guided setup: authenticate, write the global config, and bootstrap the ai-review label profile")
   .option("--repo <owner/name...>", "repository to bootstrap (repeatable)")
   .option("--reviewer <login...>", "default reviewer login to request when a create call omits --reviewers (repeatable)")
+  .option("--known-agent-login <login...>", "GitHub login the expedition safety gate should treat as an agent rather than a human (repeatable)")
   .option("--capture-metadata", "opt in to durable review metadata capture (model/agent/machine become part of the public review)")
   .option("--model <model>", "model identifier recorded when --capture-metadata is on")
   .option("--agent <agent>", "agent/host identifier recorded when --capture-metadata is on")
   .option("--tool-version <version>", "tool version recorded when --capture-metadata is on")
   .option("--yes", "non-interactive: never prompt; fail with guidance if --repo is missing")
-  .action(async (opts: { repo?: string[]; reviewer?: string[]; captureMetadata?: boolean; model?: string; agent?: string; toolVersion?: string; yes?: boolean }) => {
+  .action(async (opts: { repo?: string[]; reviewer?: string[]; knownAgentLogin?: string[]; captureMetadata?: boolean; model?: string; agent?: string; toolVersion?: string; yes?: boolean }) => {
     let repos = opts.repo ?? [];
     let captureMetadata = opts.captureMetadata;
     let model = opts.model;
@@ -111,7 +112,10 @@ program.command("init")
     let result;
     try {
       result = await runInit(
-        { repos, captureMetadata, model, agent, toolVersion: opts.toolVersion, reviewers: opts.reviewer },
+        {
+          repos, captureMetadata, model, agent, toolVersion: opts.toolVersion,
+          reviewers: opts.reviewer, knownAgentLogins: opts.knownAgentLogin,
+        },
         {
           gateway: gh(),
           home: ensureAgentHome(),
@@ -132,12 +136,23 @@ program.command("init")
     for (const b of result.bootstrapped) {
       printLine(`Bootstrapped ${b.repo}: created [${b.created.join(", ")}], unchanged [${b.unchanged.join(", ")}]`);
     }
+    printLine(
+      result.knownAgentLogins.length > 0
+        ? `Known agent logins: ${result.knownAgentLogins.join(", ")}`
+        : "Known agent logins: (none set; every reviewer counts as human until --known-agent-login lists your peer agents)",
+    );
     printLine("");
     printLine("MCP server config (paste into your host's MCP settings):");
     printJson({ mcpServers: { "agent-review": { command: "agent-review-mcp", env: { GITHUB_TOKEN: "..." } } } });
     printLine("");
     printLine(`Skill: ${path.join(skillsRoot(cfg()), "orchestration.md")}`);
     printLine("Enable it in your host (Claude Code, Codex, pi.dev) so the reviewing agent knows the claim -> review -> complete loop.");
+    if (result.securityAlertsWarning) {
+      printErrLine("");
+      printErrLine("!".repeat(72));
+      printErrLine(`WARNING: ${result.securityAlertsWarning}`);
+      printErrLine("!".repeat(72));
+    }
   });
 
 program.command("request")

@@ -21,10 +21,6 @@
           ],
           "default": null
         },
-        "runChecks": {
-          "type": "boolean",
-          "default": false
-        },
         "model": {
           "type": "string"
         },
@@ -53,6 +49,17 @@
             "minLength": 1
           },
           "default": []
+        },
+        "mergeMethodByRepo": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "merge",
+              "squash",
+              "rebase"
+            ]
+          }
         }
       },
       "additionalProperties": false

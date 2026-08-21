@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { serializeMarker, PRIMARY_MARKER, DEFAULT_GATE_POLICY } from "@input-output-hk/agent-review";
-import { registerTools } from "./extension.js";
+import { registerTools, once } from "./extension.js";
 
 function fakePi() {
   const tools: any[] = [];
@@ -125,7 +125,7 @@ function fakeDepUpgradeGh() {
 describe("pi extension", () => {
   it("registers the six review tools plus the five expedition tools", () => {
     const pi = fakePi();
-    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false }) as any });
+    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null }) as any });
     expect(pi.tools.map((t) => t.name).sort()).toEqual([
       "labels_bootstrap", "pr_approve_dep_upgrade", "pr_expedite", "pr_request_review", "pr_stabilize", "pr_watch",
       "review_claim", "review_complete", "review_create", "review_enrich", "review_list",
@@ -138,7 +138,7 @@ describe("pi extension", () => {
       addLabels: async () => {},
       requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: null, reviewers: ["patextreme"] }) as any });
     const create = pi.tools.find((t) => t.name === "review_create");
     const res = await create.execute("id-create-1", { repo: "o/r", pr: 7 }, undefined, undefined, undefined);
     expect(JSON.parse(res.content[0].text).reviewers).toEqual(["patextreme"]);
@@ -151,7 +151,7 @@ describe("pi extension", () => {
       addLabels: async () => {},
       requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: null, reviewers: ["patextreme"] }) as any });
     const create = pi.tools.find((t) => t.name === "review_create");
     const res = await create.execute("id-create-2", { repo: "o/r", pr: 7, reviewers: ["alice"] }, undefined, undefined, undefined);
     expect(JSON.parse(res.content[0].text).reviewers).toEqual(["alice"]);
@@ -159,7 +159,7 @@ describe("pi extension", () => {
   });
   it("review_create throws a clear error when reviewers are empty everywhere", async () => {
     const pi = fakePi();
-    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: null, skillsDir: null, runChecks: false, reviewers: [] }) as any });
+    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: null, skillsDir: null, reviewers: [] }) as any });
     const create = pi.tools.find((t) => t.name === "review_create");
     await expect(create.execute("id-create-3", { repo: "o/r", pr: 7 }, undefined, undefined, undefined))
       .rejects.toThrow(/no reviewers/i);
@@ -167,7 +167,7 @@ describe("pi extension", () => {
   it("review_list wraps the core result in Pi content shape", async () => {
     const pi = fakePi();
     const gh = { getAuthenticatedLogin: async () => "me", listReviewRequests: async () => [], listComments: async () => [] } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: null, runChecks: false }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: null }) as any });
     const list = pi.tools.find((t) => t.name === "review_list");
     const res = await list.execute("id1", { repo: "o/r" }, undefined, undefined, undefined);
     expect(res.content[0].type).toBe("text");
@@ -191,7 +191,7 @@ describe("pi extension", () => {
       getFileContent: async () => null,
       listDir: async () => [],
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: dir, runChecks: false }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: dir }) as any });
     const claim = pi.tools.find((t) => t.name === "review_claim");
     const res = await claim.execute("id2", { repo: "o/r", pr: 7 }, undefined, undefined, undefined);
     expect(res.content[0].type).toBe("text");
@@ -214,7 +214,7 @@ describe("pi extension", () => {
       submitReview: async (_r: string, _p: number, opts: any) => { calls.submit = opts; return { url: "https://example.com/review/1" }; },
       deleteComment: async (_r: string, id: number) => { calls.deleted = id; },
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null }) as any });
     const complete = pi.tools.find((t) => t.name === "review_complete");
     const res = await complete.execute("id3", { repo: "o/r", pr: 7, event: "approve", summary: "looks good" }, undefined, undefined, undefined);
     expect(res.content[0].type).toBe("text");
@@ -233,7 +233,7 @@ describe("pi extension", () => {
       submitReview: async (_r: string, _p: number, opts: any) => { calls.submit = opts; return { url: "https://example.com/review/2" }; },
       deleteComment: async () => {},
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null }) as any });
     const enrich = pi.tools.find((t) => t.name === "review_enrich");
     const res = await enrich.execute("id4", { repo: "o/r", pr: 7, verdict: "agree", summary: "concur" }, undefined, undefined, undefined);
     expect(JSON.parse(res.content[0].text).status).toBe("enriched");
@@ -249,7 +249,7 @@ describe("pi extension", () => {
       getMergeability: async () => ({ state: "behind" as const, mergeable: false, draft: false, baseRef: "main", headSha: HEAD }),
       updateBranch: async () => "updated" as const,
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null }) as any });
     const stabilizeTool = pi.tools.find((t) => t.name === "pr_stabilize");
     const res = await stabilizeTool.execute("id-s1", { repo: "o/r", pr: 1 }, undefined, undefined, undefined);
     expect(JSON.parse(res.content[0].text).status).toBe("updated");
@@ -258,7 +258,7 @@ describe("pi extension", () => {
   it('pr_expedite with no autonomy proposes and merges nothing (propose is the adapter-layer default)', async () => {
     const pi = fakePi();
     const gh = fakeExpeditableGh();
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
     const expediteTool = pi.tools.find((t) => t.name === "pr_expedite");
     const res = await expediteTool.execute("id-e1", { repo: "o/r", pr: 1 }, undefined, undefined, undefined);
     expect(JSON.parse(res.content[0].text).action).toBe("proposed");
@@ -268,7 +268,7 @@ describe("pi extension", () => {
   it('pr_expedite with an explicit autonomy: "auto" merges the same pull request', async () => {
     const pi = fakePi();
     const gh = fakeExpeditableGh();
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
     const expediteTool = pi.tools.find((t) => t.name === "pr_expedite");
     const res = await expediteTool.execute("id-e2", { repo: "o/r", pr: 1, autonomy: "auto" }, undefined, undefined, undefined);
     expect(JSON.parse(res.content[0].text).action).toBe("merged");
@@ -279,7 +279,7 @@ describe("pi extension", () => {
   it('pr_expedite passes an explicit mergeMethod "squash" through to the merge', async () => {
     const pi = fakePi();
     const gh = fakeExpeditableGh();
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
     const expediteTool = pi.tools.find((t) => t.name === "pr_expedite");
     const res = await expediteTool.execute("id-e5", { repo: "o/r", pr: 1, autonomy: "auto", mergeMethod: "squash" }, undefined, undefined, undefined);
     expect(JSON.parse(res.content[0].text).action).toBe("merged");
@@ -293,7 +293,7 @@ describe("pi extension", () => {
     const gh = fakeExpeditableGh({
       files: [{ filename: "README.md", status: "modified", additions: DEFAULT_GATE_POLICY.maxLines + 100, deletions: 0, patch: "@@" }],
     });
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
     const expediteTool = pi.tools.find((t) => t.name === "pr_expedite");
     const res = await expediteTool.execute("id-e6", { repo: "o/r", pr: 1, autonomy: "auto", maxLines: 999999 }, undefined, undefined, undefined);
     const result = JSON.parse(res.content[0].text);
@@ -304,7 +304,7 @@ describe("pi extension", () => {
 
   it("pr_request_review throws the same clear error as review_create when reviewers are empty everywhere", async () => {
     const pi = fakePi();
-    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, reviewers: [] }) as any });
+    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null, reviewers: [] }) as any });
     const requestReview = pi.tools.find((t) => t.name === "pr_request_review");
     await expect(requestReview.execute("id-r1", { repo: "o/r", pr: 7 }, undefined, undefined, undefined))
       .rejects.toThrow(/no reviewers/i);
@@ -318,7 +318,7 @@ describe("pi extension", () => {
       addLabels: async () => {},
       requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, reviewers: ["patextreme"] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, reviewers: ["patextreme"] }) as any });
     const requestReview = pi.tools.find((t) => t.name === "pr_request_review");
     const res = await requestReview.execute("id-r2", { repo: "o/r", pr: 7 }, undefined, undefined, undefined);
     expect(JSON.parse(res.content[0].text).reviewers).toEqual(["patextreme"]);
@@ -331,7 +331,7 @@ describe("pi extension", () => {
       getAuthenticatedLogin: async () => "me",
       getPullRequest: async () => ({ number: 9, title: "t", author: "human-author", headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
     const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
     const res = await approveDep.execute("id-d1", { repo: "o/r", pr: 9 }, undefined, undefined, undefined);
     const result = JSON.parse(res.content[0].text);
@@ -342,7 +342,7 @@ describe("pi extension", () => {
   it("pr_approve_dep_upgrade with no autonomy proposes a bot version bump and approves/merges nothing", async () => {
     const pi = fakePi();
     const gh = fakeDepUpgradeGh();
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
     const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
     const res = await approveDep.execute("id-d2", { repo: "o/r", pr: 2 }, undefined, undefined, undefined);
     const result = JSON.parse(res.content[0].text);
@@ -354,7 +354,7 @@ describe("pi extension", () => {
   it('pr_approve_dep_upgrade with an explicit autonomy: "auto" approves and merges the same bot bump', async () => {
     const pi = fakePi();
     const gh = fakeDepUpgradeGh();
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
     const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
     const res = await approveDep.execute("id-d3", { repo: "o/r", pr: 2, autonomy: "auto" }, undefined, undefined, undefined);
     const result = JSON.parse(res.content[0].text);
@@ -371,7 +371,7 @@ describe("pi extension", () => {
       getPullRequest: async () => ({ number: 3, title: "t", author: "human-author", headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
       getReviews: async () => [{ id: 1, author: "me", state: "CHANGES_REQUESTED", body: "", commitId: HEAD, submittedAt: "t1" }],
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: null, knownAgentLogins: [] }) as any });
     const watch = pi.tools.find((t) => t.name === "pr_watch");
     const res = await watch.execute("id-w1", { repo: "o/r", pr: 3 }, undefined, undefined, undefined);
     const result = JSON.parse(res.content[0].text);
@@ -399,15 +399,99 @@ describe("pi extension", () => {
     } as any;
 
     const piWithoutKnownAgents = fakePi();
-    registerTools(piWithoutKnownAgents as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: [] }) as any });
+    registerTools(piWithoutKnownAgents as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
     const watchWithout = piWithoutKnownAgents.tools.find((t) => t.name === "pr_watch");
     const resWithout = await watchWithout.execute("id-k1", { repo: "o/r", pr: 4 }, undefined, undefined, undefined);
     expect(JSON.parse(resWithout.content[0].text).action).toBe("hold-for-human"); // peer-bot unknown: reads as human
 
     const piWithKnownAgents = fakePi();
-    registerTools(piWithKnownAgents as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, runChecks: false, knownAgentLogins: ["peer-bot"] }) as any });
+    registerTools(piWithKnownAgents as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: ["peer-bot"] }) as any });
     const watchWith = piWithKnownAgents.tools.find((t) => t.name === "pr_watch");
     const resWith = await watchWith.execute("id-k2", { repo: "o/r", pr: 4 }, undefined, undefined, undefined);
     expect(JSON.parse(resWith.content[0].text).action).toBe("re-review"); // known agent: does not trip the human rail
+  });
+
+  it('pr_expedite reads the repository\'s allowed merge methods when autonomy is "auto" and mergeMethod is omitted', async () => {
+    const pi = fakePi();
+    const gh: any = fakeExpeditableGh();
+    // Simulates a squash-only repository: "merge" (the operation's own fallback) would 405 there.
+    gh.getAllowedMergeMethods = async () => ({ merge: false, squash: true, rebase: false });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
+    const expediteTool = pi.tools.find((t) => t.name === "pr_expedite");
+    const res = await expediteTool.execute("id-e7", { repo: "o/r", pr: 1, autonomy: "auto" }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).action).toBe("merged");
+    expect(gh.merges).toEqual([{ repo: "o/r", pr: 1, sha: HEAD, method: "squash" }]);
+  });
+
+  it("pr_expedite prefers a configured mergeMethodByRepo entry over the repository's allowed methods", async () => {
+    const pi = fakePi();
+    const gh: any = fakeExpeditableGh();
+    // Every method is allowed here, so a plain read of the repository would pick "merge" first;
+    // the configured per-repo default must win over that.
+    gh.getAllowedMergeMethods = async () => ({ merge: true, squash: true, rebase: true });
+    registerTools(pi as any, {
+      gh: () => gh,
+      config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [], mergeMethodByRepo: { "o/r": "rebase" } }) as any,
+    });
+    const expediteTool = pi.tools.find((t) => t.name === "pr_expedite");
+    const res = await expediteTool.execute("id-e8", { repo: "o/r", pr: 1, autonomy: "auto" }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).action).toBe("merged");
+    expect(gh.merges).toEqual([{ repo: "o/r", pr: 1, sha: HEAD, method: "rebase" }]);
+  });
+
+  it("pr_expedite does not probe for a merge method at all in propose mode (no autonomy given)", async () => {
+    const pi = fakePi();
+    const gh: any = fakeExpeditableGh();
+    let probed = false;
+    gh.getAllowedMergeMethods = async () => { probed = true; return { merge: true, squash: true, rebase: true }; };
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
+    const expediteTool = pi.tools.find((t) => t.name === "pr_expedite");
+    await expediteTool.execute("id-e9", { repo: "o/r", pr: 1 }, undefined, undefined, undefined);
+    expect(probed).toBe(false); // propose mode never merges, so resolving a mergeMethod would be wasted work
+  });
+
+  it("pr_approve_dep_upgrade also reads the repository's allowed merge methods when omitted", async () => {
+    const pi = fakePi();
+    const gh: any = fakeDepUpgradeGh();
+    gh.getAllowedMergeMethods = async () => ({ merge: false, squash: false, rebase: true });
+    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [] }) as any });
+    const approveDep = pi.tools.find((t) => t.name === "pr_approve_dep_upgrade");
+    const res = await approveDep.execute("id-d4", { repo: "o/r", pr: 2, autonomy: "auto" }, undefined, undefined, undefined);
+    const result = JSON.parse(res.content[0].text);
+    expect(result.action).toBe("approved-and-merged");
+    expect(gh.merges).toEqual([{ repo: "o/r", pr: 2, sha: HEAD, method: "rebase" }]);
+  });
+
+  it("an explicit mergeMethod still wins over both config and the repository's allowed methods", async () => {
+    const pi = fakePi();
+    const gh: any = fakeExpeditableGh();
+    gh.getAllowedMergeMethods = async () => ({ merge: true, squash: false, rebase: false });
+    registerTools(pi as any, {
+      gh: () => gh,
+      config: () => ({ githubLogin: "me", skillsDir: null, knownAgentLogins: [], mergeMethodByRepo: { "o/r": "rebase" } }) as any,
+    });
+    const expediteTool = pi.tools.find((t) => t.name === "pr_expedite");
+    const res = await expediteTool.execute("id-e10", { repo: "o/r", pr: 1, autonomy: "auto", mergeMethod: "squash" }, undefined, undefined, undefined);
+    expect(JSON.parse(res.content[0].text).action).toBe("merged");
+    expect(gh.merges).toEqual([{ repo: "o/r", pr: 1, sha: HEAD, method: "squash" }]);
+  });
+});
+
+describe("once", () => {
+  it("calls the factory exactly once no matter how many times the wrapper runs, and always returns the same value", () => {
+    let calls = 0;
+    const wrapped = once(() => { calls += 1; return { built: calls }; });
+    const a = wrapped();
+    const b = wrapped();
+    const c = wrapped();
+    expect(calls).toBe(1);
+    expect(a).toBe(b);
+    expect(b).toBe(c);
+  });
+
+  it("does not call the factory at all until the wrapper is first invoked", () => {
+    let calls = 0;
+    once(() => { calls += 1; return calls; }); // never invoked below
+    expect(calls).toBe(0);
   });
 });
