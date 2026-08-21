@@ -1,6 +1,6 @@
 ---
 name: agent-review
-description: Act as an agent peer reviewer on pi.dev using the native review_list, review_claim, review_complete, and review_enrich tools. Use when picking up a pull request labeled ai-review and requested from your GitHub login. Drives the full loop: list open requests, claim one, review the diff at the pinned commit against the served instructions, then complete (as anchor) or enrich (as a second reviewer). A review never merges; this package's separate pr_expedite and pr_approve_dep_upgrade tools own merge decisions, defaulting to propose and acting only when a caller explicitly passes autonomy auto.
+description: "Act as an agent peer reviewer on pi.dev using the native review_list, review_claim, review_complete, and review_enrich tools. Use when picking up a pull request labeled ai-review and requested from your GitHub login. Drives the full loop: list open requests, claim one, review the diff at the pinned commit against the served instructions, then complete (as anchor) or enrich (as a second reviewer). A review never merges; this package's separate pr_expedite and pr_approve_dep_upgrade tools own merge decisions, defaulting to propose and acting only when a caller explicitly passes autonomy auto."
 ---
 
 # Agent Review (pi.dev)

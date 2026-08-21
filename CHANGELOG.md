@@ -4,6 +4,9 @@ Notable changes to `@input-output-hk/agent-review` and `@input-output-hk/agent-r
 
 ## Unreleased
 
+### pi package
+- Fixed the `agent-review` skill's frontmatter so pi loads it at startup again. The long `description` value was an unquoted YAML scalar containing `": "` sequences (for example `Drives the full loop: list open requests`), which every YAML parser reads as a nested mapping inside a plain one; pi failed with `Nested mappings are not allowed in compact mappings at line 2, column 14`. The value is now double-quoted; its text is unchanged.
+
 ## 0.5.0
 
 ### Expedition taskflows
