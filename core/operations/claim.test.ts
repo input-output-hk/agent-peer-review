@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
 import { claimReview } from "./claim.js";
 import { serializeMarker, parseMarkers } from "../claim-marker.js";
+import { PRIMARY_MARKER } from "../claim-marker.js";
+import { serializeReviewRecord } from "../review-record.js";
+import type { ReviewFinding } from "../model.js";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -35,6 +38,37 @@ describe("claimReview", () => {
     expect(task.repoContext.map((f) => f.path)).toContain("CLAUDE.md"); // gathered at pinned SHA
     expect(task.repoContext.every((f) => f.untrusted === true)).toBe(true); // repo files flagged untrusted
     expect(task.contentPolicy).toMatch(/untrusted/i); // standing injection-resistance policy served
+  });
+
+  it("returns bounded normalized review history and convergence mode without old review bodies", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 22, title: "t", author: "a", headSha: "sha0003", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
+    const root: ReviewFinding = {
+      id: "parser-family", title: "Unbounded parser surface", severity: "high", confidence: "confirmed",
+      scope: "introduced", status: "open", blocking: true, path: "src/policy.ts", line: 42,
+      evidence: "A finite reproducer exercises the same abstraction failure.",
+      remediation: "Narrow the accepted syntax or use an established parser.",
+    };
+    gh.login = "peer";
+    for (const [sha, mode] of [["sha0001", "initial"], ["sha0002", "rereview"]] as const) {
+      await gh.submitReview("o/r", 22, {
+        commitId: sha,
+        event: "REQUEST_CHANGES",
+        body: `private historical prose must not be returned\n\n${serializeReviewRecord({
+          v: 1, reviewedSha: sha, mode, role: "primary", verdict: "request-changes", findings: [root],
+        })}\n\n${PRIMARY_MARKER}`,
+      });
+    }
+    gh.login = "me";
+
+    const task = await claimReview(deps(gh, skillsDir()), { repo: "o/r", pr: 22 });
+
+    expect(task.reviewContractVersion).toBe(1);
+    expect(task.reviewHistory).toMatchObject({
+      mode: "convergence", changesRequestedCycles: 2, reviewedShas: ["sha0001", "sha0002"],
+      findings: [{ id: "parser-family", status: "open" }], lastVerdict: "request-changes", truncated: false,
+    });
+    expect(JSON.stringify(task.reviewHistory)).not.toContain("private historical prose");
   });
 
   it("resumes the pinned SHA while it is still the head", async () => {

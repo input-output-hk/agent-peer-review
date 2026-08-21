@@ -143,7 +143,7 @@ agent-review labels bootstrap --repo input-output-hk/some-repo
 
 ## Request a review
 
-Adds the `ai-review` label (plus any skill labels) and requests the review from one or more GitHub logins, using GitHub's native Reviewers field. `--reviewers` is optional if your config sets a default `reviewers` list (above); an explicit `--reviewers` always overrides the default for that one call.
+Adds the `ai-review` label (plus any skill labels) and requests the review from one or more GitHub logins, using GitHub's native Reviewers field. `--reviewers` is optional if your config sets a default `reviewers` list (above); an explicit `--reviewers` always overrides the default for that one call. When the authenticated caller is also the PR author, this fails closed until the current clean head has a successful `Self-review`; a maintainer requesting review on someone else's PR is not gated.
 
 ```bash
 agent-review request --repo input-output-hk/some-repo --pr 42 \
@@ -152,7 +152,7 @@ agent-review request --repo input-output-hk/some-repo --pr 42 \
 
 ## Wire into a host
 
-The CLI, the MCP server, and the pi.dev Pi Package expose the same six operations over the same core, so pick whichever fits the host you run the reviewer agent on.
+The CLI, MCP server, and Pi Package expose the same review lifecycle over one core, with Pi adding its scheduled expedition operations. Pick the surface that fits the host you run.
 
 <Tabs>
 <TabItem value="mcp" label="Claude Desktop / MCP hosts" default>
@@ -163,12 +163,12 @@ Point the host at the `serve` command so it can spawn the MCP server over stdio:
 { "command": "npx", "args": ["-y", "@input-output-hk/agent-review", "serve"] }
 ```
 
-The server exposes six tools (`review_create`, `review_list`, `review_claim`, `review_complete`, `review_enrich`, `labels_bootstrap`); see [MCP reference](./mcp.md) for their input fields.
+The server exposes eight tools (`review_create`, `review_list`, `review_claim`, `review_self_review`, `review_followup`, `review_complete`, `review_enrich`, `labels_bootstrap`); see [MCP reference](./mcp.md) for their input fields.
 
 </TabItem>
 <TabItem value="pi" label="pi.dev">
 
-Install the Pi Package so pi.dev loads the same six tools natively, plus five more that move a pull request forward and a bundled `agent-review` skill that drives the loop:
+Install the Pi Package so pi.dev loads thirteen native tools and a bundled `agent-review` skill that drives the loop:
 
 ```bash
 pi install npm:@input-output-hk/agent-review-pi
@@ -194,10 +194,15 @@ The orchestration skill is plain markdown; any host that can read a file and run
 
 Two roles are at play here: whoever requests the review, and the reviewer agent that fulfills it. They can be the same person on different days.
 
-**1. The requester bootstraps labels once, then requests a review:**
+**1. The implementing requester bootstraps labels once, self-reviews the exact clean head, then requests a review:**
 
 ```bash
 agent-review labels bootstrap --repo input-output-hk/some-repo
+HEAD_SHA="$(git rev-parse HEAD)"
+agent-review self-review --repo input-output-hk/some-repo --pr 42 --reviewed-sha "$HEAD_SHA" \
+  --what-changed "Implemented the requested bounded crypto change." \
+  --how-verified "Applied the bounded fix and verified the focused behavior." \
+  --why-ready "No self-review findings remain; this is ready for peer review."
 agent-review request --repo input-output-hk/some-repo --pr 42 \
   --reviewers yshyn-iohk --skills security
 ```
@@ -214,7 +219,7 @@ agent-review list --repo input-output-hk/some-repo
 agent-review claim --repo input-output-hk/some-repo --pr 42
 ```
 
-**4. It reviews the diff at the pinned SHA** using the returned instructions, then writes its findings to two files:
+**4. It reviews the diff at the pinned SHA** using the returned instructions, then writes its summary, inline comments, and structured root-cause findings to files:
 
 ```bash
 cat > summary.md <<'EOF'
@@ -224,13 +229,18 @@ EOF
 cat > comments.json <<'EOF'
 [{ "path": "src/crypto.rs", "line": 88, "body": "Nonce is reused across messages." }]
 EOF
+
+cat > findings.json <<'EOF'
+[{ "id": "crypto-nonce-reuse", "title": "Nonce is reused across messages", "severity": "high", "confidence": "confirmed", "scope": "introduced", "status": "open", "blocking": true, "path": "src/crypto.rs", "line": 88, "evidence": "The encryption loop passes the same nonce to every message.", "remediation": "Derive or generate a unique nonce for each encrypted message." }]
+EOF
 ```
 
 **5. It completes the review**, publishing a native GitHub PR review at the pinned SHA:
 
 ```bash
 agent-review complete --repo input-output-hk/some-repo --pr 42 \
-  --event request-changes --summary @summary.md --comments @comments.json
+  --event request-changes --summary @summary.md --comments @comments.json \
+  --reviewed-sha "$(git rev-parse HEAD)" --mode initial --findings @findings.json --workspace .
 ```
 
 Submitting the review clears GitHub's review request automatically, and the claim marker is deleted. The pull request only reappears in `agent-review list` if someone requests the review again.

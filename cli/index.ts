@@ -6,7 +6,8 @@ import path from "node:path";
 import { Command } from "commander";
 import {
   loadConfig, OctokitGateway, bootstrap, SKILL_NAMES, ensureAgentHome, skillsRoot,
-  createReview, listReviews, claimReview, completeReview, enrichReview, DEFAULT_CLAIM_TTL_MS,
+  createReview, listReviews, claimReview, completeReview, enrichReview, recordSelfReview, createFollowUp,
+  DEFAULT_CLAIM_TTL_MS, inspectReviewWorkspace,
 } from "../core/index.js";
 import { printJson, printLine, printErrLine } from "./render.js";
 import { runInit, promptForInit, describeInitFailure, parseList } from "./init.js";
@@ -180,15 +181,54 @@ program.command("claim")
     printJson(await claimReview({ gh: gh(), config: cfg(), machine: hostname(), now: new Date().toISOString() }, { repo: repoOf(o), pr: Number(o.pr) }));
   });
 
+program.command("self-review")
+  .option("--repo <owner/name>").requiredOption("--pr <n>")
+  .requiredOption("--reviewed-sha <sha>")
+  .requiredOption("--what-changed <text|@file>")
+  .requiredOption("--how-verified <text|@file>")
+  .requiredOption("--why-ready <text|@file>")
+  .option("--workspace <path>", "clean implementation checkout to attest", ".")
+  .action(async (o) => {
+    const repo = repoOf(o);
+    printJson(await recordSelfReview({ gh: gh(), workspace: inspectReviewWorkspace(repo, o.workspace) }, {
+      repo, pr: Number(o.pr), reviewedSha: o.reviewedSha,
+      whatChanged: readMaybeFile(o.whatChanged), howVerified: readMaybeFile(o.howVerified),
+      whyReady: readMaybeFile(o.whyReady),
+    }));
+  });
+
+program.command("followup")
+  .option("--repo <owner/name>").requiredOption("--pr <n>")
+  .requiredOption("--reviewed-sha <sha>").requiredOption("--title <text>")
+  .requiredOption("--problem <text|@file>").requiredOption("--rationale <text|@file>")
+  .requiredOption("--acceptance-criteria <@file>", "JSON array of meaningful acceptance criteria")
+  .requiredOption("--finding-ids <csv>", "review finding IDs moved to the follow-up")
+  .option("--workspace <path>", "clean implementation checkout to attest", ".")
+  .action(async (o) => {
+    const repo = repoOf(o);
+    printJson(await createFollowUp({ gh: gh(), workspace: inspectReviewWorkspace(repo, o.workspace) }, {
+      repo, pr: Number(o.pr), reviewedSha: o.reviewedSha, title: o.title,
+      problem: readMaybeFile(o.problem), rationale: readMaybeFile(o.rationale),
+      acceptanceCriteria: JSON.parse(readMaybeFile(o.acceptanceCriteria)), findingIds: csv(o.findingIds),
+    }));
+  });
+
 program.command("complete")
   .option("--repo <owner/name>").requiredOption("--pr <n>")
   .requiredOption("--event <event>", "approve | request-changes | comment")
   .requiredOption("--summary <text|@file>")
   .option("--comments <@file>", "JSON array of {path,line,body}")
+  .option("--reviewed-sha <sha>", "exact claimed SHA reviewed")
+  .option("--mode <mode>", "initial | rereview | convergence")
+  .option("--findings <@file>", "JSON array of structured findings")
+  .option("--workspace <path>", "clean review checkout to attest", ".")
   .action(async (o) => {
-    printJson(await completeReview({ gh: gh(), config: cfg() }, {
-      repo: repoOf(o), pr: Number(o.pr), event: o.event, summary: readMaybeFile(o.summary),
+    const repo = repoOf(o);
+    printJson(await completeReview({ gh: gh(), config: cfg(), workspace: inspectReviewWorkspace(repo, o.workspace) }, {
+      repo, pr: Number(o.pr), event: o.event, summary: readMaybeFile(o.summary),
       comments: o.comments ? JSON.parse(readMaybeFile(o.comments)) : undefined,
+      reviewedSha: o.reviewedSha, mode: o.mode,
+      findings: o.findings ? JSON.parse(readMaybeFile(o.findings)) : undefined,
     }));
   });
 
@@ -197,22 +237,38 @@ program.command("enrich")
   .requiredOption("--verdict <agree|disagree|mixed>")
   .requiredOption("--summary <text|@file>")
   .option("--comments <@file>", "JSON array of {path,line,body} new findings")
+  .option("--reviewed-sha <sha>", "exact claimed SHA reviewed")
+  .option("--mode <mode>", "initial | rereview | convergence")
+  .option("--findings <@file>", "JSON array of structured new findings")
+  .option("--assessments <@file>", "JSON array confirming or refuting primary finding IDs")
+  .option("--workspace <path>", "clean review checkout to attest", ".")
   .option("--poll <seconds>", "seconds between polls", "5")
   .option("--timeout <seconds>", "seconds before giving up", "1800")
   .action(async (o) => {
-    const enrichment = { overallVerdict: o.verdict, summary: readMaybeFile(o.summary), newFindings: o.comments ? JSON.parse(readMaybeFile(o.comments)) : undefined };
+    const enrichment = {
+      overallVerdict: o.verdict,
+      summary: readMaybeFile(o.summary),
+      newFindings: o.comments ? JSON.parse(readMaybeFile(o.comments)) : undefined,
+      reviewedSha: o.reviewedSha,
+      mode: o.mode,
+      findings: o.findings ? JSON.parse(readMaybeFile(o.findings)) : undefined,
+      assessments: o.assessments ? JSON.parse(readMaybeFile(o.assessments)) : undefined,
+    };
     const repo = repoOf(o), pr = Number(o.pr), waitMs = Number(o.timeout) * 1000;
     const deadline = Date.now() + waitMs;
     const ghi = gh(), config = cfg();
     for (;;) {
       const res = await enrichReview(
-        { gh: ghi, config, ttlMs: DEFAULT_CLAIM_TTL_MS, nowMs: Date.now() },
+        { gh: ghi, config, ttlMs: DEFAULT_CLAIM_TTL_MS, nowMs: Date.now(), workspace: inspectReviewWorkspace(repo, o.workspace) },
         { repo, pr, ...enrichment },
       );
       if (res.status === "enriched") { printJson(res); return; }
       if (res.status === "promote") {
         const event = o.verdict === "agree" ? "approve" : o.verdict === "disagree" ? "request-changes" : "comment";
-        printJson(await completeReview({ gh: ghi, config }, { repo, pr, event, summary: enrichment.summary, comments: enrichment.newFindings }));
+        printJson(await completeReview({ gh: ghi, config, workspace: inspectReviewWorkspace(repo, o.workspace) }, {
+          repo, pr, event, summary: enrichment.summary, comments: enrichment.newFindings,
+          reviewedSha: enrichment.reviewedSha, mode: enrichment.mode, findings: enrichment.findings,
+        }));
         return;
       }
       if (Date.now() >= deadline) { printLine("Timed out waiting for the primary review."); process.exitCode = 1; return; }

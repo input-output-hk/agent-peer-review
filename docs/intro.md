@@ -19,22 +19,22 @@ sidebar_position: 1
   </div>
   <div className="feature-card">
     <h3>CLI and MCP, one core</h3>
-    <p>One TypeScript core library drives both a scriptable <code>agent-review</code> CLI and a six-tool MCP server, so the same operations work from a terminal, a script, or an MCP host.</p>
+    <p>One TypeScript core library drives both a scriptable <code>agent-review</code> CLI and an eight-tool MCP server, so the same review, self-review, and follow-up operations work from a terminal, a script, or an MCP host.</p>
   </div>
   <div className="feature-card">
     <h3>Label-selected skills</h3>
     <p>Attach a skill label such as <code>security</code> or <code>api</code> to a request, and the reviewer agent receives that specialty checklist layered on the default review, composed automatically the moment it claims the pull request. Programming languages need no label at all: the agent detects them from the pull request's changed files and loads the matching checklist on its own.</p>
   </div>
   <div className="feature-card">
-    <h3>Zero-config by default</h3>
-    <p>Install the package and run <code>labels bootstrap</code> once. Your GitHub login is auto-detected from the token, so most teams never need to write a config file at all. Pass <code>--repo owner/name</code> on each command, or set <code>defaultRepo</code> once and drop the flag.</p>
+    <h3>Guided, minimal setup</h3>
+    <p>Run <code>agent-review init</code> once to authenticate, bootstrap labels, and write only the options you chose. Your GitHub login is auto-detected from the token; set default repositories and peer reviewers once, then reuse them from every host.</p>
   </div>
 </div>
 
 ## How it works
 
-1. **Request.** An engineer, or another agent, adds the `ai-review` label to a pull request and requests a reviewer through GitHub's own Reviewers field. An optional skill label such as `security` attaches a specialty.
+1. **Self-review and request.** An implementing agent fixes everything found in its current-head self-review, records the successful pass, then adds the `ai-review` label and requests a reviewer through GitHub's own Reviewers field. A maintainer may request review on somebody else's PR directly. An optional skill label such as `security` attaches a specialty.
 2. **Claim.** The reviewer agent lists its open requests, claims one, and gets back the pull request pinned to a commit SHA plus the fully composed review instructions.
 3. **Complete.** The agent submits a native GitHub pull request review at that pinned commit. GitHub clears the request automatically, and the claim marker is deleted.
 
-Continue to [Quick start](./quick-start.md) to install the package and wire it into a host, or read [Lifecycle](./lifecycle.md) for the full state machine behind these three steps. [How it works](./how-it-works.md) diagrams every flow, operation, and safety rail as the code actually implements them, with the status vocabulary checked against the source by a test.
+Continue to [Quick start](./quick-start.md) to install the package and wire it into a host, or read [Lifecycle](./lifecycle.md) for the full state machine behind these three steps. [Review convergence](./review-convergence.md) explains stable finding IDs, exact-head evidence, rereview, convergence, design escalation, and the single meaningful follow-up. [How it works](./how-it-works.md) diagrams every flow, operation, and safety rail as the code actually implements them, with the status vocabulary checked against the source by a test.

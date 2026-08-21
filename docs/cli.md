@@ -4,14 +4,14 @@ sidebar_position: 6
 
 # CLI reference
 
-`agent-review` exposes eleven commands: a guided setup command (`init`), six that drive the review flow (`request`, `list`, `claim`, `complete`, `enrich`, and `labels bootstrap`), and four small utilities (`config`, `whoami`, `skills list`, and `serve`). Every command and flag on this page is read straight from `cli/index.ts`.
+`agent-review` exposes thirteen commands: setup, the review lifecycle, the implementer self-review and follow-up gates, and small utilities. Every command and flag on this page is read straight from `cli/index.ts`.
 
 ## Global options
 
 | Option | Applies to | Meaning |
 | --- | --- | --- |
 | `-c, --config <path>` | every command | An explicit config file path. Takes priority over every other tier in the resolution order described in [Quick start](./quick-start.md#configure-optional). |
-| `--repo <owner/name>` | `request`, `list`, `claim`, `complete`, `enrich`, `labels bootstrap` | The repository to act on. Optional if `defaultRepo` is set in your config; the command exits with an error if neither is provided. |
+| `--repo <owner/name>` | `request`, `list`, `claim`, `self-review`, `followup`, `complete`, `enrich`, `labels bootstrap` | The repository to act on. Optional if `defaultRepo` is set in your config; the command exits with an error if neither is provided. |
 
 ## `config`
 
@@ -76,7 +76,7 @@ On a token or authentication failure, `init` prints a friendly message ("Could n
 
 ## `request`
 
-Adds the `ai-review` label (plus any skill labels you pass) and requests the review from one or more GitHub logins via the native Reviewers field.
+Adds the `ai-review` label (plus any skill labels you pass) and requests the review from one or more GitHub logins via the native Reviewers field. When the caller is the PR author, the current clean head must already have a successful authenticated `Self-review`; a maintainer requesting review on somebody else's PR is not gated.
 
 - `--repo <owner/name>`
 - `--pr <n>` (required)
@@ -111,6 +111,30 @@ Pins the pull request's current head SHA, posts a claim-marker comment, and retu
 agent-review claim --repo input-output-hk/some-repo --pr 42
 ```
 
+The result includes `reviewContractVersion: 1` and bounded `reviewHistory` with the mode, prior SHAs, finding statuses, accepted risks, cycle count, and last verdict.
+
+## `self-review`
+
+Records the implementing author's successful exact-head pass as a PR comment titled `Self-review`. Fix issues and repeat the pass before calling this command. It rejects a dirty checkout, a moved head, or a caller who is not the PR author.
+
+```bash
+agent-review self-review --repo input-output-hk/some-repo --pr 42 \
+  --reviewed-sha abc1234 --what-changed @what.md --how-verified @verification.md \
+  --why-ready @ready.md --workspace ../some-repo
+```
+
+Every author-owned request surface (`request`, `review_create`, and `pr_request_review`) refuses to request an external peer at that head until this record exists.
+
+## `followup`
+
+Creates the one meaningful review follow-up issue allowed for a PR, or returns the existing issue. The issue must own at least one stable finding ID, explain the problem and proportionality decision, and include concrete acceptance criteria. It cannot be used from a dirty or stale checkout or by anyone other than the PR author.
+
+```bash
+agent-review followup --repo input-output-hk/some-repo --pr 42 --reviewed-sha abc1234 \
+  --title "Redesign the parser boundary" --problem @problem.md --rationale @rationale.md \
+  --acceptance-criteria @criteria.json --finding-ids shell-policy-parser --workspace ../some-repo
+```
+
 ## `complete`
 
 Submits a native GitHub PR review at the pinned SHA and deletes the claim marker.
@@ -120,10 +144,15 @@ Submits a native GitHub PR review at the pinned SHA and deletes the claim marker
 - `--event <approve|request-changes|comment>` (required)
 - `--summary <text|@file>` (required): literal text, or a path prefixed with `@` to read the summary from a file.
 - `--comments <@file>` (optional): a JSON array of `{path, line, body}` objects, typically read from a file the same way.
+- `--reviewed-sha <sha>` (required for `request-changes`, recommended for every result): the exact claim SHA reviewed.
+- `--mode <initial|rereview|convergence>` (optional): must match `reviewHistory.mode` when passed.
+- `--findings <@file>` (optional except that `request-changes` needs a confirmed blocker): structured stable-ID findings.
+- `--workspace <path>` (optional, defaults to `.`): the checkout whose origin, clean state, and HEAD are attested.
 
 ```bash
 agent-review complete --repo input-output-hk/some-repo --pr 42 \
-  --event request-changes --summary @summary.md --comments @comments.json
+  --event request-changes --summary @summary.md --comments @comments.json \
+  --reviewed-sha abc1234 --mode initial --findings @findings.json --workspace ../some-repo
 ```
 
 ## `enrich`
@@ -135,6 +164,8 @@ Used by an enricher in a panel review. Waits for the panel's primary review to e
 - `--verdict <agree|disagree|mixed>` (required)
 - `--summary <text|@file>` (required): literal text, or a path prefixed with `@` to read the summary from a file.
 - `--comments <@file>` (optional): a JSON array of `{path, line, body}` new findings, typically read from a file the same way.
+- `--reviewed-sha <sha>`, `--mode <mode>`, `--findings <@file>`, and `--workspace <path>`: the same exact-head structured contract as `complete`.
+- `--assessments <@file>` (required when the primary has structured findings): one confirm/refute disposition and rationale per primary finding ID.
 - `--poll <seconds>` (optional): seconds between polls. Defaults to `5`.
 - `--timeout <seconds>` (optional): seconds before the CLI gives up polling. Defaults to `1800`; it does not change the fixed 30-minute claim-staleness threshold used to promote an enricher.
 

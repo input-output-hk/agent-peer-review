@@ -1,5 +1,6 @@
 import type { GitHubGateway } from "../github.js";
 import { humanReviewStatus } from "../expedition/human-review.js";
+import { buildReviewHistory } from "../review-record.js";
 import { sortReviews, standingVerdicts, STANDING_VERDICT_STATES } from "../expedition/protection.js";
 
 export interface WatchAndReReviewInput {
@@ -96,6 +97,7 @@ export async function watchAndReReview(gh: GitHubGateway, input: WatchAndReRevie
   // maintainer retired a verdict, including automatically after a push on branches that dismiss stale
   // reviews.
   const verdicts = mine.filter((r) => STANDING_VERDICT_STATES.has(r.state));
+  const history = buildReviewHistory(reviews, pull.headSha);
   const latest = standingVerdicts(reviews).get(normalizedLogin);
   if (!latest) {
     return { action: "none", reason: "this agent has left comments but no verdict on this pull request", headMoved: false };
@@ -150,7 +152,9 @@ export async function watchAndReReview(gh: GitHubGateway, input: WatchAndReRevie
 
   return {
     action: "re-review",
-    reason: `the head moved from ${latest.commitId} to ${pull.headSha} after this agent requested changes`,
+    reason: history.mode === "convergence"
+      ? `the head moved from ${latest.commitId} to ${pull.headSha} after ${history.changesRequestedCycles} changes-requested cycles; re-review in convergence mode`
+      : `the head moved from ${latest.commitId} to ${pull.headSha} after this agent requested changes; re-review in rereview mode`,
     headMoved,
   };
 }

@@ -25,6 +25,27 @@ function textOf(res: Awaited<ReturnType<Client["callTool"]>>): string {
 }
 
 describe("mcp server: review_create reviewers fallback", () => {
+  it("publishes the convergence, self-review, and follow-up contract on every relevant tool", async () => {
+    const client = await connectedClient(new FakeGitHubGateway(), baseConfig);
+    const listed = await client.listTools();
+    const byName = new Map(listed.tools.map((tool) => [tool.name, tool]));
+
+    expect([...byName.keys()].sort()).toEqual([
+      "labels_bootstrap", "review_claim", "review_complete", "review_create", "review_enrich",
+      "review_followup", "review_list", "review_self_review",
+    ]);
+    for (const name of ["review_complete", "review_enrich"] as const) {
+      const properties = (byName.get(name)?.inputSchema.properties ?? {}) as Record<string, unknown>;
+      expect(properties).toHaveProperty("reviewedSha");
+      expect(properties).toHaveProperty("mode");
+      expect(properties).toHaveProperty("findings");
+      expect(properties).toHaveProperty("workspace");
+    }
+    expect(byName.get("review_enrich")?.inputSchema.properties).toHaveProperty("assessments");
+    expect(byName.get("review_self_review")?.inputSchema.properties).toHaveProperty("whyReady");
+    expect(byName.get("review_followup")?.inputSchema.properties).toHaveProperty("acceptanceCriteria");
+  });
+
   it("falls back to config.reviewers when the call omits reviewers", async () => {
     const gh = new FakeGitHubGateway();
     gh.seedPr({ number: 7, title: "t", author: "a", headSha: "s", baseSha: "b", url: "u", state: "open", labels: [] });
@@ -58,5 +79,18 @@ describe("mcp server: review_create reviewers fallback", () => {
 
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/no reviewers/i);
+  });
+
+  it("refuses an author-owned direct request before the current-head self-review", async () => {
+    const gh = new FakeGitHubGateway();
+    gh.seedPr({ number: 8, title: "t", author: "me", headSha: "sha0008", baseSha: "b", url: "u", state: "open", labels: [] });
+    const client = await connectedClient(gh, { ...baseConfig, reviewers: ["peer"] });
+
+    const res = await client.callTool({ name: "review_create", arguments: { repo: "o/r", pr: 8 } });
+
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/Self-review/);
+    expect((await gh.getPullRequest("o/r", 8)).labels).toEqual([]);
+    expect(await gh.listRequestedReviewers("o/r", 8)).toEqual({ users: [], teams: [] });
   });
 });

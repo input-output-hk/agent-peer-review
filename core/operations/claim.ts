@@ -6,6 +6,7 @@ import { composeInstructions, composeLanguages, hasSkill, loadSkill } from "../s
 import { detectLanguages } from "../languages.js";
 import { gatherRepoContext } from "../repo-context.js";
 import { UNTRUSTED_CONTENT_POLICY } from "../guard.js";
+import { buildReviewHistory } from "../review-record.js";
 
 export async function claimReview(
   deps: { gh: GitHubGateway; config: Config; machine: string; now: string },
@@ -82,6 +83,11 @@ export async function claimReview(
   let repoContext: Array<{ path: string; content: string; untrusted: true }> = [];
   try { repoContext = await gatherRepoContext(gh, opts.repo, pinnedSha); } catch { repoContext = []; }
 
+  // Review history is a safety input, not optional prompt decoration. If GitHub cannot provide it,
+  // fail the claim rather than silently treating a mature changes-requested loop as an initial
+  // review and re-enabling adjacent medium/low blockers.
+  const reviewHistory = buildReviewHistory(await gh.getReviews(opts.repo, opts.pr), pinnedSha);
+
   return {
     repo: opts.repo, pr: pr.number, url: pr.url, title: pr.title, author: pr.author,
     headSha: pinnedSha, baseSha: pr.baseSha, reviewer: login, role, skills,
@@ -90,5 +96,7 @@ export async function claimReview(
     contentPolicy: UNTRUSTED_CONTENT_POLICY,
     repoContext,
     claim: { machine, claimedAt: now },
+    reviewContractVersion: 1,
+    reviewHistory,
   };
 }

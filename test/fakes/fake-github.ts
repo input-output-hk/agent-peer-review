@@ -1,4 +1,4 @@
-import type { GitHubGateway, Mergeability, CheckResult, BranchProtectionSummary, DetailedPullFile } from "../../core/github.js";
+import type { GitHubGateway, Mergeability, CheckResult, BranchProtectionSummary, DetailedPullFile, RepositoryIssue } from "../../core/github.js";
 import type { PullRequest, IssueComment, LabelSpec, Review, ReviewComment } from "../../core/model.js";
 import { TRIGGER } from "../../core/labels.js";
 
@@ -42,9 +42,11 @@ export class FakeGitHubGateway implements GitHubGateway {
   // round trips is a property worth asserting, not just the labels it ended up with.
   listLabelsCalls: string[] = [];
   assigneesAdded: Array<{ repo: string; pr: number; assignees: string[] }> = [];
+  issues: Array<RepositoryIssue & { repo: string }> = [];
   private commentId = 1;
   private reviewSeq = 1;
   private reviewCommentSeq = 1;
+  private issueSeq = 100;
   private key(repo: string, pr: number) { return `${repo}#${pr}`; }
 
   seedPr(pr: SeedPr, repo = "o/r") { this.prs.set(this.key(repo, pr.number), { ...DEFAULT_PR_TIMESTAMPS, ...pr }); }
@@ -125,6 +127,19 @@ export class FakeGitHubGateway implements GitHubGateway {
   }
   async deleteComment(repo: string, commentId: number): Promise<void> {
     for (const [k, list] of this.comments) this.comments.set(k, list.filter((c) => c.id !== commentId));
+  }
+  async createIssue(repo: string, issue: { title: string; body: string }): Promise<RepositoryIssue> {
+    const created = {
+      repo, number: this.issueSeq++, title: issue.title, body: issue.body, author: this.login,
+      url: `https://github.com/${repo}/issues/${this.issueSeq - 1}`,
+    };
+    this.issues.push(created);
+    return { ...created };
+  }
+  async findIssueByMarker(repo: string, marker: string, author: string): Promise<RepositoryIssue | null> {
+    const found = this.issues.find((issue) => issue.repo === repo
+      && issue.author.toLowerCase() === author.toLowerCase() && issue.body.includes(marker));
+    return found ? { ...found } : null;
   }
   async submitReview(repo: string, pr: number, review: { commitId: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: Array<{ path: string; line: number; body: string }> }): Promise<{ url: string }> {
     const id = this.reviewSeq++;

@@ -2,9 +2,9 @@
 
 `captureMetadata` is an opt-in config switch, off by default, that makes the review workflow write
 a durable, machine-readable record of who and what produced each review: model, agent, tool
-version, verdict, role, machine, claim time, and whether the review posted after the pull request
-had already moved on (drift). With it off, none of that metadata, including the machine hostname,
-is persisted.
+version, verdict, role, machine, and claim time. With it off, none of that optional metadata,
+including the machine hostname, is persisted. Structured finding records are a separate review
+contract and remain present either way.
 
 ## What it is
 
@@ -20,8 +20,9 @@ Turning `captureMetadata` on changes two things:
    ```
 
    The footer carries `role`, `verdict`, `model`, `agent`, `toolVersion`, `machine`, `claimedAt`,
-   and `drifted`. It is hidden from GitHub's rendered view (it is an HTML comment), but it is not
-   secret; see [Privacy](#privacy) below.
+   and the compatibility field `drifted`. New reviews always write `drifted: false`, because a moved
+   head is rejected before submission; older footers that recorded drift still parse. The footer is
+   hidden from GitHub's rendered view (it is an HTML comment), but it is not secret; see [Privacy](#privacy) below.
 
 This is what powers the [dashboard](./dashboard.md): `agent-review-dashboard sync` reads the
 footer, falling back to the claim marker, to fill in each review's model, agent, and tool version.

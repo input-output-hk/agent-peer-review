@@ -3,14 +3,15 @@ import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
 import { enrichReview, DEFAULT_CLAIM_TTL_MS } from "./enrich.js";
 import { serializeMarker, parseMarkers, PRIMARY_MARKER } from "../claim-marker.js";
 import { parseMeta } from "../review-meta.js";
+import { serializeReviewRecord } from "../review-record.js";
 const cfg = { githubLogin: null as string | null, skillsDir: null, captureMetadata: false, reviewers: [], knownAgentLogins: [] };
 // Capture-on variant, scoped to the footer tests below: the shared `cfg` above must stay
 // captureMetadata:false so every existing test keeps exercising today's (no-footer) behavior.
 const cfgCapture = { ...cfg, captureMetadata: true, model: "claude-opus-4-8", agent: "claude-code" };
 const TTL = DEFAULT_CLAIM_TTL_MS;
 
-function panelPr(gh: FakeGitHubGateway) {
-  gh.seedPr({ number: 9, title: "t", author: "a", headSha: "head", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
+function panelPr(gh: FakeGitHubGateway, headSha = "head") {
+  gh.seedPr({ number: 9, title: "t", author: "a", headSha, baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
   gh.seedRequest("o/r", 9, "alice"); gh.seedRequest("o/r", 9, "bob");
 }
 
@@ -20,7 +21,7 @@ describe("enrichReview", () => {
   });
 
   it("submits ONE consolidated COMMENT review at the primary's commit when the primary exists", async () => {
-    const gh = new FakeGitHubGateway(); panelPr(gh);
+    const gh = new FakeGitHubGateway(); panelPr(gh, "primsha");
     // alice claims + posts primary
     gh.login = "alice";
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "alice", machine: "m1", sha: "primsha", claimedAt: "2026-07-30T00:00:00Z" }));
@@ -28,7 +29,7 @@ describe("enrichReview", () => {
     // bob claims at the same head as alice, then enriches
     gh.login = "bob";
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "bob", machine: "m2", sha: "primsha", claimedAt: "2026-07-30T00:01:00Z" }));
-    const res = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T00:02:00Z") },
+    const res = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T00:02:00Z"), workspace: { headSha: "primsha", clean: true } },
       { repo: "o/r", pr: 9, overallVerdict: "mixed", summary: "agree on the bug; found one more", newFindings: [{ path: "b.ts", line: 7, body: "also here" }] });
     expect(res.status).toBe("enriched");
     const bobReview = gh.reviews.find((r) => r.author === "bob")!;
@@ -37,7 +38,7 @@ describe("enrichReview", () => {
     expect((await gh.listReviewRequests("o/r", "bob"))).toHaveLength(0); // de-queued
   });
   it("deletes only the enricher's authenticated marker, never a foreign forged marker", async () => {
-    const gh = new FakeGitHubGateway(); panelPr(gh);
+    const gh = new FakeGitHubGateway(); panelPr(gh, "head0009");
     gh.login = "alice";
     await gh.submitReview("o/r", 9, { commitId: "head0009", event: "APPROVE", body: `primary\n\n${PRIMARY_MARKER}` });
     gh.login = "maintainer";
@@ -48,10 +49,36 @@ describe("enrichReview", () => {
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "bob", sha: "head0009", claimedAt: "t1" }));
 
     expect((await enrichReview(
-      { gh, config: cfg, ttlMs: TTL, nowMs: 0 },
+      { gh, config: cfg, ttlMs: TTL, nowMs: 0, workspace: { headSha: "head0009", clean: true } },
       { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "confirmed" },
     )).status).toBe("enriched");
     expect(await gh.listComments("o/r", 9)).toEqual([foreign]);
+  });
+
+  it("rejects an enricher that repeats the primary finding under the same root-cause ID", async () => {
+    const gh = new FakeGitHubGateway(); panelPr(gh, "head0010");
+    const primaryFinding = {
+      id: "parser-family", title: "Unbounded parser semantics", severity: "high" as const,
+      confidence: "confirmed" as const, scope: "introduced" as const, status: "open" as const,
+      blocking: true, path: "src/parser.ts", line: 10, evidence: "Wrapper form reproduces it.",
+      remediation: "Narrow the grammar or use a parser.",
+    };
+    gh.login = "alice";
+    await gh.submitReview("o/r", 9, {
+      commitId: "head0010", event: "REQUEST_CHANGES",
+      body: `${serializeReviewRecord({ v: 1, reviewedSha: "head0010", mode: "initial", role: "primary", verdict: "request-changes", findings: [primaryFinding] })}\n\n${PRIMARY_MARKER}`,
+    });
+    gh.login = "bob";
+    await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "bob", sha: "head0010", claimedAt: "t" }));
+    await expect(enrichReview(
+      { gh, config: cfg, ttlMs: TTL, nowMs: 0, workspace: { headSha: "head0010", clean: true } },
+      {
+        repo: "o/r", pr: 9, overallVerdict: "agree", summary: "same issue through another wrapper",
+        assessments: [{ findingId: "parser-family", disposition: "confirm", rationale: "Confirmed the root cause." }],
+        findings: [{ ...primaryFinding, evidence: "A different quote form also reproduces it." }],
+      },
+    )).rejects.toThrow(/assess it instead of adding another example/);
+    expect(gh.reviews.filter((item) => item.author === "bob")).toHaveLength(0);
   });
   it("does not enrich a prior round's stale primary before this round's primary is posted", async () => {
     const gh = new FakeGitHubGateway(); panelPr(gh);
@@ -62,7 +89,7 @@ describe("enrichReview", () => {
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "alice", machine: "m1", sha: "round2s", claimedAt: "2026-07-30T02:00:00Z" }));
     gh.login = "bob";
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "bob", machine: "m2", sha: "round2s", claimedAt: "2026-07-30T02:01:00Z" }));
-    const res = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T02:02:00Z") },
+    const res = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T02:02:00Z"), workspace: { headSha: "round2s", clean: true } },
       { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
     expect(res.status).toBe("waiting"); // round-1's primary is at a different commit, so bob waits for round 2's rather than enriching the stale one
   });
@@ -72,7 +99,7 @@ describe("enrichReview", () => {
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "alice", machine: "m1", sha: "headsha", claimedAt: "2026-07-30T00:00:00Z" }));
     gh.login = "bob";
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "bob", machine: "m2", sha: "headsha", claimedAt: "2026-07-30T00:01:00Z" }));
-    const res = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T00:02:00Z") },
+    const res = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T00:02:00Z"), workspace: { headSha: "headsha", clean: true } },
       { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
     expect(res.status).toBe("waiting");
   });
@@ -82,7 +109,7 @@ describe("enrichReview", () => {
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "alice", machine: "m1", sha: "headsha", claimedAt: "2026-07-30T00:00:00Z" }));
     gh.login = "bob";
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "bob", machine: "m2", sha: "headsha", claimedAt: "2026-07-30T00:01:00Z" }));
-    const res = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T01:00:00Z") },
+    const res = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T01:00:00Z"), workspace: { headSha: "headsha", clean: true } },
       { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
     expect(res.status).toBe("promote");
   });
@@ -98,17 +125,17 @@ describe("enrichReview", () => {
     const nowMs = Date.parse("2026-07-30T01:00:00Z"); // ~1h past all three claims; TTL is 30m
 
     gh.login = "bob";
-    const bobRes = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs }, { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
+    const bobRes = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs, workspace: { headSha: "headsha", clean: true } }, { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
     expect(bobRes.status).toBe("promote"); // earliest surviving (non-anchor) marker
     expect(parseMarkers(await gh.listComments("o/r", 9)).some((m) => m.marker.reviewer === "alice")).toBe(false); // stale anchor's marker cleaned up so bob cannot deadlock the panel if he stalls too
 
     gh.login = "carol";
-    const carolRes = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs }, { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
+    const carolRes = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs, workspace: { headSha: "headsha", clean: true } }, { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
     expect(carolRes.status).toBe("promote"); // bob, the new anchor, is itself stale with no primary, so carol takes over too; no deadlock
   });
 
   it("converges once the promoted enricher posts a primary: the next enrich reports enriched, not promote", async () => {
-    const gh = new FakeGitHubGateway(); panelPr(gh);
+    const gh = new FakeGitHubGateway(); panelPr(gh, "headsha");
     gh.seedRequest("o/r", 9, "carol");
     gh.login = "alice";
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "alice", machine: "m1", sha: "headsha", claimedAt: "2026-07-30T00:00:00Z" }));
@@ -119,23 +146,23 @@ describe("enrichReview", () => {
     const nowMs = Date.parse("2026-07-30T01:00:00Z");
 
     gh.login = "bob";
-    const bobRes = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs }, { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
+    const bobRes = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs, workspace: { headSha: "headsha", clean: true } }, { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
     expect(bobRes.status).toBe("promote");
     await gh.submitReview("o/r", 9, { commitId: "headsha", event: "REQUEST_CHANGES", body: `bob's primary\n\n${PRIMARY_MARKER}` });
 
     gh.login = "carol";
-    const carolRes = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs }, { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
+    const carolRes = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs, workspace: { headSha: "headsha", clean: true } }, { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "s" });
     expect(carolRes.status).toBe("enriched"); // a primary now exists, so carol enriches instead of promoting
   });
 
   it("writes a second-opinion meta footer when enriching, with captureMetadata on", async () => {
-    const gh = new FakeGitHubGateway(); panelPr(gh);
+    const gh = new FakeGitHubGateway(); panelPr(gh, "primsha");
     gh.login = "alice";
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "alice", machine: "m1", sha: "primsha", claimedAt: "2026-07-30T00:00:00Z" }));
     await gh.submitReview("o/r", 9, { commitId: "primsha", event: "REQUEST_CHANGES", body: `primary\n\n${PRIMARY_MARKER}` });
     gh.login = "bob";
     await gh.createComment("o/r", 9, serializeMarker({ v: 2, reviewer: "bob", machine: "m2", sha: "primsha", claimedAt: "2026-07-30T00:01:00Z", model: "claude-opus-4-8", agent: "claude-code" }));
-    const res = await enrichReview({ gh, config: cfgCapture, ttlMs: TTL, nowMs: Date.parse("2026-07-30T00:02:00Z") },
+    const res = await enrichReview({ gh, config: cfgCapture, ttlMs: TTL, nowMs: Date.parse("2026-07-30T00:02:00Z"), workspace: { headSha: "primsha", clean: true } },
       { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "confirmed" });
     expect(res.status).toBe("enriched");
     const bobReview = gh.reviews.find((r) => r.author === "bob")!;
@@ -145,13 +172,13 @@ describe("enrichReview", () => {
   });
 
   it("writes no meta footer when enriching with captureMetadata off (default)", async () => {
-    const gh = new FakeGitHubGateway(); panelPr(gh);
+    const gh = new FakeGitHubGateway(); panelPr(gh, "primsha");
     gh.login = "alice";
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "alice", machine: "m1", sha: "primsha", claimedAt: "2026-07-30T00:00:00Z" }));
     await gh.submitReview("o/r", 9, { commitId: "primsha", event: "REQUEST_CHANGES", body: `primary\n\n${PRIMARY_MARKER}` });
     gh.login = "bob";
     await gh.createComment("o/r", 9, serializeMarker({ v: 1, reviewer: "bob", machine: "m2", sha: "primsha", claimedAt: "2026-07-30T00:01:00Z" }));
-    const res = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T00:02:00Z") },
+    const res = await enrichReview({ gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T00:02:00Z"), workspace: { headSha: "primsha", clean: true } },
       { repo: "o/r", pr: 9, overallVerdict: "agree", summary: "confirmed" });
     expect(res.status).toBe("enriched");
     const bobReview = gh.reviews.find((r) => r.author === "bob")!;
