@@ -15,6 +15,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run check:schemas
+      - run: npm run check:lockfile
       - run: npm run check:version
       - run: npm test
       - run: npm run build

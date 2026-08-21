@@ -45,16 +45,28 @@ jobs:
             exit 1
           fi
 
+      # No `token:` here, on purpose. The automatic GITHUB_TOKEN (contents: read)
+      # is enough to clone, and `persist-credentials: false` keeps any credential
+      # out of .git/config, so nothing that runs later in this job can read one.
+      # RELEASE_TOKEN reaches only three steps, each through its own `env:`: the
+      # pre-flight check above, the push, and the release creation. Install,
+      # tests, and builds all run without it. See issue #69.
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_TOKEN }}
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
 
-      - run: npm ci
+      # No install scripts: this job commits whatever is in the tree and pushes
+      # it to main, so no dependency gets to run code here. Verified sufficient
+      # for every step below (the esbuild and rollup platform binaries are all in
+      # the lockfile, so nothing needs downloading). The one thing this leaves
+      # uncompiled is better-sqlite3, which only the dashboard *tests* need, and
+      # this job does not run them; adding a step that does means revisiting this.
+      - run: npm ci --ignore-scripts
 
       # 1. Bump every version spot and sync the lockfile.
       - name: Bump version
@@ -76,6 +88,9 @@ jobs:
       # 2. Fail fast on any drift, then gate on a green build and tests.
       #    Mirrors CI so an admin direct-push that skipped CI is still caught here.
       - run: npm run check:version
+      # The bump above regenerated the lockfile, so this is the moment to confirm
+      # every tarball it names is still pinned by hash.
+      - run: npm run check:lockfile
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
@@ -90,16 +105,20 @@ jobs:
         run: npm run changelog:release -- "$VERSION" --notes-out "$RUNNER_TEMP/notes.md"
 
       # 4. Commit the release to main (RELEASE_TOKEN owner must be able to push).
+      #    The checkout persisted no credential, so the push carries the token in
+      #    an explicit remote URL taken from this step's `env:`. It is never
+      #    written to .git/config, and every step above ran without it.
       - name: Commit and push
         id: commit
         env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           VERSION: ${{ steps.bump.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -s -m "chore(release): $VERSION"
-          git push origin HEAD:main
+          git push "https://x-access-token:$RELEASE_TOKEN@github.com/$GITHUB_REPOSITORY.git" HEAD:main
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # 5. Create the release at the exact commit just pushed, not "main" (which
