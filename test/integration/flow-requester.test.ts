@@ -291,6 +291,68 @@ describe("Flow A (pr-requester): stabilize, expedite, request a peer review", ()
     });
   });
 
+  // Issue #51, and issue #55 item 3. Step 3 used to key on a reason beginning "not auto-eligible:",
+  // which only the classification rail produces. So a pull request the classifier CLEARED, refused
+  // by any other rail, ended the tick with no merge, no reviewer, and no attention line: the flow
+  // stopped needing a human without telling anyone. Both pull requests below are docs-only and
+  // auto-eligible, and neither refusal is anything this flow can clear by itself.
+  describe("an auto-eligible pull request refused for a reason that is not the classifier", () => {
+    /** Every rail's reason, asserted to contain no classification reason at all. */
+    function withoutClassification(reasons: string[]): string[] {
+      expect(reasons.some((r) => r.startsWith("not auto-eligible:"))).toBe(false);
+      expect(reasons.length).toBeGreaterThan(0);
+      return reasons;
+    }
+
+    it("hands a docs pull request over the size cap to a peer instead of dropping it", async () => {
+      const gh = new FakeGitHubGateway();
+      const bigDocs: DetailedPullFile = { filename: "docs/guide.md", status: "modified", additions: 340, deletions: 10, patch: "@@" };
+      seedPr(gh, HEAD, [bigDocs]);
+      seedClean(gh, HEAD);
+
+      expect((await stabilize(gh, { repo: REPO, pr: PR })).status).toBe("up-to-date");
+      const proposed = await runExpedite(gh, tick(1), { autonomy: "auto" });
+      expect(proposed.action).toBe("proposed");
+      // The size rail alone refused. Under the old rule this pull request got nothing at all.
+      expect(withoutClassification(proposed.reasons).some((r) => r.includes("changed lines"))).toBe(true);
+      expect(gh.merges).toEqual([]);
+
+      const requested = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] });
+      expect(requested).toEqual({ status: "requested", reviewers: [PEER] });
+      expect((await gh.getPullRequest(REPO, PR)).labels).toEqual([TRIGGER]);
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [PEER], teams: [] });
+      // A second tick asks nobody a second time: the escalation converges like every other step.
+      expect((await runExpedite(gh, tick(2), { autonomy: "auto" })).action).toBe("already-proposed");
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] })).status).toBe("already-requested");
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [PEER], teams: [] });
+    });
+
+    it("hands a docs pull request blocked by branch protection to a peer, which is what unblocks it", async () => {
+      // Issue #51's first verified instance: docs-only, on a protected repository, reported forever
+      // as proposed with nobody asked. The required review it is waiting for is the one step 3 asks
+      // for, so stopping here was not just quiet, it was the one thing that kept it stuck.
+      const gh = new FakeGitHubGateway();
+      seedPr(gh, HEAD);
+      gh.setMergeability(REPO, PR, { state: "blocked", mergeable: false, draft: false, baseRef: "main", headSha: HEAD });
+      gh.setBranchProtection(REPO, "main", {
+        requiresPullRequestReviews: true, requiredApprovingReviewCount: 1,
+        requiredChecks: [], enforceAdmins: false, requiresConversationResolution: false,
+      });
+
+      expect((await stabilize(gh, { repo: REPO, pr: PR })).status).toBe("blocked");
+      const proposed = await runExpedite(gh, tick(1), { autonomy: "auto" });
+      expect(proposed.action).toBe("proposed");
+      const reasons = withoutClassification(proposed.reasons);
+      expect(reasons.some((r) => r.includes("mergeable state is blocked"))).toBe(true);
+      expect(reasons.some((r) => r.includes("branch protection"))).toBe(true);
+
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] })).status).toBe("requested");
+      expect((await gh.getPullRequest(REPO, PR)).labels).toEqual([TRIGGER]);
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [PEER], teams: [] });
+      expect(gh.merges).toEqual([]);
+    });
+  });
+
   describe("conflict", () => {
     it("stops the item at step 1 for a dirty branch, without even attempting a sync", async () => {
       const gh = new FakeGitHubGateway();

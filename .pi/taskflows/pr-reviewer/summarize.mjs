@@ -6,8 +6,8 @@
 // printed is ignored.
 //
 // Zero dependencies, and all string handling is linear (indexOf / slice / startsWith / endsWith /
-// split): the text below is written by a model reading pull-request content, so no regex is applied
-// to it.
+// split / toLowerCase): the text below is written by a model reading pull-request content, so no
+// regex is applied to it.
 
 import { readFileSync } from "node:fs";
 
@@ -15,6 +15,7 @@ const ITEM_HEADER = "### [";
 const FAILED_SUFFIX = "(failed)";
 const MAX_NOTES = 20;
 const MAX_DIGITS = 6;
+const MAX_REASON_CHARS = 160;
 
 /** Read all of stdin. An empty or closed stdin means the map phase produced nothing. */
 function readStdin() {
@@ -94,6 +95,37 @@ function label(item) {
   return "an unidentified item";
 }
 
+/** First reason, trimmed to one readable line. Reasons quote file and package names from the diff. */
+function firstReason(result) {
+  const reasons = result !== null && Array.isArray(result.reasons) ? result.reasons : [];
+  for (const reason of reasons) {
+    if (typeof reason !== "string" || reason.length === 0) continue;
+    const oneLine = reason.split("\n").join(" ");
+    return oneLine.length > MAX_REASON_CHARS ? `${oneLine.slice(0, MAX_REASON_CHARS)}...` : oneLine;
+  }
+  return "";
+}
+
+/**
+ * True when a reason says the decision is held by a review that is in flight.
+ *
+ * Matched on the two words that carry the meaning rather than on a whole sentence, because the
+ * operation owns the wording of its reasons and this has to keep working when that wording changes.
+ * The hold is worth singling out: it is the one an operator can cause by configuration alone. A peer
+ * agent missing from `knownAgentLogins` reads as a human, so its review holds the loop on a pull
+ * request no human has touched, and a GitHub review is permanent, so the hold never expires.
+ */
+function heldForReviewInFlight(result) {
+  const reasons = result !== null && Array.isArray(result.reasons) ? result.reasons : [];
+  for (const reason of reasons) {
+    if (typeof reason !== "string") continue;
+    const lower = reason.toLowerCase();
+    const inFlight = lower.indexOf("in flight") !== -1 || lower.indexOf("in-flight") !== -1;
+    if (inFlight && lower.indexOf("review") !== -1) return true;
+  }
+  return false;
+}
+
 function main() {
   const items = parseItems(readStdin());
 
@@ -104,11 +136,17 @@ function main() {
 
   // The six pr_watch outcomes each get a bucket, plus the two review actions and a failure count.
   // "no-verdict" is pr_watch's "none": this agent has no verdict-bearing review on the pull request.
+  //
+  // "human-review-hold" is a breakdown of "held-for-human", not a seventh outcome: it re-counts the
+  // holds whose reason is a review in flight rather than a spent round cap. The two read identically
+  // in a single number and mean different things, and the first is the one a wrong
+  // `knownAgentLogins` produces, so it has to be a count and not silence (issue #51).
   const counts = {
     reviewed: 0,
     "re-reviewed": 0,
     waiting: 0,
     "held-for-human": 0,
+    "human-review-hold": 0,
     abandoned: 0,
     approved: 0,
     "no-verdict": 0,
@@ -126,6 +164,9 @@ function main() {
 
     const action = typeof result.action === "string" ? result.action : "";
     const verdict = typeof result.verdict === "string" ? result.verdict : "";
+    const reason = firstReason(result);
+    const held = action === "hold-for-human" && heldForReviewInFlight(result);
+    if (held) counts["human-review-hold"] += 1;
 
     if (action === "reviewed") counts.reviewed += 1;
     else if (action === "re-reviewed") counts["re-reviewed"] += 1;
@@ -136,10 +177,12 @@ function main() {
     else if (action === "none") counts["no-verdict"] += 1;
     else counts.failed += 1;
 
-    if (action === "hold-for-human") {
-      attention.push(`${label(item)}: handed to a human`);
+    if (held) {
+      attention.push(`${label(item)}: held for a review in flight; if no human is looking, "knownAgentLogins" is missing a peer agent`);
+    } else if (action === "hold-for-human") {
+      attention.push(`${label(item)}: handed to a human${reason ? ` (${reason})` : ""}`);
     } else if (action === "error" || action === "") {
-      attention.push(`${label(item)}: a tool call failed`);
+      attention.push(`${label(item)}: a tool call failed${reason ? ` (${reason})` : ""}`);
     } else if (verdict === "request-changes") {
       attention.push(`${label(item)}: changes requested`);
     }

@@ -26,20 +26,22 @@ Do not pass `maxFiles` or `maxLines` to `pr_expedite` unless you have a reason t
    - `draft`: stop. A draft is the author's own "not ready" marker. Report both remaining fields as `skipped`.
    - `gone`: stop. The pull request is closed or merged, so there is nothing left to do. Report both remaining fields as `skipped`.
 
-2. **Expedite.** Call `pr_expedite` with the autonomy from your task. The `action` is `merged`, `proposed`, `already-proposed`, `not-eligible`, or `blocked`, and `reasons` lists every rail that held the change back, in gate order.
+2. **Expedite.** Call `pr_expedite` with the autonomy from your task. The `action` is `merged`, `proposed`, `already-proposed`, `not-eligible`, or `blocked`, and `reasons` lists every rail that held the change back, in gate order. Keep the first three reasons verbatim for your result line: the summary quotes them, and they are the only place a reader learns which rail refused.
    - `merged`: done. Report `requested` as `skipped`.
    - `proposed`: the gate held the change back and the reasons are now a comment on the pull request. Continue to step 3.
    - `already-proposed`: the same proposal is already on the pull request at this head commit, so nothing was posted again. Continue to step 3.
    - `not-eligible`: the pull request is closed, merged, or a draft, so the gate never ran and `reasons` says which. Nothing further is possible. Report `requested` as `skipped`.
    - `blocked`: a merge was attempted and refused. Stop, and report `requested` as `skipped`.
 
-3. **Hand real code to a peer.** Look at the `reasons` from step 2, whatever the action was. Request a review when **any** reason begins with `not auto-eligible:` and names source or test paths. That reason is the gate saying the change carries code no automated path may merge, so it wants a reviewer. The exact wording after the prefix varies with the classes present, so match on the prefix and on whether the words `source` or `test` appear in that reason, not on a fixed sentence.
-   - When it matches, call `pr_request_review` with just `repo` and `pr`. Leave `reviewers` out so the configured default reviewers are used. The `status` is `requested`, `already-requested`, or `bot-authored`; report it. Calling it on a pull request that already has an open request is safe and returns `already-requested`, so do not spend a call checking first.
+3. **Hand the pull request to a peer.** You are here because the gate refused: step 2 ended at `proposed` or `already-proposed`, so nothing merged and nobody has been asked to look. Request a peer review, whatever the reasons say. Do not weigh the reasons and do not pick out the ones that look serious enough: the condition is the refusal itself, plus the fact that no reviewer is engaged yet.
+
+   The clearest case is a reason that begins with `not auto-eligible:` and names source or test paths. That reason is the gate saying the change carries code no automated path may merge, so it wants a reviewer. It is not the only case. Branch protection, a size cap, the security-alert rail, and a review already in flight each leave the pull request exactly as stuck, with no merge and no reviewer, and none of them is something this flow can clear on its own. Treating those as "nothing to do" strands the pull request in silence.
+
+   - Call `pr_request_review` with just `repo` and `pr`. Leave `reviewers` out so the configured default reviewers are used. The `status` is `requested`, `already-requested`, or `bot-authored`; report it. Calling it on a pull request that already has an open request is safe and returns `already-requested`, so do not spend a call checking first: the tool decides whether anyone has been asked already, not you.
    - `bot-authored` means the author is one of the dependency bots the `pr-steward` flow handles, so nothing was requested and nothing was labeled. That flow owns this pull request, because this agent may review and approve such a change itself (GitHub only forbids approving your **own** pull request), and asking another engineer's agent instead would add a round trip and a person's queue for nothing. Report `requested` as `bot-authored` and stop. Do not work around the refusal by requesting a reviewer another way.
 
-     A bot author the tool does **not** refuse is not a mistake. Only the dependency bots the steward path can actually take are refused; a codegen or release bot opens pull requests carrying real source changes, which no automated path may merge, so those go to a peer reviewer exactly like a person's would.
-   - When no reason matches, report `requested` as `skipped`.
-   - If the call fails with a no-reviewers error (the tool throws when no reviewers are passed and none are configured), that is configuration missing, not a fault of yours. Report `requested` as `skipped`, say so in one sentence, and do not report `error`. This case overrides the general rule below.
+     A bot author the tool does **not** refuse is not a mistake, and it is also not a pull request this flow finds by itself: `discover.mjs` lists only the pull requests you authored. A codegen or release bot's pull request therefore reaches this step only when something outside the sweep hands it to you, and then you request the review like any other, because such a change carries real source that no automated path may merge.
+   - If the call fails with a no-reviewers error (the tool throws when no reviewers are passed and none are configured), no reviewer list is configured and nothing was written anywhere. Report `requested` as `unconfigured`, say in one sentence that `reviewers` is unset in `~/.agent-peer-review/config.json` and in `AGENT_REVIEW_REVIEWERS`, and do not report `error`. This case overrides the general rule below.
 
 If any other tool call throws, report that field as `error`, say what failed in one sentence, and stop.
 
@@ -48,11 +50,12 @@ If any other tool call throws, report that field as `error`, say what failed in 
 Your final line must be exactly one JSON object on one line, and nothing after it:
 
 ```json
-{"repo": "owner/name", "number": 42, "stabilize": "updated", "expedite": "proposed", "requested": "skipped"}
+{"repo": "owner/name", "number": 42, "stabilize": "updated", "expedite": "proposed", "requested": "requested", "reasons": ["branch protection requirements are not satisfied"]}
 ```
 
 - `stabilize`: `up-to-date`, `updated`, `blocked`, `conflict`, `draft`, `gone`, or `error`.
 - `expedite`: `merged`, `proposed`, `already-proposed`, `not-eligible`, `blocked`, `escalate-human`, `skipped`, or `error`.
-- `requested`: `requested`, `already-requested`, `bot-authored`, `skipped`, or `error`.
+- `requested`: `requested`, `already-requested`, `bot-authored`, `unconfigured`, `skipped`, or `error`.
+- `reasons`: the first three entries of step 2's `reasons`, verbatim, or `[]` when it returned none or never ran. The summary quotes the first one, so a refusal a person has to act on is readable without opening the pull request.
 
 Keep it on one line, and do not start any other line with `###`. The summary script reads those markers.

@@ -250,8 +250,13 @@ describe("taskflow summarize.mjs", () => {
     ].join("\n"));
 
     const lines = out.trimEnd().split("\n");
-    expect(lines[0]).toBe("pr-requester: 7 pull request(s). stabilized=1 proposed=2 merged=1 review-requested=1 escalated=1 failed=1");
+    expect(lines[0]).toBe(
+      "pr-requester: 7 pull request(s). stabilized=1 proposed=2 merged=1 review-requested=1 human-review-hold=0 escalated=1 failed=1",
+    );
     expect(lines.slice(1)).toEqual([
+      // Item 1 is the shape issue #51 was reported as: the gate refused, nobody was asked, and the
+      // run said nothing at all about it. It is a line now, reason or no reason.
+      "- o/r #1: proposed, and no reviewer was asked",
       "- o/r #3: needs a human (stabilize reported conflict)",
       "- o/r #5: stopped at stabilize; the pull request is closed or merged",
       "- o/r #6: the merge was refused",
@@ -264,6 +269,39 @@ describe("taskflow summarize.mjs", () => {
     // line, because "blocked" does not stop an item and a summary that flagged it would train a
     // reader to expect the opposite.
     expect(out).not.toContain("#4");
+  });
+
+  // Issue #51: each of these ends with no merge and nobody looking at the pull request, and every one
+  // of them used to print nothing at all. The reason is quoted because the reason is the only thing
+  // that tells a reader whether they have to do something, and none of the lines below is reachable
+  // by matching reason text: the summarizer keys on the item's own reported states.
+  it("pr-requester names every state that leaves a pull request with nobody looking at it", () => {
+    const out = summarize("pr-requester", [
+      // Auto-eligible docs, refused by the size rail alone: issue #55 item 3, and the case the old
+      // "not auto-eligible:" match could never see.
+      item(1, 5, ['{"repo": "o/r", "number": 1, "stabilize": "up-to-date", "expedite": "proposed", "requested": "skipped", "reasons": ["too many changed lines (350 > 200)"]}']),
+      // No reviewers configured: requestPeerReview threw before its first GitHub call, so the pull
+      // request itself carries no trace and this line is the only record anywhere.
+      item(2, 5, ['{"repo": "o/r", "number": 2, "stabilize": "blocked", "expedite": "already-proposed", "requested": "unconfigured", "reasons": ["branch protection requirements are not satisfied"]}']),
+      item(3, 5, ['{"repo": "o/r", "number": 3, "stabilize": "up-to-date", "expedite": "not-eligible", "requested": "skipped", "reasons": ["the pull request is a draft"]}']),
+      // A reviewer WAS asked, and the gate is still held by a review it reads as a human's. That is
+      // the misconfigured-knownAgentLogins signature: it must be a number, not silence.
+      item(4, 5, ['{"repo": "o/r", "number": 4, "stabilize": "up-to-date", "expedite": "proposed", "requested": "already-requested", "reasons": ["a human review is in flight; a human has requested changes"]}']),
+      // A hand-off to pr-steward, which reports on it in its own run: no line, by design.
+      item(5, 5, ['{"repo": "o/r", "number": 5, "stabilize": "up-to-date", "expedite": "proposed", "requested": "bot-authored", "reasons": ["not auto-eligible: source path(s) present (core/thing.ts)"]}']),
+    ].join("\n"));
+
+    const lines = out.trimEnd().split("\n");
+    expect(lines[0]).toBe(
+      "pr-requester: 5 pull request(s). stabilized=0 proposed=4 merged=0 review-requested=1 human-review-hold=1 escalated=0 failed=0",
+    );
+    expect(lines.slice(1)).toEqual([
+      "- o/r #1: proposed, and no reviewer was asked (too many changed lines (350 > 200))",
+      '- o/r #2: no reviewers are configured, so nobody was asked; set "reviewers" in ~/.agent-peer-review/config.json or AGENT_REVIEW_REVIEWERS',
+      "- o/r #3: the gate never ran (the pull request is a draft)",
+      '- o/r #4: held for a review in flight; if no human is looking, "knownAgentLogins" is missing a peer agent',
+    ]);
+    expect(out).not.toContain("#5"); // the steward's pull request, not this flow's problem
   });
 
   it("pr-reviewer counts all six watch outcomes plus the two review actions", () => {
@@ -280,12 +318,31 @@ describe("taskflow summarize.mjs", () => {
 
     const lines = out.trimEnd().split("\n");
     expect(lines[0]).toBe(
-      "pr-reviewer: 8 pull request(s). reviewed=1 re-reviewed=1 waiting=1 held-for-human=1 abandoned=1 approved=1 no-verdict=1 failed=1",
+      "pr-reviewer: 8 pull request(s). reviewed=1 re-reviewed=1 waiting=1 held-for-human=1 human-review-hold=0 abandoned=1 approved=1 no-verdict=1 failed=1",
     );
     expect(lines.slice(1)).toEqual([
       "- o/r #1: changes requested",
       "- o/r #4: handed to a human",
       "- item 8 of 8: the agent did not report a result",
+    ]);
+  });
+
+  // Issue #51, item 4: "the round cap is spent" and "a review in flight" are the same number under
+  // held-for-human, and only the second one can be caused by a wrong `knownAgentLogins`, in which
+  // case no human is coming and the hold is permanent. So it gets its own count and its own line.
+  it("pr-reviewer separates a hold for a review in flight from a spent round cap", () => {
+    const out = summarize("pr-reviewer", [
+      item(1, 2, ['{"repo": "o/r", "number": 1, "kind": "watching", "action": "hold-for-human", "verdict": "none", "reasons": ["a human review is in flight; this agent will not race it"]}']),
+      item(2, 2, ['{"repo": "o/r", "number": 2, "kind": "watching", "action": "hold-for-human", "verdict": "none", "reasons": ["the review round cap of 3 is spent"]}']),
+    ].join("\n"));
+
+    const lines = out.trimEnd().split("\n");
+    expect(lines[0]).toBe(
+      "pr-reviewer: 2 pull request(s). reviewed=0 re-reviewed=0 waiting=0 held-for-human=2 human-review-hold=1 abandoned=0 approved=0 no-verdict=0 failed=0",
+    );
+    expect(lines.slice(1)).toEqual([
+      '- o/r #1: held for a review in flight; if no human is looking, "knownAgentLogins" is missing a peer agent',
+      "- o/r #2: handed to a human (the review round cap of 3 is spent)",
     ]);
   });
 
@@ -303,7 +360,9 @@ describe("taskflow summarize.mjs", () => {
     ].join("\n"));
 
     const lines = out.trimEnd().split("\n");
-    expect(lines[0]).toBe("pr-steward: 7 pull request(s). proposed=2 approved=1 approved-and-merged=1 not-eligible=1 blocked=1 failed=1");
+    expect(lines[0]).toBe(
+      "pr-steward: 7 pull request(s). proposed=2 approved=1 approved-and-merged=1 not-eligible=1 blocked=1 human-review-hold=0 failed=1",
+    );
     expect(lines.slice(1)).toEqual([
       // A not-eligible upgrade (item 4) is a hand-off, and it writes nothing at all on the pull
       // request, so the summary is the only place it can be seen. Silence there left the flow's
@@ -312,6 +371,25 @@ describe("taskflow summarize.mjs", () => {
       '- o/r #5: the merge was refused (merge refused: the "head" moved)', // JSON escapes survive
       "- item 6 of 7: the agent did not report a result",
       "- o/r #7: approved, not merged (branch protection still not satisfied after approving)",
+    ]);
+  });
+
+  // The same rail, in the flow that meets it most: an upgrade held because a review reads as a
+  // human's. Its proposal comment says so on the pull request, but only the count and the line say
+  // it to the operator, who is the one who can fix `knownAgentLogins`.
+  it("pr-steward counts an upgrade held by a review in flight, and says which field to check", () => {
+    const out = summarize("pr-steward", [
+      item(1, 2, ['{"repo": "o/r", "number": 1, "action": "proposed", "reasons": ["a human review is in flight"]}']),
+      item(2, 2, ['{"repo": "o/r", "number": 2, "action": "proposed", "reasons": ["autonomy is propose, not auto"]}']),
+    ].join("\n"));
+
+    const lines = out.trimEnd().split("\n");
+    expect(lines[0]).toBe(
+      "pr-steward: 2 pull request(s). proposed=2 approved=0 approved-and-merged=0 not-eligible=0 blocked=0 human-review-hold=1 failed=0",
+    );
+    // A propose-mode proposal is the expected outcome and gets no line; the held one does.
+    expect(lines.slice(1)).toEqual([
+      '- o/r #1: held for a review in flight; if no human is looking, "knownAgentLogins" is missing a peer agent',
     ]);
   });
 
@@ -362,6 +440,21 @@ describe("taskflow instructions and the code they drive", () => {
       expect(instructions).toContain("`up-to-date`, `updated`, or `blocked`: continue");
       expect(instructions).toContain("`blocked` does **not** mean the pull request is finished.");
       expect(instructions).toContain("Never stop the item here.");
+    });
+
+    // The same kind of pin, for the same kind of regression. Step 3 used to request a reviewer only
+    // for a reason beginning "not auto-eligible:", which rail 1 alone produces, so a refusal from
+    // protection, the size cap, the security-alert rail, or the human-review rail ended the item
+    // with no merge, no reviewer, and nothing said (issue #51). The condition is now the refusal
+    // itself, and it is prose: narrowing it back to a rail would pass every token assertion here.
+    it(`${label}: pr-requester escalates on the refusal itself, not on which rail refused`, () => {
+      const instructions = readFileSync(path.join(dir, "pr-requester", "instructions.md"), "utf8");
+      expect(instructions).toContain("Request a peer review, whatever the reasons say.");
+      expect(instructions).toContain("the condition is the refusal itself");
+      expect(instructions).toContain("It is not the only case.");
+      // And the missing-config case stays loud rather than folding back into a silent skip.
+      expect(instructions).toContain("Report `requested` as `unconfigured`");
+      expect(instructions).toContain("AGENT_REVIEW_REVIEWERS");
     });
   }
 
