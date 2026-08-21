@@ -251,7 +251,7 @@ describe("taskflow summarize.mjs", () => {
 
     const lines = out.trimEnd().split("\n");
     expect(lines[0]).toBe(
-      "pr-requester: 7 pull request(s). stabilized=1 proposed=2 merged=1 review-requested=1 human-review-hold=0 escalated=1 failed=1",
+      "pr-requester: 7 pull request(s). stabilized=1 self-reviewed=0 proposed=2 merged=1 review-requested=1 human-review-hold=0 escalated=1 failed=1",
     );
     expect(lines.slice(1)).toEqual([
       // Item 1 is the shape issue #51 was reported as: the gate refused, nobody was asked, and the
@@ -293,7 +293,7 @@ describe("taskflow summarize.mjs", () => {
 
     const lines = out.trimEnd().split("\n");
     expect(lines[0]).toBe(
-      "pr-requester: 5 pull request(s). stabilized=0 proposed=4 merged=0 review-requested=1 human-review-hold=1 escalated=0 failed=0",
+      "pr-requester: 5 pull request(s). stabilized=0 self-reviewed=0 proposed=4 merged=0 review-requested=1 human-review-hold=1 escalated=0 failed=0",
     );
     expect(lines.slice(1)).toEqual([
       "- o/r #1: proposed, and no reviewer was asked (too many changed lines (350 > 200))",
@@ -482,7 +482,17 @@ describe("taskflow instructions and the code they drive", () => {
     {
       what: "requestPeerReview status", file: "core/operations/request-peer-review.ts", field: "status:", end: ";", flow: "pr-requester",
       doc: "requestPeerReview",
-      outcomes: ["requested", "already-requested", "bot-authored"],
+      outcomes: ["requested", "already-requested", "bot-authored", "self-review-required"],
+    },
+    {
+      what: "recordSelfReview status", file: "core/operations/record-self-review.ts", field: "status:", end: ";", flow: "pr-requester",
+      doc: "recordSelfReview",
+      outcomes: ["recorded", "already-recorded"],
+    },
+    {
+      what: "createFollowUp status", file: "core/operations/create-follow-up.ts", field: "status:", end: ";", flow: "pr-requester",
+      doc: "createFollowUp",
+      outcomes: ["created", "already-exists"],
     },
     {
       what: "watchAndReReview action", file: "core/operations/watch-and-re-review.ts", field: "action:", end: ";", flow: "pr-reviewer",
@@ -551,7 +561,7 @@ describe("taskflow instructions and the code they drive", () => {
 // aging quietly in a document nobody re-reads.
 describe("docs/how-it-works.md status vocabulary", () => {
   const HOW_IT_WORKS = path.join(REPO_ROOT, "docs", "how-it-works.md");
-  const TABLE_HEADING = "### All seven, side by side";
+  const TABLE_HEADING = "### All nine, side by side";
   // Kept deliberately smaller than the flow contract above: this table only needs enough
   // information to read the authoritative union and find its documentation row. The flow-specific
   // fields and expected outcomes stay in the instruction contract, where they are used.
@@ -561,6 +571,8 @@ describe("docs/how-it-works.md status vocabulary", () => {
     { doc: "approveDependencyUpgrade", file: "core/operations/approve-dependency-upgrade.ts", field: "action:", end: ";" },
     { doc: "watchAndReReview", file: "core/operations/watch-and-re-review.ts", field: "action:", end: ";" },
     { doc: "requestPeerReview", file: "core/operations/request-peer-review.ts", field: "status:", end: ";" },
+    { doc: "recordSelfReview", file: "core/operations/record-self-review.ts", field: "status:", end: ";" },
+    { doc: "createFollowUp", file: "core/operations/create-follow-up.ts", field: "status:", end: ";" },
     { doc: "enrichReview", file: "core/operations/enrich.ts", field: "status:", end: ";" },
     { doc: "completeReview", file: "core/model.ts", field: "event: z.enum([", end: "]" },
   ] as const;

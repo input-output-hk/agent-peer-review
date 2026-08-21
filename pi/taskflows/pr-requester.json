@@ -1,6 +1,6 @@
 {
   "name": "pr-requester",
-  "description": "Move my own open pull requests forward: sync each branch with its base, ask the expedition gate for a verdict (propose by default), and hand anything carrying real code to an agent peer review.",
+  "description": "Move my own open pull requests forward: sync, pass an exact-head self-review, ask the expedition gate for a verdict, and only then request an agent peer review.",
   "version": 1,
   "concurrency": 4,
   "strictInterpolation": true,

@@ -44,6 +44,7 @@ export interface DetailedPullFile { filename: string; status: string; additions:
 // pick one the repository actually allows instead of always trying "merge" and getting a 405 on a
 // squash-only or rebase-only repository.
 export interface AllowedMergeMethods { merge: boolean; squash: boolean; rebase: boolean }
+export interface RepositoryIssue { number: number; title: string; body: string; author: string; url: string }
 
 export interface GitHubGateway {
   getAuthenticatedLogin(): Promise<string>;
@@ -63,6 +64,8 @@ export interface GitHubGateway {
   listComments(repo: string, pr: number): Promise<IssueComment[]>;
   createComment(repo: string, pr: number, body: string): Promise<IssueComment>;
   deleteComment(repo: string, commentId: number): Promise<void>;
+  createIssue(repo: string, issue: { title: string; body: string }): Promise<RepositoryIssue>;
+  findIssueByMarker(repo: string, marker: string, author: string): Promise<RepositoryIssue | null>;
   submitReview(repo: string, pr: number, review: {
     commitId: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
     body: string; comments?: Array<{ path: string; line: number; body: string }>;
@@ -297,6 +300,28 @@ export class OctokitGateway implements GitHubGateway {
     try {
       await this.kit.issues.deleteComment({ owner, repo: name, comment_id: commentId });
     } catch (e: any) { if (e.status === 404) return; throw e; } // already deleted
+  }
+  async createIssue(repo: string, issue: { title: string; body: string }): Promise<RepositoryIssue> {
+    const [owner, name] = split(repo);
+    const { data } = await this.kit.issues.create({ owner, repo: name, title: issue.title, body: issue.body });
+    return {
+      number: data.number, title: data.title, body: data.body ?? "",
+      author: data.user?.login ?? "unknown", url: data.html_url,
+    };
+  }
+  async findIssueByMarker(repo: string, marker: string, author: string): Promise<RepositoryIssue | null> {
+    const [owner, name] = split(repo);
+    // Repository issue listing is immediately consistent, unlike search indexing. This recovery
+    // read closes the create-issue/create-link-comment gap without risking a duplicate issue after
+    // a process crash. Pull requests are excluded by the absence of a pull_request field.
+    const items = await this.kit.paginate(this.kit.issues.listForRepo, {
+      owner, repo: name, state: "all", creator: author, per_page: 100,
+    });
+    const found = items.find((item) => !("pull_request" in item) && (item.body ?? "").includes(marker));
+    return found ? {
+      number: found.number, title: found.title, body: found.body ?? "",
+      author: found.user?.login ?? "unknown", url: found.html_url,
+    } : null;
   }
   async submitReview(repo: string, pr: number, review: { commitId: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: Array<{ path: string; line: number; body: string }> }): Promise<{ url: string }> {
     const [owner, name] = split(repo);

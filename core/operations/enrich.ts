@@ -3,16 +3,31 @@ import type { Config, Enrichment } from "../model.js";
 import { EnrichmentSchema } from "../model.js";
 import { parseMarkers, sortMarkers, isPrimaryReview } from "../claim-marker.js";
 import { serializeMeta, type ReviewMeta } from "../review-meta.js";
+import {
+  buildReviewHistory,
+  parseReviewRecord,
+  serializeReviewRecord,
+  validateNewFindingAdmissibility,
+} from "../review-record.js";
+import type { ReviewWorkspaceState } from "../workspace-state.js";
 
 /** One shared staleness policy for every adapter; user-facing poll deadlines do not alter it. */
 export const DEFAULT_CLAIM_TTL_MS = 30 * 60_000;
 
 export async function enrichReview(
-  deps: { gh: GitHubGateway; config: Config; ttlMs: number; nowMs: number },
+  deps: { gh: GitHubGateway; config: Config; ttlMs: number; nowMs: number; workspace: ReviewWorkspaceState },
   input: { repo: string; pr: number } & Enrichment,
 ): Promise<{ status: "enriched" | "waiting" | "promote"; url?: string }> {
-  const { gh, config, ttlMs, nowMs } = deps;
-  const enrichment = EnrichmentSchema.parse({ overallVerdict: input.overallVerdict, summary: input.summary, newFindings: input.newFindings });
+  const { gh, config, ttlMs, nowMs, workspace } = deps;
+  const enrichment = EnrichmentSchema.parse({
+    overallVerdict: input.overallVerdict,
+    summary: input.summary,
+    newFindings: input.newFindings,
+    reviewedSha: input.reviewedSha,
+    mode: input.mode,
+    findings: input.findings,
+    assessments: input.assessments,
+  });
   const login = config.githubLogin ?? (await gh.getAuthenticatedLogin());
 
   const sorted = sortMarkers(parseMarkers(await gh.listComments(input.repo, input.pr)));
@@ -28,10 +43,59 @@ export async function enrichReview(
     .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt) || b.id - a.id)[0];
 
   if (primary) {
+    const pr = await gh.getPullRequest(input.repo, input.pr);
+    if (pr.state !== "open") throw new Error(`PR ${input.repo}#${input.pr} is ${pr.state}, not open.`);
+    if (!workspace.clean) throw new Error("Review enrichment refused: the local worktree or index is dirty.");
+    if (workspace.headSha !== mine.marker.sha) {
+      throw new Error(`Review enrichment refused: local HEAD ${workspace.headSha} differs from claimed SHA ${mine.marker.sha}.`);
+    }
+    if (pr.headSha !== mine.marker.sha) {
+      throw new Error(`Review enrichment refused: remote PR head ${pr.headSha} differs from claimed SHA ${mine.marker.sha}; claim again.`);
+    }
+    if (enrichment.reviewedSha && enrichment.reviewedSha !== mine.marker.sha) {
+      throw new Error(`Review enrichment refused: reviewedSha ${enrichment.reviewedSha} differs from claimed SHA ${mine.marker.sha}.`);
+    }
+
+    const history = buildReviewHistory(reviews, mine.marker.sha);
+    const mode = enrichment.mode ?? history.mode;
+    if (mode !== history.mode) throw new Error(`Review mode ${mode} does not match claim history mode ${history.mode}.`);
+    validateNewFindingAdmissibility(enrichment.findings, history, mode);
+
+    const parsedPrimaryRecord = parseReviewRecord(primary.body);
+    const primaryRecord = parsedPrimaryRecord?.reviewedSha === primary.commitId ? parsedPrimaryRecord : null;
+    if (primaryRecord) {
+      const assessments = new Map((enrichment.assessments ?? []).map((item) => [item.findingId, item]));
+      for (const finding of primaryRecord.findings) {
+        if (!assessments.has(finding.id)) throw new Error(`Second opinion must confirm or refute primary finding ${finding.id}.`);
+      }
+      const primaryIds = new Set(primaryRecord.findings.map((finding) => finding.id));
+      for (const finding of enrichment.findings ?? []) {
+        if (primaryIds.has(finding.id)) {
+          throw new Error(`Finding ${finding.id} already belongs to the primary review; assess it instead of adding another example.`);
+        }
+      }
+      if (enrichment.overallVerdict === "disagree") {
+        const confirmsPrimaryBlocker = primaryRecord.findings.some((finding) =>
+          finding.blocking && assessments.get(finding.id)?.disposition === "confirm");
+        const addsBlocker = (enrichment.findings ?? []).some((finding) => finding.blocking && finding.confidence === "confirmed");
+        if (!confirmsPrimaryBlocker && !addsBlocker) {
+          throw new Error("A disagreeing second opinion requires a confirmed blocker, not speculative or duplicate hardening.");
+        }
+      }
+    }
+
     let body = `**Second opinion (${enrichment.overallVerdict}):**\n\n${enrichment.summary}`;
-    // Opt-in (Config.captureMetadata, default false): off, the body is unchanged from before this
-    // feature existed. On, a durable meta footer is appended last (second opinions carry no
-    // primary marker, so there is nothing the footer needs to precede).
+    body += `\n\n${serializeReviewRecord({
+      v: 1,
+      reviewedSha: mine.marker.sha,
+      mode,
+      role: "second-opinion",
+      verdict: enrichment.overallVerdict,
+      findings: enrichment.findings ?? [],
+    })}`;
+    // Opt-in (Config.captureMetadata, default false): off, no metadata footer is added. On, a
+    // durable footer is appended last (second opinions carry no primary marker, so there is
+    // nothing the footer needs to precede).
     if (config.captureMetadata) {
       const meta: ReviewMeta = {
         v: 1,

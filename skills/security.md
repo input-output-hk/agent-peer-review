@@ -1,5 +1,7 @@
 # Security Review
 
+The default review skill's finding-admissibility and convergence contract is authoritative here. Security depth does not make speculative threat hardening, repeated variants of one root cause, or a pre-existing weakness into a PR blocker.
+
 Structure the review around the OWASP Top 10 (2021), the industry-consensus taxonomy of critical web application security risks. For each category, check the diff for:
 
 - **A01 Broken Access Control:** authorization checks that rely on client-supplied state (hidden fields, IDs in a URL, JWT claims trusted without server-side verification); missing per-object or per-function checks (IDOR, forced browsing to admin/internal routes); permissive CORS; a role or permission check that was removed, weakened, or only enforced in the UI.

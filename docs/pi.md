@@ -7,7 +7,7 @@ import TabItem from '@theme/TabItem';
 
 # pi.dev integration
 
-`@input-output-hk/agent-review-pi` is a Pi Package: a small TypeScript extension that registers eleven tools inside [pi.dev](https://pi.dev) (`@earendil-works/pi-coding-agent`), plus an `agent-review` skill that drives the claim-review-complete loop. Six of them are the review operations the CLI and the MCP server also expose; the other five drive pull requests forward and are unique to this package. It is a thin adapter over the `@input-output-hk/agent-review` core, the same core the CLI and the MCP server use, so a Claude host, a Codex host, and a pi.dev host all see identical review instructions.
+`@input-output-hk/agent-review-pi` is a Pi Package: a small TypeScript extension that registers thirteen tools inside [pi.dev](https://pi.dev) (`@earendil-works/pi-coding-agent`), plus an `agent-review` skill. It is a thin adapter over the same core used by the CLI and MCP server.
 
 ## Install
 
@@ -15,7 +15,7 @@ import TabItem from '@theme/TabItem';
 pi install npm:@input-output-hk/agent-review-pi
 ```
 
-This registers the extension (the eleven tools below) and the bundled `agent-review` skill with your pi.dev host in one step. Point npm at GitHub Packages first, the same as for the core package (see [Quick start](./quick-start.md#install)):
+This registers the extension (the thirteen tools below) and the bundled `agent-review` skill with your pi.dev host in one step. Point npm at GitHub Packages first, the same as for the core package (see [Quick start](./quick-start.md#install)):
 
 ```ini
 @input-output-hk:registry=https://npm.pkg.github.com
@@ -28,7 +28,7 @@ Same operations, same core, same result shape as the [MCP reference](./mcp.md): 
 
 | Tool | Logical operation | Purpose |
 | --- | --- | --- |
-| `review_create` | `review.create` | Add the `ai-review` label plus any skill labels, and request the reviewer(s) natively. |
+| `review_create` | `review.create` | Add labels and request reviewer(s); an author caller needs a current-head `pr_self_review` first. |
 | `review_list` | `review.list` | List open, `ai-review`-labeled pull requests requested from a login (defaults to yours). |
 | `review_claim` | `review.claim` | Pin the head SHA, post a claim marker, and return the composed review task. |
 | `review_complete` | `review.complete` | Submit a PR review at the pinned SHA (which clears the request), then delete the claim marker. |
@@ -39,13 +39,15 @@ Input fields are identical to the [MCP reference's input fields](./mcp.md#input-
 
 ## The pull request tools
 
-Five more tools have no MCP or CLI counterpart. They move a pull request forward instead of reviewing one, and every decision that could merge, approve, or comment goes through the central safety gate first. All of them return pretty-printed JSON in a single text block, the same as the review tools.
+Seven `pr_*` tools move a pull request forward. The five expedition operations remain Pi-specific; self-review and follow-up have CLI/MCP equivalents as part of the handoff contract.
 
 | Tool | Purpose |
 | --- | --- |
 | `pr_stabilize` | Sync a pull request's branch with its base branch, and report what stands in the way when it cannot be done. |
+| `pr_self_review` | Record the implementing author's successful exact-head `Self-review` before a peer request. |
+| `pr_create_followup` | Create or return the one meaningful review follow-up issue allowed for disproportionate work. |
 | `pr_expedite` | Evaluate the expedition gate, then propose the merge in a comment (the default) or, only when explicitly asked, merge a trivial change. |
-| `pr_request_review` | Request an agent peer review, at most once per round: `requested`, `already-requested`, or `bot-authored`. Reviewers default to the configured `reviewers` when omitted. |
+| `pr_request_review` | Request an agent peer review, at most once per round: `requested`, `already-requested`, `self-review-required`, or `bot-authored`. Reviewers default to config. |
 | `pr_approve_dep_upgrade` | Evaluate a bot dependency-upgrade pull request, then propose (the default) or, only when explicitly asked, approve and merge it: `approved-and-merged`, `approved`, `proposed`, `already-proposed`, `not-eligible`, or `blocked`. |
 | `pr_watch` | Decide the reviewer's next action for a pull request this agent already reviewed: `re-review`, `wait`, `hold-for-human`, `abandoned`, `approved`, or `none`. Reads only. |
 
@@ -56,7 +58,7 @@ Two of these statuses are worth reading closely.
 - `pr_request_review` returns **`bot-authored`** and writes nothing when the author is one of the dependency bots `pr_approve_dep_upgrade` accepts. GitHub only forbids approving your *own* pull request, so your agent may review and approve such a change itself; that work belongs to the steward tool, not to a peer's queue. Any other bot is still requested normally: a bot that opens pull requests carrying real source changes needs a reviewer exactly as much as a person does.
 - `pr_approve_dep_upgrade` returns **`approved`** when the approval was submitted and the merge was not. The tool approves, then re-reads every rail input and runs the whole gate again, merging only if that second evaluation still says `auto`, so `approved` means the pull request is now unblocked for whoever merges it next and `reasons` names the rail that refused: protection the approval did not satisfy, a check that went red, a human review that arrived in the meantime, a new alert, or a moved head. See [the safety model](./taskflows.md#the-safety-model) for why the approval itself counts toward a required-approvals rule while the merge decision does not inherit that allowance.
 
-These five are what the three [expedition taskflows](./taskflows.md) call. The flows are the scheduled way to use them across a set of repositories, and they default to propose-only as well.
+These seven are what the three [expedition taskflows](./taskflows.md) call. The flows are the scheduled way to use them across a set of repositories, and they default to propose-only as well.
 
 ## The `agent-review` skill
 

@@ -7,6 +7,10 @@ export * from "./languages.js";
 export * from "./repo-context.js";
 export * from "./claim-marker.js";
 export * from "./review-meta.js";
+export * from "./review-record.js";
+export * from "./workspace-state.js";
+export * from "./self-review.js";
+export * from "./follow-up.js";
 export * from "./paths.js";
 export * from "./guard.js";
 export * from "./expedition/classify.js";
@@ -23,6 +27,14 @@ export { listReviews } from "./operations/list.js";
 export { claimReview } from "./operations/claim.js";
 export { completeReview } from "./operations/complete.js";
 export { enrichReview, DEFAULT_CLAIM_TTL_MS } from "./operations/enrich.js";
+export {
+  recordSelfReview, RecordSelfReviewInputSchema,
+  type RecordSelfReviewInput, type RecordSelfReviewResult,
+} from "./operations/record-self-review.js";
+export {
+  createFollowUp, CreateFollowUpInputSchema,
+  type CreateFollowUpInput, type CreateFollowUpResult,
+} from "./operations/create-follow-up.js";
 export { stabilize, type StabilizeResult } from "./operations/stabilize.js";
 export { expedite, type ExpediteInput, type ExpediteResult } from "./operations/expedite.js";
 export { requestPeerReview, type RequestPeerReviewInput, type RequestPeerReviewResult } from "./operations/request-peer-review.js";

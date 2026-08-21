@@ -2,6 +2,7 @@ import type { GitHubGateway } from "../github.js";
 import { TRIGGER } from "../labels.js";
 import { createReview } from "./create.js";
 import { confirmsBotAuthor, isAllowlistedDependencyBot, resolveDependencyBotAllowlist } from "./approve-dependency-upgrade.js";
+import { findPassedSelfReview } from "../self-review.js";
 
 export interface RequestPeerReviewInput {
   repo: string;
@@ -18,10 +19,10 @@ export interface RequestPeerReviewInput {
 }
 
 export interface RequestPeerReviewResult {
-  status: "requested" | "already-requested" | "bot-authored";
+  status: "requested" | "already-requested" | "bot-authored" | "self-review-required";
   /** The reviewers actually requested. Empty for "bot-authored": nothing was requested. */
   reviewers: string[];
-  /** Why nothing was requested. Present only for "bot-authored". */
+  /** Why nothing was requested. Present for policy holds. */
   reason?: string;
 }
 
@@ -97,6 +98,22 @@ export async function requestPeerReview(gh: GitHubGateway, input: RequestPeerRev
       reason: `the author "${pull.author}" is an allowlisted dependency bot, so this pull request belongs to the steward path (approveDependencyUpgrade), which may review and approve it itself, rather than to a peer agent`,
     };
   }
+
+  // The author cannot use an old request (or a request made outside this operation) to bypass the
+  // implementer gate. Check the current-head self-review before idempotency: an outstanding peer
+  // request is observable, but it is not evidence that the author inspected the latest diff.
+  const actingLogin = await gh.getAuthenticatedLogin();
+  if (actingLogin.toLowerCase() === pull.author.toLowerCase()) {
+    const selfReview = findPassedSelfReview(await gh.listComments(repo, pr), pull.author, pull.headSha);
+    if (!selfReview) {
+      return {
+        status: "self-review-required",
+        reviewers: [],
+        reason: `pull request author ${pull.author} has not recorded a successful Self-review at ${pull.headSha}`,
+      };
+    }
+  }
+
   if (pull.labels.includes(TRIGGER)) {
     const requested = await gh.listRequestedReviewers(repo, pr);
     if (reviewers.some((r) => requested.users.includes(r))) {

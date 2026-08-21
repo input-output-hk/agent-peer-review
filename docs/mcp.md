@@ -7,9 +7,9 @@ import TabItem from '@theme/TabItem';
 
 # MCP reference
 
-The `agent-review-mcp` binary (equivalently, `agent-review serve`) starts an MCP server over stdio, built with `@modelcontextprotocol/sdk`. It registers six tools, one per **review** operation in `core`, using [zod](https://zod.dev) schemas for input validation.
+The `agent-review-mcp` binary (equivalently, `agent-review serve`) starts an MCP server over stdio, built with `@modelcontextprotocol/sdk`. It registers eight tools: the six review operations plus author self-review and the single follow-up issue operation.
 
-`core` exports eleven operations. The other five are the expedition operations, which move a pull request forward instead of reviewing one (`stabilize`, `expedite`, `requestPeerReview`, `approveDependencyUpgrade`, and `watchAndReReview`), and they are exposed only through the [pi.dev extension](./pi.md), because the [taskflows](./taskflows.md) that drive them are a pi.dev feature. Reaching them from an MCP host is tracked as [issue #61](https://github.com/input-output-hk/agent-peer-review/issues/61).
+`core` also exports five expedition operations that remain Pi-only (`stabilize`, `expedite`, `requestPeerReview`, `approveDependencyUpgrade`, and `watchAndReReview`). Self-review and follow-up are available here because they are part of the cross-host review handoff contract.
 
 Every tool returns its result the same way: a single text content block holding the same JSON you would get back from the equivalent CLI command, pretty-printed with two-space indentation.
 
@@ -17,13 +17,15 @@ Every tool returns its result the same way: a single text content block holding 
 
 Tool ids use underscores (`review_create`), following common MCP naming convention for identifiers. This documentation, and the design notes behind it, refer to the same logical operations with dots (`review.create`) because that reads better in prose. `review_create` and `review.create` name the exact same operation; only the spelling differs by audience.
 
-## The six tools
+## The eight tools
 
 | Tool id | Logical operation | Purpose |
 | --- | --- | --- |
 | `review_create` | `review.create` | Add the `ai-review` label plus any skill labels, and request the reviewer(s) natively. |
 | `review_list` | `review.list` | List open, `ai-review`-labeled pull requests requested from a login (defaults to yours). |
 | `review_claim` | `review.claim` | Pin the head SHA, post a claim marker, and return the composed review task. |
+| `review_self_review` | `review.self-review` | Record the PR author's successful exact-head `Self-review` summary. |
+| `review_followup` | `review.followup` | Create or return the one meaningful review follow-up issue allowed for the PR. |
 | `review_complete` | `review.complete` | Submit a PR review at the pinned SHA (which clears the request), then delete the claim marker. |
 | `review_enrich` | `review.enrich` | Post a consolidated second opinion once the primary review exists; otherwise report `waiting` or `promote`. |
 | `labels_bootstrap` | `labels.bootstrap` | Idempotently create or update the `ai-review` label plus every skill label. |
@@ -39,6 +41,8 @@ Tool ids use underscores (`review_create`), following common MCP naming conventi
 | `skills` | array of string | no, defaults to `[]` |
 | `reviewers` | array of string | no, defaults to the config file's `reviewers` (see [Quick start: Configure](./quick-start.md#configure-optional)); the tool reports an error if both are empty |
 | `note` | string | no |
+
+When the authenticated caller is the PR author, `review_create` refuses the write until `review_self_review` has recorded a successful pass at the current head. A maintainer requesting a review on somebody else's PR is not gated.
 
 ### `review_list`
 
@@ -63,6 +67,10 @@ Tool ids use underscores (`review_create`), following common MCP naming conventi
 | `event` | string enum: `approve`, `request-changes`, or `comment` | yes |
 | `summary` | string | yes |
 | `comments` | array of `{ path: string, line: number, body: string }` | no |
+| `reviewedSha` | string | required for `request-changes`; exact claim SHA |
+| `mode` | `initial`, `rereview`, or `convergence` | no; must match claim history if passed |
+| `findings` | structured finding array | required to contain a confirmed blocker for `request-changes` |
+| `workspace` | string path | no, defaults to server working directory |
 
 ### `review_enrich`
 
@@ -73,8 +81,18 @@ Tool ids use underscores (`review_create`), following common MCP naming conventi
 | `verdict` | string enum: `agree`, `disagree`, or `mixed` | yes |
 | `summary` | string | yes |
 | `newFindings` | array of `{ path: string, line: number, body: string }` | no |
+| `reviewedSha`, `mode`, `findings`, `workspace` | exact-head structured fields | no; same semantics as completion |
+| `assessments` | `{ findingId, disposition, rationale }[]` | required for every structured primary finding |
 
 Unlike the other tools, `review_enrich` makes a single attempt: it does not poll. It reports `waiting` or `promote` immediately, and the calling host is responsible for looping (the CLI's `enrich` command does this for you).
+
+### `review_self_review`
+
+Takes `repo`, `pr`, `reviewedSha`, `whatChanged`, `howVerified`, `whyReady`, and optional `workspace`. It posts one author-authenticated current-head comment titled `Self-review`; dirty, stale, and non-author calls fail.
+
+### `review_followup`
+
+Takes `repo`, `pr`, `reviewedSha`, `title`, `problem`, `rationale`, `acceptanceCriteria`, `findingIds`, and optional `workspace`. Minimum content and acceptance criteria prevent issue-shaped noise, and the operation creates at most one issue per PR across retries.
 
 ### `labels_bootstrap`
 

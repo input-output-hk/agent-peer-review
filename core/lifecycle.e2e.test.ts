@@ -9,6 +9,13 @@ import { PRIMARY_MARKER } from "./claim-marker.js";
 
 const cfg = { githubLogin: null as string | null, skillsDir: null, captureMetadata: false, reviewers: [], knownAgentLogins: [] };
 const TTL = 30 * 60_000;
+const workspace = (headSha: string) => ({ headSha, clean: true });
+const blocker = {
+  id: "thing-regression", title: "Confirmed regression", severity: "high" as const,
+  confidence: "confirmed" as const, scope: "introduced" as const, status: "open" as const,
+  blocking: true, path: "src/thing.ts", line: 1, evidence: "Reproduced at the claimed SHA.",
+  remediation: "Fix the bounded root cause.",
+};
 
 describe("lifecycle e2e", () => {
   it("single reviewer: create, list, claim, complete", async () => {
@@ -26,7 +33,7 @@ describe("lifecycle e2e", () => {
     expect(task.headSha).toBe("sha00020"); // pins the head SHA
     expect(await gh.listComments("o/r", 20)).toHaveLength(1); // marker posted
 
-    const res = await completeReview({ gh, config: cfg }, { repo: "o/r", pr: 20, event: "approve", summary: "looks good" });
+    const res = await completeReview({ gh, config: cfg, workspace: workspace("sha00020") }, { repo: "o/r", pr: 20, event: "approve", summary: "looks good" });
     expect(res.drifted).toBe(false);
     expect(res.superseded).toBe(false);
 
@@ -52,13 +59,16 @@ describe("lifecycle e2e", () => {
     expect(bobTask.role).toBe("enricher");
 
     gh.login = "alice";
-    const completeRes = await completeReview({ gh, config: cfg }, { repo: "o/r", pr: 21, event: "request-changes", summary: "fix the thing" });
+    const completeRes = await completeReview(
+      { gh, config: cfg, workspace: workspace("sha00021") },
+      { repo: "o/r", pr: 21, event: "request-changes", summary: "fix the thing", reviewedSha: "sha00021", findings: [blocker] },
+    );
     expect(completeRes.superseded).toBe(false); // alice is first, so this is the primary
 
     gh.login = "bob";
     const enrichRes = await enrichReview(
-      { gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T00:02:00Z") },
-      { repo: "o/r", pr: 21, overallVerdict: "agree", summary: "confirmed" },
+      { gh, config: cfg, ttlMs: TTL, nowMs: Date.parse("2026-07-30T00:02:00Z"), workspace: workspace("sha00021") },
+      { repo: "o/r", pr: 21, overallVerdict: "agree", summary: "confirmed", assessments: [{ findingId: blocker.id, disposition: "confirm", rationale: "Reproduced independently." }] },
     );
     expect(enrichRes.status).toBe("enriched"); // primary already exists
 

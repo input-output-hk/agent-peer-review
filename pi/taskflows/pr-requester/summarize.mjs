@@ -141,6 +141,7 @@ function main() {
   // operator can trip by configuration, and a count is what turns that from silence into a number.
   const counts = {
     stabilized: 0,
+    "self-reviewed": 0,
     proposed: 0,
     merged: 0,
     "review-requested": 0,
@@ -159,6 +160,7 @@ function main() {
     }
 
     const stabilize = typeof result.stabilize === "string" ? result.stabilize : "";
+    const selfReview = typeof result.selfReview === "string" ? result.selfReview : "";
     const expedite = typeof result.expedite === "string" ? result.expedite : "";
     const requested = typeof result.requested === "string" ? result.requested : "";
     const reason = firstReason(result);
@@ -168,6 +170,7 @@ function main() {
     const held = heldForReviewInFlight(result);
 
     if (stabilize === "updated") counts.stabilized += 1;
+    if (selfReview === "recorded" || selfReview === "already-recorded") counts["self-reviewed"] += 1;
     if (expedite === "proposed" || expedite === "already-proposed") counts.proposed += 1;
     if (expedite === "merged") counts.merged += 1;
     if (engaged) counts["review-requested"] += 1;
@@ -181,7 +184,7 @@ function main() {
     if (expedite === "escalate-human") {
       counts.escalated += 1;
       attention.push(`${label(item)}: needs a human (stabilize reported ${stabilize || "nothing"})`);
-    } else if (stabilize === "error" || expedite === "error" || requested === "error") {
+    } else if (stabilize === "error" || selfReview === "error" || expedite === "error" || requested === "error") {
       counts.failed += 1;
       attention.push(`${label(item)}: a tool call failed`);
     } else if (stabilize === "conflict") {
@@ -191,6 +194,8 @@ function main() {
       attention.push(`${label(item)}: stopped at stabilize; the pull request is closed or merged`);
     } else if (stabilize === "draft") {
       attention.push(`${label(item)}: stopped at stabilize; the pull request is a draft`);
+    } else if (selfReview === "needs-changes") {
+      attention.push(`${label(item)}: self-review found issues; fix them before requesting a peer`);
     } else if (expedite === "blocked") {
       attention.push(`${label(item)}: the merge was refused${reason ? ` (${reason})` : ""}`);
     } else if (requested === "unconfigured") {
@@ -200,6 +205,8 @@ function main() {
       attention.push(
         `${label(item)}: no reviewers are configured, so nobody was asked; set "reviewers" in ~/.agent-peer-review/config.json or AGENT_REVIEW_REVIEWERS`,
       );
+    } else if (requested === "self-review-required") {
+      attention.push(`${label(item)}: no peer was asked because the current head has no successful Self-review`);
     } else if (expedite === "not-eligible") {
       attention.push(`${label(item)}: the gate never ran${reason ? ` (${reason})` : ""}`);
     } else if (held) {

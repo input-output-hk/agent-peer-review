@@ -126,18 +126,36 @@ function fakeDepUpgradeGh() {
 }
 
 describe("pi extension", () => {
-  it("registers the six review tools plus the five expedition tools", () => {
+  it("registers the review, self-review, follow-up, and expedition tools", () => {
     const pi = fakePi();
     registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null }) as any });
     expect(pi.tools.map((t) => t.name).sort()).toEqual([
-      "labels_bootstrap", "pr_approve_dep_upgrade", "pr_expedite", "pr_request_review", "pr_stabilize", "pr_watch",
+      "labels_bootstrap", "pr_approve_dep_upgrade", "pr_create_followup", "pr_expedite", "pr_request_review", "pr_self_review", "pr_stabilize", "pr_watch",
       "review_claim", "review_complete", "review_create", "review_enrich", "review_list",
     ]);
+  });
+  it("keeps Pi's convergence schemas aligned with the core and MCP adapters", () => {
+    const pi = fakePi();
+    registerTools(pi as any, { gh: () => ({}) as any, config: () => ({ githubLogin: "me", skillsDir: null }) as any });
+    const byName = new Map(pi.tools.map((tool) => [tool.name, tool]));
+    for (const name of ["review_complete", "review_enrich"] as const) {
+      const properties = byName.get(name).parameters.properties;
+      expect(properties).toHaveProperty("reviewedSha");
+      expect(properties).toHaveProperty("mode");
+      expect(properties).toHaveProperty("findings");
+      expect(properties).toHaveProperty("workspace");
+    }
+    expect(byName.get("review_enrich").parameters.properties).toHaveProperty("assessments");
+    expect(byName.get("pr_self_review").parameters.properties).toHaveProperty("whyReady");
+    expect(byName.get("pr_create_followup").parameters.properties).toHaveProperty("acceptanceCriteria");
   });
   it("review_create falls back to config.reviewers when the call omits reviewers", async () => {
     const pi = fakePi();
     const calls: any = {};
     const gh = {
+      getPullRequest: async () => ({ author: "a", headSha: "sha0001" }),
+      getAuthenticatedLogin: async () => "me",
+      listComments: async () => [],
       addLabels: async () => {},
       requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
     } as any;
@@ -151,6 +169,9 @@ describe("pi extension", () => {
     const pi = fakePi();
     const calls: any = {};
     const gh = {
+      getPullRequest: async () => ({ author: "a", headSha: "sha0001" }),
+      getAuthenticatedLogin: async () => "me",
+      listComments: async () => [],
       addLabels: async () => {},
       requestReviewers: async (_repo: string, _pr: number, reviewers: string[]) => { calls.reviewers = reviewers; },
     } as any;
@@ -193,6 +214,7 @@ describe("pi extension", () => {
       listPullFiles: async () => [],
       getFileContent: async () => null,
       listDir: async () => [],
+      getReviews: async () => [],
     } as any;
     registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: null, skillsDir: dir }) as any });
     const claim = pi.tools.find((t) => t.name === "review_claim");
@@ -202,6 +224,8 @@ describe("pi extension", () => {
     expect(task.headSha).toBe("feed1234");
     expect(task.reviewer).toBe("me");
     expect(task.role).toBe("anchor");
+    expect(task.reviewContractVersion).toBe(1);
+    expect(task.reviewHistory.mode).toBe("initial");
   });
   it("review_complete maps the event and reviews at the pinned SHA", async () => {
     const pi = fakePi();
@@ -217,7 +241,11 @@ describe("pi extension", () => {
       submitReview: async (_r: string, _p: number, opts: any) => { calls.submit = opts; return { url: "https://example.com/review/1" }; },
       deleteComment: async (_r: string, id: number) => { calls.deleted = id; },
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null }) as any });
+    registerTools(pi as any, {
+      gh: () => gh,
+      config: () => ({ githubLogin: "me", skillsDir: null }) as any,
+      workspaceState: () => ({ headSha: "feed1234", clean: true }),
+    });
     const complete = pi.tools.find((t) => t.name === "review_complete");
     const res = await complete.execute("id3", { repo: "o/r", pr: 7, event: "approve", summary: "looks good" }, undefined, undefined, undefined);
     expect(res.content[0].type).toBe("text");
@@ -233,10 +261,18 @@ describe("pi extension", () => {
     const gh = {
       listComments: async () => [{ id: 5, author: "me", body: marker }],
       getReviews: async () => [{ id: 1, author: "alice", commitId: "cafe1234", submittedAt: "2026-01-01T00:00:00Z", body: `primary\n\n${PRIMARY_MARKER}` }],
+      getPullRequest: async () => ({
+        number: 7, title: "t", author: "a", headSha: "cafe1234", baseSha: "base1",
+        url: "https://example.com/o/r/pull/7", state: "open" as const, labels: ["ai-review"],
+      }),
       submitReview: async (_r: string, _p: number, opts: any) => { calls.submit = opts; return { url: "https://example.com/review/2" }; },
       deleteComment: async () => {},
     } as any;
-    registerTools(pi as any, { gh: () => gh, config: () => ({ githubLogin: "me", skillsDir: null }) as any });
+    registerTools(pi as any, {
+      gh: () => gh,
+      config: () => ({ githubLogin: "me", skillsDir: null }) as any,
+      workspaceState: () => ({ headSha: "cafe1234", clean: true }),
+    });
     const enrich = pi.tools.find((t) => t.name === "review_enrich");
     const res = await enrich.execute("id4", { repo: "o/r", pr: 7, verdict: "agree", summary: "concur" }, undefined, undefined, undefined);
     expect(JSON.parse(res.content[0].text).status).toBe("enriched");
@@ -317,6 +353,7 @@ describe("pi extension", () => {
     const pi = fakePi();
     const calls: any = {};
     const gh = {
+      getAuthenticatedLogin: async () => "me",
       getPullRequest: async () => ({ number: 7, title: "t", author: "a", headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
       getActorType: async () => "User" as const, // a human author, so the bot-authored guard passes
       addLabels: async () => {},
@@ -392,6 +429,7 @@ describe("pi extension", () => {
     const pi = fakePi();
     const calls: any = {};
     const gh = {
+      getAuthenticatedLogin: async () => "me",
       getPullRequest: async () => ({ number: 8, title: "t", author: "github-actions[bot]", headSha: HEAD, baseSha: "base", url: "u", state: "open" as const, labels: [] }),
       getActorType: async () => "Bot" as const, // a bot, but not one the steward path can take
       addLabels: async () => { calls.labeled = true; },

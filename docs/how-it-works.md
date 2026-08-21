@@ -2,7 +2,7 @@
 
 Every diagram on this page is drawn from the code on `main`, not from the design's intentions. A diagram that documents behaviour the code does not have is worse than no diagram, so anything unverified is left out.
 
-Each diagram carries the shape; the table beside it carries the detail, because a table is checkable in a way a diagram is not. The status vocabulary in [the side-by-side table](#all-seven-side-by-side) is checked mechanically: `test/taskflows.test.ts` reads each operation's TypeScript union out of its own source and fails the build unless this page names exactly those values.
+Each diagram carries the shape; the table beside it carries the detail, because a table is checkable in a way a diagram is not. The status vocabulary in [the side-by-side table](#all-nine-side-by-side) is checked mechanically: `test/taskflows.test.ts` reads each operation's TypeScript union out of its own source and fails the build unless this page names exactly those values.
 
 This page describes what the code does, and nothing else. It carries no catalogue of the bugs under repair, because a document that embeds one has to be revised on every fix and nothing forces that: four separate claims on this page outlived the code they described. The open work lives where it is maintained, in [the issue list](https://github.com/input-output-hk/agent-peer-review/issues), and the sections below link it where a reader would otherwise wonder whether a limit is deliberate.
 
@@ -43,6 +43,8 @@ Every field a decision reads, where it comes from, and who reads it. Nothing her
 | open security alert count (a number, or `null`) | `listOpenSecurityAlertCount(repo)` | gate rail 6. Repository-wide, not per pull request |
 | changed files with additions and deletions | `listPullFilesDetailed` | gate rails 1 and 2, `classifyDependencyUpgrade` |
 | claim markers | issue comments matching `agent-review:claim` | `claimReview`, `completeReview`, `enrichReview` |
+| self-review markers | author-owned issue comments matching `agent-review:self-review` | `createReview`, `requestPeerReview`, `recordSelfReview` |
+| follow-up links and issues | author-owned `agent-review:follow-up` comments and one repository issue keyed to the source PR | `createFollowUp`; reviewers consume its URL through structured findings |
 | proposal markers | the acting login's own comments matching `agent-review:action` | `postProposal` |
 | `autonomy` | the tick's own argument | gate rail 8 |
 
@@ -52,7 +54,7 @@ Every field a decision reads, where it comes from, and who reads it. Nothing her
 
 ### pr-requester
 
-One tool call per step, in order: `pr_stabilize`, then `pr_expedite`, then possibly `pr_request_review`. `discover.mjs` selects with `gh pr list --author @me --state open` and skips anything whose `isDraft` is true.
+The order is `pr_stabilize`, successful exact-head `pr_self_review`, `pr_expedite`, then possibly `pr_request_review`. A meaningful disproportionate change may create the PR's one `pr_create_followup` issue during self-review. `discover.mjs` selects with `gh pr list --author @me --state open` and skips drafts.
 
 ```mermaid
 stateDiagram-v2
@@ -60,6 +62,8 @@ stateDiagram-v2
 
   state "open, not draft" as D
   state "synced" as S
+  state "Self-review passed at H" as SR
+  state "self-review needs fixes" as SF
   state "merged" as M
   state "merge refused" as X
   state "proposal at H" as P
@@ -74,9 +78,12 @@ stateDiagram-v2
   D --> F : draft
   D --> C : conflict
   D --> S : up-to-date, updated, blocked
-  S --> M : gate auto, merge ok
-  S --> X : gate auto, merge refused
-  S --> P : gate propose
+  S --> SF : self-review finds an issue
+  S --> SR : self-review passes
+  SF --> S : implement, then review again
+  SR --> M : gate auto, merge ok
+  SR --> X : gate auto, merge refused
+  SR --> P : gate propose
   P --> Q : any refusal: ask a peer
   P --> B : bot-authored
   Q --> Q : tick+1, answered at this H
@@ -84,24 +91,21 @@ stateDiagram-v2
   C --> D : tick+1, after a push
 
   class M,G terminal
-  class C,F,Q,P,B pending
+  class C,F,Q,P,B,SF pending
   classDef terminal stroke-width:4px
   classDef pending stroke-dasharray: 6 4
 ```
 
-The edge worth reading twice is `P --> Q`. The condition is the **refusal**, not which rail refused: step 3 asks for a peer review whenever the gate said no, and `pr_request_review` is what decides whether anybody is already engaged. Step 3 used to fire only for a reason beginning `not auto-eligible:`, which rail 1 alone produces, so a refusal from branch protection, the size cap, the security-alert rail, or the human-review rail ended the item with no merge, no reviewer, and no attention line, forever ([#51](https://github.com/input-output-hk/agent-peer-review/issues/51)).
+The edge worth reading twice is `P --> Q`. The peer request requires both a successful self-review and a gate refusal; the refusal still applies whatever rail produced it. `pr_request_review` then decides whether anybody is already engaged.
 
-| stabilize | expedite | does step 3 fire? | reported | next tick |
-|---|---|---|---|---|
-| `gone` | skipped | no | `gone / skipped / skipped` | not discovered again |
-| `draft` | skipped | no | `draft / skipped / skipped` | filtered out at discovery |
-| `conflict` | skipped, reported as `escalate-human` | no | `conflict / escalate-human / skipped` | identical every tick until the author pushes. Loud: the summarizer raises it |
-| `up-to-date`, `updated`, or `blocked` | `merged` | no | `… / merged / skipped` | gone |
-| same | `proposed` or `already-proposed`, whatever the reasons say | **yes** | `… / … / requested` or `already-requested` | `already-requested` while the head holds |
-| same | same, and the author is an allowlisted dependency bot | yes, and it refuses | `… / … / bot-authored` | `pr-steward`'s item, and it reports on it in its own run |
-| same | same, and no `reviewers` are configured | yes, and it throws before its first GitHub call | `… / … / unconfigured` | identical every tick until the config is fixed. Loud: the summarizer names the field and the environment variable |
-| same | `blocked` | no | `… / blocked / skipped` | retried next tick |
-| same | `not-eligible` | no | `… / not-eligible / skipped` | reachable only on a race, since `stabilize` returns `gone` or `draft` first |
+| stabilize | self-review | expedite / request | next tick |
+|---|---|---|---|
+| `gone`, `draft`, or `conflict` | skipped | skipped | terminal or wait for author action |
+| healthy | `needs-changes` | skipped | implement fixes, then self-review the new head |
+| healthy | `recorded` / `already-recorded` | `merged` | gone |
+| healthy | passed | `proposed` then `requested` / `already-requested` | the peer reviews this head |
+| healthy | passed | `self-review-required` | fail closed and repeat self-review at the current head |
+| healthy | passed | `bot-authored` | the steward path owns it |
 
 Two things about this diagram are worth stating because they are easy to misread:
 
@@ -252,7 +256,7 @@ Rails 4 and 5 are what make this flow different from the other two, because this
 
 ## 2. The operations and their status unions
 
-Five expedition operations decide something, and two review operations report a status of their own. Their unions are the whole vocabulary the flows reason in, so every value here is a value some `instructions.md` branches on, and [the side-by-side table](#all-seven-side-by-side) is checked against the TypeScript by a test rather than by a reader.
+Five expedition operations decide something, and four review/author operations report a status or verdict of their own. Their unions are the whole vocabulary the flows reason in, so every value here is a value some `instructions.md` branches on, and [the side-by-side table](#all-nine-side-by-side) is checked against the TypeScript by a test rather than by a reader.
 
 No operation throws for a *policy* outcome: every "no" is a status with a reason. A thrown error means the outcome is genuinely unknown, which is why the merge and approve calls are deliberately not caught: a write that is retried can succeed on the server and still surface as an error, so the flow above must re-read state rather than assume nothing happened.
 
@@ -379,15 +383,18 @@ Every answer carries `headMoved`, not only `approved`. It is false whenever this
 
 ### requestPeerReview
 
+The direct `createReview` operation used by CLI `request` and MCP/Pi `review_create` applies the same author gate before its first write: if the authenticated caller authored the PR, a successful authenticated `Self-review` must exist at the current head. It throws when that pass is absent; callers requesting a review of somebody else's PR are unchanged.
+
 ```mermaid
 flowchart LR
   R0["requestPeerReview"]
   R0 -->|"reviewers is empty"| R1["<b>throws</b>"]
   R0 -->|"an allowlisted dependency bot authored it"| R4["<b>bot-authored</b>"]
+  R0 -->|"author is caller, no passed Self-review at H"| R5["<b>self-review-required</b>"]
   R0 -->|"trigger label AND<br/>an open request or a review at H"| R2["<b>already-requested</b>"]
   R0 -->|"otherwise"| R3["<b>requested</b>"]
 
-  class R1,R2,R4 pending
+  class R1,R2,R4,R5 pending
   classDef pending stroke-dasharray: 6 4
 ```
 
@@ -396,13 +403,14 @@ flowchart LR
 | `requested` | adds `ai-review` plus any skill labels, then calls `requestReviewers` | the peer answers, which clears the request natively |
 | `already-requested` | the trigger label is present **and** at least one target reviewer either still holds an open request or has left a review at `H`. Nothing is written | the author pushes, which makes the next tick a genuine new round |
 | `bot-authored` | the author is a dependency bot on the same allowlist the steward accepts, confirmed by GitHub or by the name shape. **Nothing at all is written**: no label, no request | nothing here. `pr-steward` owns it, and may review and approve it itself |
+| `self-review-required` | the implementing caller is the PR author and no authenticated successful `Self-review` exists at `H`. Nothing is requested | fix any issue found, record the successful pass, then retry |
 | *throws* | no reviewers were resolved. The throw happens before any GitHub call, so nothing is posted anywhere. The requester flow reports `unconfigured` and the summary names the field to set | a `reviewers` list in the global config, or `AGENT_REVIEW_REVIEWERS` |
 
 Every part of the `already-requested` test is load-bearing. The label alone is not enough: it survives forever. An open request alone is not enough either, and that was a livelock: submitting a review clears the request natively, so the tick after the peer answered saw a labeled pull request with no outstanding request, asked again, and the peer reviewed again, forever, with the head never moving ([#52](https://github.com/input-output-hk/agent-peer-review/issues/52)). Keyed on the head, the loop converges after one round and a genuine author push is still a genuine new round. Any review state at the head counts, `COMMENTED` included, because the question here is whether this exact diff has been looked at; the round **cap** in `watchAndReReview` asks a different question and so counts only verdicts.
 
 The `bot-authored` refusal is deliberately narrow. Any *other* bot is still requestable, and must be: a codegen or release bot opens pull requests carrying real source changes, which no automated path here may approve or merge, so a peer review is exactly what they need.
 
-### All seven, side by side
+### All nine, side by side
 
 The whole reported vocabulary of this package, in one place. Each row is read out of the operation's own TypeScript by `test/taskflows.test.ts`, which asserts set equality in both directions: a status added, renamed, or removed in the code fails the build here rather than aging quietly in this table. Four separate values on this page went stale before that test existed.
 
@@ -412,11 +420,13 @@ The whole reported vocabulary of this package, in one place. Each row is read ou
 | `expedite` | `merged`, `proposed`, `already-proposed`, `not-eligible`, `blocked` | `core/operations/expedite.ts` | on a transport error, or a borrowed `actingLogin` |
 | `approveDependencyUpgrade` | `approved-and-merged`, `approved`, `proposed`, `already-proposed`, `not-eligible`, `blocked` | `core/operations/approve-dependency-upgrade.ts` | same |
 | `watchAndReReview` | `re-review`, `wait`, `hold-for-human`, `abandoned`, `approved`, `none` | `core/operations/watch-and-re-review.ts` | only on a transport error |
-| `requestPeerReview` | `requested`, `already-requested`, `bot-authored` | `core/operations/request-peer-review.ts` | yes, when no reviewers were resolved |
+| `requestPeerReview` | `requested`, `already-requested`, `bot-authored`, `self-review-required` | `core/operations/request-peer-review.ts` | yes, when no reviewers were resolved |
+| `recordSelfReview` | `recorded`, `already-recorded` | `core/operations/record-self-review.ts` | yes, for a non-author, dirty checkout, or moved head |
+| `createFollowUp` | `created`, `already-exists` | `core/operations/create-follow-up.ts` | yes, for issue-shaped noise, a non-author caller, dirty checkout, or moved head |
 | `enrichReview` | `enriched`, `waiting`, `promote` | `core/operations/enrich.ts` | yes, when this login holds no claim |
 | `completeReview` | `approve`, `request-changes`, `comment` | `core/model.ts` (`ReviewResultSchema.event`) | yes, when this login holds no claim |
 
-`completeReview` is the one row that is not a status union. It reports the review **event** it submitted, taken from the caller, plus two booleans: `drifted`, true when the head has moved past the pinned SHA, and `superseded`, true when a competing primary at the same commit downgraded this review to a second opinion. `watchAndReReview` carries a third boolean of its own, `headMoved`.
+`completeReview` is the one row that is not a status union. It reports the review **event** it submitted, taken from the caller, plus two booleans: `drifted` is retained for response compatibility and is always false because a moved head is rejected, while `superseded` is true when a competing primary at the same commit downgraded this review to a second opinion. `watchAndReReview` carries a third boolean of its own, `headMoved`.
 
 ---
 
@@ -554,14 +564,14 @@ The mechanics behind that, precisely:
 - **The head-SHA pin, and the re-pin.** `claimReview` reads its own earliest marker first. If that marker already names the head, it resumes on it. If it names an older commit, the claim is **re-pinned** to the current head: every marker of this login's is deleted and one is posted carrying the new SHA, in that order (posting first and failing to delete would leave two markers and re-pin once per tick forever). Only the SHA changes, and `claimedAt` in particular is carried over, so a re-pin cannot reorder the panel and an anchor stays the anchor. With no marker at all, the current head is pinned fresh. Every read and every review from then on is against the pinned SHA.
 - **Roles are derived, never stored.** All markers are sorted by `claimedAt`, ties broken by the lower comment id; the earliest claimant is the **anchor** and everyone else is an **enricher**, who additionally receives the `second-opinion` skill. This is recomputed on every claim, which is how a stalled panel un-sticks itself across ticks.
 - **A second claimant is resolved by that same sort**, not by a lock. Two processes under the *same* login sort by `claimedAt` too, and the later one adopts the winner's pinned SHA; both markers are deleted together at completion.
-- **`completeReview`** submits at the pinned SHA. It first looks for a *competing primary*: another author's review carrying the primary marker **at the same pinned commit**. When one exists, this review is downgraded to a second-opinion `COMMENT` rather than a competing primary. Human reviews carry no marker and prior rounds sit at a different commit, so neither counts. When the head has moved past the pinned SHA the body gains a drift note and `drifted: true` is returned.
+- **`completeReview`** verifies local HEAD, the clean index/worktree, the claim SHA, and remote PR head before writing. It then looks for a *competing primary* at that same commit and downgrades a losing anchor to a second-opinion `COMMENT`. A moved or dirty state is rejected; successful responses retain `drifted: false` for compatibility.
 - **`enrichReview`** looks for that primary at the enricher's **own** pinned commit. Finding one, it posts a single consolidated `COMMENT` review at the primary's commit. Finding none, it compares the earliest marker's `claimedAt` against a 30-minute TTL and either reports `waiting` or, if it is itself the earliest survivor, deletes the stale anchor's markers and reports `promote`.
 - **There is no cross-review lock.** A truly simultaneous `complete` by two agents can still race; both reviews stay visible. See [ADR 0001](./adr/0001-github-as-the-source-of-truth.md).
 
 Three consequences of that design, none of them accidental:
 
 - **Two agents can still pin different commits.** Both `completeReview`'s competing-primary test and `enrichReview`'s primary lookup match on the *enricher's own* pinned SHA, so if B pinned `sha1` and C pinned `sha2` after a push, C never sees B's primary, waits out the TTL, and posts its own primary at `sha2`. The re-pin narrows the window (a stalled claim now catches up to the head on its next tick instead of never) without closing it: [#62](https://github.com/input-output-hk/agent-peer-review/issues/62).
-- **The reviewer instructions do not surface `drifted`.** `completeReview` returns it and the flow does not report it, so a review submitted against a commit the branch has left reads the same as one at the head: [#51](https://github.com/input-output-hk/agent-peer-review/issues/51).
+- **Stale evidence never posts.** The complete and enrich operations refuse a moved remote head, mismatched local HEAD, or dirty checkout, so a review cannot silently describe code the branch has left.
 - **An enricher that posted a second opinion is then inert.** Its history holds only a `COMMENT`, which carries no verdict, so `pr_watch` answers `none` on every later tick.
 
 ---
@@ -592,8 +602,10 @@ flowchart TB
 |---|---|
 | labels | `ai-review`, the trigger, plus any skill labels from the fixed skill-name list |
 | requested reviewers | users and teams, GitHub-native. Cleared automatically when a review is submitted |
-| reviews | author, state, `commitId`, `submittedAt`, body. The body may end with the primary marker, and may carry an opt-in metadata footer |
+| reviews | author, state, `commitId`, `submittedAt`, body. The body may carry the structured result record, end with the primary marker, and carry an opt-in metadata footer |
 | claim markers | issue comments holding `agent-review:claim`: reviewer, pinned SHA, `claimedAt`, and with metadata capture on, machine, model, agent, and tool version |
+| self-review marker | the author-owned issue comment holding `agent-review:self-review`, exact head, and successful status |
+| review follow-up | at most one author-owned PR link marker plus one repository issue keyed to the source PR |
 | action markers | issue comments holding `agent-review:action`: kind, `headSha`, decision, timestamp |
 | native fields | `state`, `draft`, `headSha`, `baseRef`, mergeable state, changed files, checks, branch protection |
 
@@ -623,7 +635,7 @@ flowchart TB
 Two properties fall out of that, and both are load-bearing:
 
 - **Nothing in the derived layer survives the tick.** There is no cache and no database, so there is nothing to fall out of sync with GitHub. The cost is that every tick pays for the same reads again.
-- **Idempotency is always keyed on `H`.** A proposal marker carries the head it was evaluated against; the next tick recognises its own proposal at the same head and writes nothing, and deletes its proposals at older heads so the thread carries exactly one live proposal. A claim marker carries a pinned SHA for the same reason, and re-pins to the head when it falls behind. `requestPeerReview` keys on the head too: a target reviewer's open request *or* a review of the current head means this round is answered, so the tick after a peer replies does not ask again.
+- **Idempotency is always keyed on `H`.** A proposal marker carries the head it was evaluated against; the next tick recognises its own proposal at the same head and writes nothing, and deletes its proposals at older heads so the thread carries exactly one live proposal. Claim and self-review markers carry a pinned SHA for the same reason; a claim re-pins when it falls behind, while a push requires a fresh self-review. `requestPeerReview` keys on the head too: a target reviewer's open request *or* a review of the current head means this round is answered, so the tick after a peer replies does not ask again. The one follow-up issue is PR-scoped rather than head-scoped so a push cannot manufacture another issue.
 
 A proposal marker keys on the head SHA **alone**, so a proposal keeps the rationale written on the first tick even if the reasons change while the head does not, for instance a check going from pending to failing. The comment stays truthful about what is proposed and at which commit; only its list of blockers can age.
 

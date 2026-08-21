@@ -23,7 +23,7 @@ sequenceDiagram
 
 ### Requested
 
-`review.create` (CLI: `agent-review request`, MCP: `review_create`) adds the `ai-review` label plus any skill labels, then calls GitHub's native `requestReviewers` API for every login you pass to `--reviewers`. There is no separate status label for "requested": the state is simply "carries `ai-review`, and I am in the PR's requested-reviewers list."
+`review.create` (CLI: `agent-review request`, MCP: `review_create`) adds the `ai-review` label plus any skill labels, then calls GitHub's native `requestReviewers` API for every login you pass to `--reviewers`. When the authenticated caller is the PR author, the shared core first requires an author-authenticated successful `Self-review` at the current head; a missing or stale pass refuses the request before any label, comment, or review-request write. A maintainer requesting review on another author's PR remains allowed. There is no separate status label for "requested": the state is simply "carries `ai-review`, and I am in the PR's requested-reviewers list."
 
 An agent finds its own work with a GitHub search, not a custom index: `is:pr is:open label:ai-review review-requested:<login>`. That search is exactly what `review.list` runs.
 
@@ -35,7 +35,7 @@ An agent finds its own work with a GitHub search, not a custom index: `is:pr is:
 2. looks for your own earliest active claim-marker comment on the PR,
 3. if an active marker for your own login already exists, resumes on the SHA it already recorded instead of pinning a new one (each login keeps its own marker; see [Panel review (multiple reviewers)](#panel-review-multiple-reviewers) below for what happens with more than one reviewer),
 4. otherwise records the current head SHA and posts a new claim-marker comment,
-5. returns a composed **review task**: the PR's metadata, the pinned SHA, the matched skill names, and the full text of the `review` skill plus every matched specialty skill.
+5. returns a composed **review task**: the PR's metadata, the pinned SHA, the matched skill names, the full text of the `review` skill plus every matched specialty skill, and a bounded normalized `reviewHistory` that sets `initial`, `rereview`, or `convergence` mode.
 
 Every review from this point on happens against the pinned SHA, not whatever the branch has moved to since.
 
@@ -43,7 +43,7 @@ The same task also carries every language skill auto-detected from the pull requ
 
 ### Done
 
-`review.complete` submits a native GitHub PR review with `commit_id` set to the SHA that was pinned at claim time, using the event you chose (`approve`, `request-changes`, or `comment`) and your summary and inline comments. Submitting a review natively clears you from the PR's requested-reviewers list, so there is no separate "mark as done" step. The agent then deletes its own claim-marker comment, which is what lets a future claim start clean.
+`review.complete` first verifies the local HEAD, claim SHA, declared `reviewedSha`, and remote PR head agree and that the index/worktree are clean. It then submits a native GitHub PR review with `commit_id` set to that SHA, using the event you chose (`approve`, `request-changes`, or `comment`), the summary, inline comments, and structured stable-ID findings. A changes request fails validation without a confirmed blocking finding. Submitting a review natively clears you from the PR's requested-reviewers list, and the agent deletes its own claim marker.
 
 ## Restarts, drift, and re-review
 
@@ -59,13 +59,7 @@ Resuming is automatic. You do not need to detect the crash yourself; simply run 
 
 ### Handling drift
 
-Between claim and complete, someone might push new commits. `review.complete` compares the PR's current head SHA against the SHA recorded in your claim marker. If they differ, it still submits the review at the **originally pinned** commit, since that is what you actually reviewed, but it appends a note to the review body:
-
-```text
-Note: reviewed at pinned commit abc1234; PR head is now def5678.
-```
-
-The response also reports `drifted: true`, so a calling script can flag it. Nothing forces a re-review of the new commits; drift is surfaced, not silently hidden or silently blocking.
+Between claim and complete, someone might push new commits. `review.complete` rejects the write when the remote head differs from the claim, when local HEAD differs, or when the checkout is dirty. Claim the new head and review it afresh; findings, CI, and approvals from the stale SHA are never reused. The response retains `drifted` for compatibility, but every successful completion reports `false`.
 
 ### Requesting another pass
 

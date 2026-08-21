@@ -33,6 +33,12 @@ const AUTHOR = "human-author";
 const MACHINE = "mbp-01";
 const HEAD = "sha0001";
 const HEAD2 = "sha0002";
+const blocker = {
+  id: "docs-regression", title: "Confirmed regression", severity: "high" as const,
+  confidence: "confirmed" as const, scope: "introduced" as const, status: "open" as const,
+  blocking: true, path: "README.md", line: 1, evidence: "Reproduced at the claimed SHA.",
+  remediation: "Fix the bounded root cause.",
+};
 
 /** The action marker's open token. A bare copy of it in untrusted text is the desync hazard. */
 const MARKER_OPEN = "<!-- agent-review:action ";
@@ -130,7 +136,10 @@ describe("PR-state protocol invariants", () => {
       expect((await watchAndReReview(gh, { repo: REPO, pr: PR, myLogin: ME })).action).toBe("none");
 
       // Completing the review deletes the claim marker and MUST leave the proposal alone.
-      await completeReview({ gh, config: config(dir) }, { repo: REPO, pr: PR, event: "request-changes", summary: "needs work" });
+      await completeReview(
+        { gh, config: config(dir), workspace: { headSha: HEAD, clean: true } },
+        { repo: REPO, pr: PR, event: "request-changes", summary: "needs work", reviewedSha: HEAD, findings: [blocker] },
+      );
       const left = await gh.listComments(REPO, PR);
       expect(left).toHaveLength(1);
       expect(parseMarkers(left)).toEqual([]);

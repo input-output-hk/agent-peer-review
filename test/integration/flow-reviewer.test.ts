@@ -30,6 +30,16 @@ const MACHINE = "mbp-01";
 const HEAD1 = "sha0001";
 const HEAD2 = "sha0002";
 const HEAD3 = "sha0003";
+const workspace = (headSha: string) => ({ headSha, clean: true });
+const blocker = {
+  id: "review-loop-root", title: "Confirmed regression", severity: "high" as const,
+  confidence: "confirmed" as const, scope: "introduced" as const, status: "open" as const,
+  blocking: true, path: "src/change.ts", line: 1, evidence: "Reproduced at the claimed SHA.",
+  remediation: "Fix the bounded root cause.",
+};
+const resultFor = (event: "approve" | "request-changes", headSha: string, summary: string) => event === "request-changes"
+  ? { repo: REPO, pr: PR, event, summary, reviewedSha: headSha, findings: [blocker] }
+  : { repo: REPO, pr: PR, event, summary, reviewedSha: headSha, findings: [{ ...blocker, status: "resolved" as const, blocking: false }] };
 
 /** The flow's tick clock. One fixed ISO timestamp per tick, and the only source of "now" here. */
 const tick = (n: number): string => `2026-08-08T${String(9 + n).padStart(2, "0")}:00:00Z`;
@@ -80,7 +90,10 @@ async function reviewRound(
   event: "approve" | "request-changes",
 ): Promise<string> {
   const task = await claimReview({ gh, config: config(dir), machine: MACHINE, now }, { repo: REPO, pr: PR });
-  await completeReview({ gh, config: config(dir) }, { repo: REPO, pr: PR, event, summary: `verdict at ${task.headSha}` });
+  await completeReview(
+    { gh, config: config(dir), workspace: workspace(task.headSha) },
+    resultFor(event, task.headSha, `verdict at ${task.headSha}`),
+  );
   return task.headSha;
 }
 
@@ -101,7 +114,10 @@ describe("Flow B (pr-reviewer): claim, complete, watch, re-review", () => {
     expect(claimed).toHaveLength(1);
     expect(claimed[0].marker).toEqual({ v: 1, reviewer: ME, sha: HEAD1, claimedAt: tick(1) });
 
-    await completeReview({ gh, config: config(dir) }, { repo: REPO, pr: PR, event: "request-changes", summary: "needs work" });
+    await completeReview(
+      { gh, config: config(dir), workspace: workspace(HEAD1) },
+      resultFor("request-changes", HEAD1, "needs work"),
+    );
     expect(gh.reviews).toHaveLength(1);
     expect(gh.reviews[0]).toMatchObject({ author: ME, event: "REQUEST_CHANGES", state: "CHANGES_REQUESTED", commitId: HEAD1 });
     expect(await gh.listComments(REPO, PR)).toEqual([]);                    // the claim marker is cleared
@@ -236,7 +252,10 @@ describe("Flow B (pr-reviewer): claim, complete, watch, re-review", () => {
       expect(repinned[0].marker).toMatchObject({ sha: HEAD3, claimedAt: tick(1) });
 
       // The review therefore lands on the live commit, and nothing is flagged as drifted.
-      const completed = await completeReview({ gh, config: config(dir) }, { repo: REPO, pr: PR, event: "request-changes", summary: "needs work" });
+      const completed = await completeReview(
+        { gh, config: config(dir), workspace: workspace(HEAD3) },
+        resultFor("request-changes", HEAD3, "needs work"),
+      );
       expect(completed.drifted).toBe(false);
       expect(gh.reviews).toHaveLength(1);
       expect(gh.reviews[0]).toMatchObject({ author: ME, commitId: HEAD3, state: "CHANGES_REQUESTED" });
@@ -281,7 +300,10 @@ describe("Flow B (pr-reviewer): claim, complete, watch, re-review", () => {
         await competingPrimary(gh, "peer-bot", head);
         const superseded = await claimReview({ gh, config: config(dir), machine: MACHINE, now: tick(1) }, { repo: REPO, pr: PR });
         expect(superseded.headSha).toBe(head);
-        const done = await completeReview({ gh, config: config(dir) }, { repo: REPO, pr: PR, event: "request-changes", summary: "also this" });
+        const done = await completeReview(
+          { gh, config: config(dir), workspace: workspace(head) },
+          resultFor("request-changes", head, "also this"),
+        );
         expect(done.superseded).toBe(true);
       }
       expect(gh.reviews.filter((r) => r.author === ME).map((r) => r.state)).toEqual(["COMMENTED", "COMMENTED"]);

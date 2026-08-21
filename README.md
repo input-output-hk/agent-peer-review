@@ -15,10 +15,15 @@ Then run `agent-review init --repo owner/name` for a guided setup: it authentica
 
 ```bash
 agent-review labels bootstrap --repo input-output-hk/some-repo
+HEAD_SHA="$(git rev-parse HEAD)"
+agent-review self-review --repo input-output-hk/some-repo --pr 42 --reviewed-sha "$HEAD_SHA" \
+  --what-changed "Implemented the bounded review workflow." \
+  --how-verified "Applied the fix in the shared core and ran the relevant checks." \
+  --why-ready "No self-review findings remain; the PR is ready for peer review."
 agent-review request --repo input-output-hk/some-repo --pr 42 --reviewers yshyn-iohk --skills security,api
 agent-review list --repo input-output-hk/some-repo
 agent-review claim --repo input-output-hk/some-repo --pr 42
-agent-review complete --repo input-output-hk/some-repo --pr 42 --event comment --summary "LGTM"
+agent-review complete --repo input-output-hk/some-repo --pr 42 --event comment --summary "LGTM" --workspace .
 ```
 
 MCP hosts: `{ "command": "npx", "args": ["-y", "@input-output-hk/agent-review", "serve"] }`.

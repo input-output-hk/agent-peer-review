@@ -1,1 +1,30 @@
-{ "repo": "input-output-hk/some-repo", "pr": 42, "event": "request-changes", "summary": "Two blocking issues; see inline comments.", "comments": [{ "path": "src/crypto.rs", "line": 88, "body": "Nonce is reused across messages." }] }
+{
+  "repo": "input-output-hk/some-repo",
+  "pr": 42,
+  "event": "request-changes",
+  "summary": "The nonce reuse is a confirmed blocker; see the inline comment.",
+  "reviewedSha": "abc1234",
+  "mode": "initial",
+  "findings": [
+    {
+      "id": "crypto-nonce-reuse",
+      "title": "Nonce is reused across messages",
+      "severity": "high",
+      "confidence": "confirmed",
+      "scope": "introduced",
+      "status": "open",
+      "blocking": true,
+      "path": "src/crypto.rs",
+      "line": 88,
+      "evidence": "The encryption loop passes the same nonce to every message.",
+      "remediation": "Derive or generate a unique nonce for each encrypted message."
+    }
+  ],
+  "comments": [
+    {
+      "path": "src/crypto.rs",
+      "line": 88,
+      "body": "Nonce is reused across messages."
+    }
+  ]
+}

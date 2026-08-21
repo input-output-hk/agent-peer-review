@@ -3,9 +3,9 @@ import { Type } from "typebox";
 import { hostname } from "node:os";
 import {
   loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, enrichReview, bootstrap,
-  stabilize, expedite, requestPeerReview, approveDependencyUpgrade, watchAndReReview,
-  DEFAULT_GATE_POLICY, DEPS_GATE_POLICY, DEFAULT_MAX_REVIEW_ROUNDS, DEFAULT_CLAIM_TTL_MS,
-  type GitHubGateway, type Config, type AllowedMergeMethods,
+  stabilize, expedite, requestPeerReview, approveDependencyUpgrade, watchAndReReview, recordSelfReview, createFollowUp,
+  DEFAULT_GATE_POLICY, DEPS_GATE_POLICY, DEFAULT_MAX_REVIEW_ROUNDS, DEFAULT_CLAIM_TTL_MS, inspectReviewWorkspace,
+  type GitHubGateway, type Config, type AllowedMergeMethods, type ReviewWorkspaceState,
 } from "@input-output-hk/agent-review";
 
 // Same shape as mcp/server.ts's ok(), plus `details`: the real ExtensionAPI's
@@ -34,6 +34,24 @@ export function once<T>(factory: () => T): () => T {
 // Only this default is memoized: an injected `deps.gh` (tests, or any future caller with its own
 // lifecycle) is used exactly as given, call after call.
 const defaultGh = once((): GitHubGateway => new OctokitGateway());
+
+const reviewMode = Type.Union([Type.Literal("initial"), Type.Literal("rereview"), Type.Literal("convergence")]);
+const reviewFinding = Type.Object({
+  id: Type.String(),
+  title: Type.String(),
+  severity: Type.Union([Type.Literal("critical"), Type.Literal("high"), Type.Literal("medium"), Type.Literal("low")]),
+  confidence: Type.Union([Type.Literal("confirmed"), Type.Literal("high"), Type.Literal("plausible"), Type.Literal("unverified")]),
+  scope: Type.Union([Type.Literal("introduced"), Type.Literal("regression"), Type.Literal("pre-existing"), Type.Literal("follow-up"), Type.Literal("accepted-risk")]),
+  status: Type.Union([Type.Literal("open"), Type.Literal("resolved"), Type.Literal("still-open"), Type.Literal("regressed"), Type.Literal("superseded"), Type.Literal("accepted-risk"), Type.Literal("follow-up")]),
+  blocking: Type.Boolean(),
+  path: Type.String(),
+  line: Type.Number(),
+  evidence: Type.String(),
+  remediation: Type.String(),
+  relatedFindingId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  followUpIssue: Type.Optional(Type.String()),
+  reopenedBecause: Type.Optional(Type.String()),
+});
 
 // Resolves the mergeMethod pr_expedite/pr_approve_dep_upgrade hand to the underlying operation when
 // a call omits one. An explicit call-level mergeMethod always wins and short-circuits before any
@@ -69,10 +87,15 @@ async function resolveMergeMethod(
 
 export function registerTools(
   pi: ExtensionAPI,
-  deps: { gh?: () => GitHubGateway; config?: () => Config } = {},
+  deps: {
+    gh?: () => GitHubGateway;
+    config?: () => Config;
+    workspaceState?: (repo: string, cwd?: string) => ReviewWorkspaceState;
+  } = {},
 ): void {
   const gh = deps.gh ?? defaultGh;
   const cfg = deps.config ?? (() => loadConfig());
+  const workspaceState = deps.workspaceState ?? inspectReviewWorkspace;
 
   pi.registerTool({ name: "review_create", label: "Request a review", description: "Add the ai-review label + skill labels and request reviewer(s) (defaults to the configured \"reviewers\" when omitted).",
     parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), skills: Type.Optional(Type.Array(Type.String())), reviewers: Type.Optional(Type.Array(Type.String({ minLength: 1 }))), note: Type.Optional(Type.String()) }),
@@ -92,13 +115,51 @@ export function registerTools(
     parameters: Type.Object({ repo: Type.String(), pr: Type.Number() }),
     async execute(_id, p) { return ok(await claimReview({ gh: gh(), config: cfg(), machine: hostname(), now: new Date().toISOString() }, { repo: p.repo, pr: p.pr })); } });
 
-  pi.registerTool({ name: "review_complete", label: "Complete a review", description: "Submit the PR review at the pinned SHA (clears the request) and delete the claim marker.",
-    parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), event: Type.Union([Type.Literal("approve"), Type.Literal("request-changes"), Type.Literal("comment")]), summary: Type.String(), comments: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Number(), body: Type.String() }))) }),
-    async execute(_id, p) { return ok(await completeReview({ gh: gh(), config: cfg() }, p)); } });
+  pi.registerTool({ name: "pr_self_review", label: "Record self-review", description: "Post the PR author's successful exact-head Self-review before a peer is requested.",
+    parameters: Type.Object({
+      repo: Type.String(), pr: Type.Number(), reviewedSha: Type.String(), whatChanged: Type.String(),
+      howVerified: Type.String(), whyReady: Type.String(), workspace: Type.Optional(Type.String()),
+    }),
+    async execute(_id, p) { return ok(await recordSelfReview(
+      { gh: gh(), workspace: workspaceState(p.repo, p.workspace) }, p,
+    )); } });
+
+  pi.registerTool({ name: "pr_create_followup", label: "Create review follow-up", description: "Create at most one meaningful follow-up issue for disproportionate review work.",
+    parameters: Type.Object({
+      repo: Type.String(), pr: Type.Number(), reviewedSha: Type.String(), title: Type.String(), problem: Type.String(),
+      rationale: Type.String(), acceptanceCriteria: Type.Array(Type.String()), findingIds: Type.Array(Type.String()),
+      workspace: Type.Optional(Type.String()),
+    }),
+    async execute(_id, p) {
+      const { workspace, ...input } = p;
+      return ok(await createFollowUp({ gh: gh(), workspace: workspaceState(p.repo, workspace) }, input));
+    } });
+
+  pi.registerTool({ name: "review_complete", label: "Complete a review", description: "Submit an exact-head, clean-worktree review and delete the claim marker.",
+    parameters: Type.Object({
+      repo: Type.String(), pr: Type.Number(), event: Type.Union([Type.Literal("approve"), Type.Literal("request-changes"), Type.Literal("comment")]), summary: Type.String(),
+      comments: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Number(), body: Type.String() }))),
+      reviewedSha: Type.Optional(Type.String()), mode: Type.Optional(reviewMode), findings: Type.Optional(Type.Array(reviewFinding)), workspace: Type.Optional(Type.String()),
+    }),
+    async execute(_id, p) {
+      const { workspace, ...result } = p;
+      return ok(await completeReview({ gh: gh(), config: cfg(), workspace: workspaceState(p.repo, workspace) }, result));
+    } });
 
   pi.registerTool({ name: "review_enrich", label: "Enrich a review", description: "Post a consolidated second opinion once the primary exists; else waiting/promote.",
-    parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), verdict: Type.Union([Type.Literal("agree"), Type.Literal("disagree"), Type.Literal("mixed")]), summary: Type.String(), newFindings: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Number(), body: Type.String() }))) }),
-    async execute(_id, p) { return ok(await enrichReview({ gh: gh(), config: cfg(), ttlMs: DEFAULT_CLAIM_TTL_MS, nowMs: Date.now() }, { repo: p.repo, pr: p.pr, overallVerdict: p.verdict, summary: p.summary, newFindings: p.newFindings })); } });
+    parameters: Type.Object({
+      repo: Type.String(), pr: Type.Number(), verdict: Type.Union([Type.Literal("agree"), Type.Literal("disagree"), Type.Literal("mixed")]), summary: Type.String(),
+      newFindings: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Number(), body: Type.String() }))),
+      reviewedSha: Type.Optional(Type.String()), mode: Type.Optional(reviewMode), findings: Type.Optional(Type.Array(reviewFinding)),
+      assessments: Type.Optional(Type.Array(Type.Object({ findingId: Type.String(), disposition: Type.Union([Type.Literal("confirm"), Type.Literal("refute")]), rationale: Type.String() }))),
+      workspace: Type.Optional(Type.String()),
+    }),
+    async execute(_id, p) { return ok(await enrichReview({
+      gh: gh(), config: cfg(), ttlMs: DEFAULT_CLAIM_TTL_MS, nowMs: Date.now(), workspace: workspaceState(p.repo, p.workspace),
+    }, {
+      repo: p.repo, pr: p.pr, overallVerdict: p.verdict, summary: p.summary, newFindings: p.newFindings,
+      reviewedSha: p.reviewedSha, mode: p.mode, findings: p.findings, assessments: p.assessments,
+    })); } });
 
   pi.registerTool({ name: "labels_bootstrap", label: "Bootstrap labels", description: "Idempotently create/update the ai-review + skill labels.",
     parameters: Type.Object({ repo: Type.String() }),

@@ -60,22 +60,22 @@ agent-review init --repo owner/name [--repo owner/other] \
 ## Surfaces
 
 - **CLI**: `agent-review <command>`, including `init`, `labels bootstrap`, `request`, `list`,
-  `claim`, `complete`, `enrich`, `config`, `whoami`, `skills list`, and `serve`. See
+  `claim`, `self-review`, `followup`, `complete`, `enrich`, `config`, `whoami`, `skills list`, and `serve`. See
   [`docs/cli.md`](docs/cli.md).
 - **MCP server**: `agent-review-mcp`. `init` prints the exact block to paste into an MCP host's
   config:
   ```json
   { "mcpServers": { "agent-review": { "command": "agent-review-mcp", "env": { "GITHUB_TOKEN": "..." } } } }
   ```
-  See [`docs/mcp.md`](docs/mcp.md) for the six exposed tools.
+  See [`docs/mcp.md`](docs/mcp.md) for the eight exposed tools.
 - **Skill**: `skills/orchestration.md` (printed as an absolute path by `init`). It drives the
   claim -> review -> complete loop for Claude Code, Codex, and pi.dev. Every shipped skill lives
   under [`skills/`](skills/) in this repository and is published at
   [Skills](https://input-output-hk.github.io/agent-peer-review/skills); see
   [`docs/pi.md`](docs/pi.md) for how each host enables it.
 - **Expedition taskflows** (pi.dev only, optional): three scheduled sweeps that go looking for work
-  instead of reacting to a request, plus five `pr_*` tools they call. Those five are registered by
-  the pi.dev extension only, not by the MCP server. Set up separately, see below.
+  instead of reacting to a request, plus seven `pr_*` tools they call. Five expedition operations
+  are Pi-only; self-review and follow-up also have CLI/MCP surfaces. Set up separately, see below.
 
 ## Expedition taskflows (optional)
 

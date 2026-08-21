@@ -31,7 +31,8 @@ Some hosts auto-load a repository's own instruction files as their own operating
 The review flow needs write access to submit reviews, add labels, and create and delete comments. Use a **fine-grained personal access token scoped to the target repositories** with the minimum permissions:
 
 - Pull requests: read and write
-- Issues: read and write (claim markers are issue comments)
+- Issues: read and write (claim, self-review, and follow-up records use issue comments, and the
+  bounded follow-up operation creates one repository issue)
 - Contents: read
 - Metadata: read
 
@@ -39,7 +40,7 @@ Prefer a separate least-privilege token for the review flow, distinct from any t
 
 ### Additional scope for expedition taskflows
 
-The scope above is everything the review flow (request, claim, complete, enrich) needs. The expedition safety gate performs four additional reads in both `propose` and `auto` mode. A fine-grained token also needs:
+The scope above is everything the review flow (request, claim, self-review, follow-up, complete, enrich) needs. The expedition safety gate performs four additional reads in both `propose` and `auto` mode. A fine-grained token also needs:
 
 - **Checks: read**
 - **Commit statuses: read**

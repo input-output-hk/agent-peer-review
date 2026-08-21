@@ -39,6 +39,165 @@
             ],
             "additionalProperties": false
           }
+        },
+        "reviewedSha": {
+          "type": "string",
+          "minLength": 7
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "initial",
+            "rereview",
+            "convergence"
+          ]
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "critical",
+                  "high",
+                  "medium",
+                  "low"
+                ]
+              },
+              "confidence": {
+                "type": "string",
+                "enum": [
+                  "confirmed",
+                  "high",
+                  "plausible",
+                  "unverified"
+                ]
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "introduced",
+                  "regression",
+                  "pre-existing",
+                  "follow-up",
+                  "accepted-risk"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "resolved",
+                  "still-open",
+                  "regressed",
+                  "superseded",
+                  "accepted-risk",
+                  "follow-up"
+                ]
+              },
+              "blocking": {
+                "type": "boolean"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "line": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "evidence": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "remediation": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "relatedFindingId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "followUpIssue": {
+                "type": "string",
+                "format": "uri"
+              },
+              "reopenedBecause": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "severity",
+              "confidence",
+              "scope",
+              "status",
+              "blocking",
+              "path",
+              "line",
+              "evidence",
+              "remediation"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 20
+        },
+        "assessments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "findingId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "disposition": {
+                "type": "string",
+                "enum": [
+                  "confirm",
+                  "refute"
+                ]
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "findingId",
+              "disposition",
+              "rationale"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 50
         }
       },
       "required": [

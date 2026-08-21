@@ -66,6 +66,73 @@ export const ClaimMarkerSchema = z.object({
 });
 export type ClaimMarker = z.infer<typeof ClaimMarkerSchema>;
 
+export const ReviewModeSchema = z.enum(["initial", "rereview", "convergence"]);
+export type ReviewMode = z.infer<typeof ReviewModeSchema>;
+
+export const FindingSeveritySchema = z.enum(["critical", "high", "medium", "low"]);
+export const FindingConfidenceSchema = z.enum(["confirmed", "high", "plausible", "unverified"]);
+export const FindingScopeSchema = z.enum(["introduced", "regression", "pre-existing", "follow-up", "accepted-risk"]);
+export const FindingStatusSchema = z.enum([
+  "open", "resolved", "still-open", "regressed", "superseded", "accepted-risk", "follow-up",
+]);
+
+const NON_BLOCKING_SCOPES = new Set(["pre-existing", "follow-up", "accepted-risk"]);
+const NON_BLOCKING_STATUSES = new Set(["resolved", "superseded", "accepted-risk", "follow-up"]);
+
+export const ReviewFindingSchema = z.object({
+  id: z.string().min(1).max(160),
+  title: z.string().min(1).max(200),
+  severity: FindingSeveritySchema,
+  confidence: FindingConfidenceSchema,
+  scope: FindingScopeSchema,
+  status: FindingStatusSchema,
+  blocking: z.boolean(),
+  path: z.string().min(1),
+  line: z.number().int().positive(),
+  evidence: z.string().min(1).max(1_000),
+  remediation: z.string().min(1).max(1_000),
+  relatedFindingId: z.string().min(1).max(160).nullable().optional(),
+  followUpIssue: z.string().url().optional(),
+  // Required by completeReview only when a previously accepted risk is reopened. Keeping the field
+  // optional preserves the published result shape for every ordinary finding.
+  reopenedBecause: z.string().min(1).max(1_000).optional(),
+}).superRefine((finding, ctx) => {
+  if (finding.followUpIssue && finding.status !== "follow-up") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["followUpIssue"], message: "a follow-up issue requires follow-up status" });
+  }
+  if (!finding.blocking) return;
+  if (finding.confidence !== "confirmed") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["confidence"], message: "a blocking finding must be confirmed" });
+  }
+  if (finding.severity === "low") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["severity"], message: "a low-severity finding cannot block" });
+  }
+  if (NON_BLOCKING_SCOPES.has(finding.scope)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["scope"], message: `${finding.scope} findings are non-blocking` });
+  }
+  if (NON_BLOCKING_STATUSES.has(finding.status)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["status"], message: `${finding.status} findings are non-blocking` });
+  }
+});
+export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
+
+function duplicateFindingIds(findings: ReviewFinding[] | undefined): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const finding of findings ?? []) {
+    if (seen.has(finding.id)) duplicates.add(finding.id);
+    seen.add(finding.id);
+  }
+  return [...duplicates];
+}
+
+function validateSingleFollowUp(findings: ReviewFinding[] | undefined, ctx: z.RefinementCtx): void {
+  const urls = [...new Set((findings ?? []).flatMap((finding) => finding.followUpIssue ? [finding.followUpIssue] : []))];
+  if (urls.length > 1) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["findings"], message: "a pull request may reference only one review follow-up issue" });
+  }
+}
+
 export const ReviewResultSchema = z.object({
   repo: z.string().regex(/^[^/]+\/[^/]+$/),
   pr: z.number().int().positive(),
@@ -74,6 +141,27 @@ export const ReviewResultSchema = z.object({
   comments: z
     .array(z.object({ path: z.string(), line: z.number().int().positive(), body: z.string() }))
     .optional(),
+  // Optional for approve/comment compatibility. request-changes is fail-closed below and requires
+  // the exact pin plus at least one admissible structured blocker.
+  reviewedSha: z.string().min(7).optional(),
+  mode: ReviewModeSchema.optional(),
+  findings: z.array(ReviewFindingSchema).max(20).optional(),
+}).superRefine((result, ctx) => {
+  validateSingleFollowUp(result.findings, ctx);
+  for (const id of duplicateFindingIds(result.findings)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["findings"], message: `duplicate finding id: ${id}` });
+  }
+  if (result.event !== "request-changes") return;
+  if (!result.reviewedSha) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reviewedSha"], message: "request-changes requires the exact reviewed SHA" });
+  }
+  if (!(result.findings ?? []).some((finding) => finding.blocking && finding.confidence === "confirmed")) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["findings"],
+      message: "request-changes requires at least one confirmed blocking finding",
+    });
+  }
 });
 export type ReviewResult = z.infer<typeof ReviewResultSchema>;
 
@@ -84,10 +172,30 @@ export const LabelSpecSchema = z.object({
 });
 export type LabelSpec = z.infer<typeof LabelSpecSchema>;
 
+export const FindingAssessmentSchema = z.object({
+  findingId: z.string().min(1).max(160),
+  disposition: z.enum(["confirm", "refute"]),
+  rationale: z.string().min(1).max(2_000),
+});
+export type FindingAssessment = z.infer<typeof FindingAssessmentSchema>;
+
 export const EnrichmentSchema = z.object({
   overallVerdict: z.enum(["agree", "disagree", "mixed"]),
   summary: z.string().min(1),
   newFindings: z.array(z.object({ path: z.string(), line: z.number().int().positive(), body: z.string() })).optional(),
+  reviewedSha: z.string().min(7).optional(),
+  mode: ReviewModeSchema.optional(),
+  findings: z.array(ReviewFindingSchema).max(20).optional(),
+  assessments: z.array(FindingAssessmentSchema).max(50).optional(),
+}).superRefine((result, ctx) => {
+  validateSingleFollowUp(result.findings, ctx);
+  for (const id of duplicateFindingIds(result.findings)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["findings"], message: `duplicate finding id: ${id}` });
+  }
+  const assessmentIds = result.assessments?.map((assessment) => assessment.findingId) ?? [];
+  for (const id of assessmentIds.filter((id, index) => assessmentIds.indexOf(id) !== index)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["assessments"], message: `duplicate assessment: ${id}` });
+  }
 });
 export type Enrichment = z.infer<typeof EnrichmentSchema>;
 
@@ -147,4 +255,27 @@ export interface ReviewTask {
   contentPolicy: string;
   repoContext: Array<{ path: string; content: string; untrusted: true }>;
   claim: { machine: string; claimedAt: string };
+  reviewContractVersion: 1;
+  reviewHistory: ReviewHistory;
+}
+
+export interface ReviewHistoryFinding {
+  id: string;
+  title: string;
+  severity: ReviewFinding["severity"];
+  scope: ReviewFinding["scope"];
+  status: ReviewFinding["status"];
+  blocking: boolean;
+  relatedFindingId: string | null;
+  followUpIssue: string | null;
+}
+
+export interface ReviewHistory {
+  mode: ReviewMode;
+  changesRequestedCycles: number;
+  reviewedShas: string[];
+  findings: ReviewHistoryFinding[];
+  acceptedRisks: ReviewHistoryFinding[];
+  lastVerdict: string | null;
+  truncated: boolean;
 }

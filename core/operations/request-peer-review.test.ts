@@ -2,17 +2,44 @@ import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
 import { requestPeerReview } from "./request-peer-review.js";
 import { TRIGGER } from "../labels.js";
+import { serializeSelfReviewMarker } from "../self-review.js";
 
 const REPO = "o/r";
 const PR = 1;
 
-function seed(labels: string[] = []): FakeGitHubGateway {
+function seedSelfReview(gh: FakeGitHubGateway, sha: string, author = "me"): void {
+  gh.comments.set(`${REPO}#${PR}`, [{
+    id: 900, author,
+    body: `## Self-review\n\nReady for peer review.\n\n${serializeSelfReviewMarker({ v: 1, author, sha, status: "passed" })}`,
+  }]);
+}
+
+function seed(labels: string[] = [], selfReviewed = true): FakeGitHubGateway {
   const gh = new FakeGitHubGateway();
   gh.seedPr({ number: PR, title: "t", author: "me", headSha: "sha0001", baseSha: "b", url: "u", state: "open", labels });
+  if (selfReviewed) seedSelfReview(gh, "sha0001");
   return gh;
 }
 
 describe("requestPeerReview", () => {
+  it("refuses to consume a peer's queue before the author's successful self-review", async () => {
+    const gh = seed([], false);
+    const result = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] });
+    expect(result.status).toBe("self-review-required");
+    expect(result.reason).toContain("Self-review");
+    expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
+  });
+
+  it("does not accept an existing request as a substitute for the author's self-review", async () => {
+    const gh = seed([TRIGGER], false);
+    gh.setRequestedReviewers(REPO, PR, { users: ["peer-bot"], teams: [] });
+
+    const result = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] });
+
+    expect(result.status).toBe("self-review-required");
+    expect(result.reviewers).toEqual([]);
+  });
+
   it("labels the pull request and requests the reviewer", async () => {
     const gh = seed();
     const result = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"], skills: ["security"] });
@@ -74,7 +101,8 @@ describe("requestPeerReview", () => {
       expect((await gh.getPullRequest(REPO, PR)).labels).toEqual([]);
       expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
       expect(await gh.listReviewRequests(REPO, "peer-bot")).toEqual([]);
-      expect(await gh.listComments(REPO, PR)).toEqual([]);
+      // The fixture's prior successful author self-review is not a write by this operation.
+      expect(await gh.listComments(REPO, PR)).toHaveLength(1);
     }
 
     it("is refused when the author is on the allowlist and GitHub says it is a Bot", async () => {
@@ -237,6 +265,8 @@ describe("requestPeerReview", () => {
 
       // The author pushes. THAT is a new round, and the peer is asked again.
       gh.prs.get(`${REPO}#${PR}`)!.headSha = "sha0002";
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("self-review-required");
+      seedSelfReview(gh, "sha0002");
       expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("requested");
       expect((await gh.listRequestedReviewers(REPO, PR)).users).toEqual(["peer-bot"]);
     });
