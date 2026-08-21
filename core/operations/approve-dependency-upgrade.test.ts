@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
-import { approveDependencyUpgrade } from "./approve-dependency-upgrade.js";
+import {
+  approveDependencyUpgrade, isAllowlistedDependencyBot, normalizeBotAuthor, DEFAULT_BOT_ALLOWLIST,
+} from "./approve-dependency-upgrade.js";
 import { findActionMarkers } from "../expedition/action-marker.js";
 import { DEFAULT_GATE_POLICY, DEPS_GATE_POLICY } from "../expedition/gate.js";
 import type { BranchProtectionSummary, CheckResult, DetailedPullFile, Mergeability } from "../github.js";
@@ -74,6 +76,59 @@ function seedBotBump<T extends FakeGitHubGateway = FakeGitHubGateway>(
 const run = (gh: FakeGitHubGateway, over: Partial<Parameters<typeof approveDependencyUpgrade>[1]> = {}) =>
   approveDependencyUpgrade(gh, { repo: REPO, pr: PR, actingLogin: ME, now: "2026-08-07T10:00:00Z", ...over });
 
+// Issue #50: the same bot reaches this package under two names. `pulls.get` reports the REST login
+// `renovate[bot]`; GraphQL, the `gh` CLI, and therefore a discover script report `app/renovate`. An
+// allowlist compared as a string refused the second spelling on every tick, wrote nothing, and did it
+// on precisely the pull requests this path exists for.
+describe("bot author identity", () => {
+  describe("normalizeBotAuthor", () => {
+    it.each([
+      ["app/renovate", "renovate"],
+      ["renovate[bot]", "renovate"],
+      ["App/Renovate", "renovate"],
+      ["RENOVATE[BOT]", "renovate"],
+      ["app/renovate[bot]", "renovate"],
+      ["dependabot[bot]", "dependabot"],
+      ["human-author", "human-author"],
+      ["botanist", "botanist"],
+    ])("folds %s to %s", (author, identity) => {
+      expect(normalizeBotAuthor(author)).toBe(identity);
+    });
+
+    // A name that is nothing but an affix identifies no bot, so it is left alone: folding both to
+    // "" would make two unrelated names compare equal.
+    it.each(["app/", "[bot]", "app/[bot]"])("leaves the affix-only name %s alone", (author) => {
+      expect(normalizeBotAuthor(author)).toBe(author.toLowerCase());
+    });
+  });
+
+  describe("isAllowlistedDependencyBot", () => {
+    it.each(["app/renovate", "renovate[bot]", "app/dependabot", "dependabot[bot]", "App/Renovate", "Dependabot[BOT]"])(
+      "resolves %s against the default allowlist",
+      (author) => {
+        expect(isAllowlistedDependencyBot(author, DEFAULT_BOT_ALLOWLIST)).toBe(true);
+      },
+    );
+
+    it.each(["github-actions[bot]", "app/some-codegen", "human-author", "botanist", "renovatebot"])(
+      "does not resolve %s",
+      (author) => {
+        expect(isAllowlistedDependencyBot(author, DEFAULT_BOT_ALLOWLIST)).toBe(false);
+      },
+    );
+
+    it("folds the allowlist side too, so an entry may be written in either spelling", () => {
+      expect(isAllowlistedDependencyBot("renovate[bot]", ["app/renovate"])).toBe(true);
+      expect(isAllowlistedDependencyBot("app/renovate", ["renovate[bot]"])).toBe(true);
+      expect(isAllowlistedDependencyBot("app/my-bot", ["My-Bot[BOT]"])).toBe(true);
+    });
+
+    it("does not let two affix-only names match each other", () => {
+      expect(isAllowlistedDependencyBot("[bot]", ["app/"])).toBe(false);
+    });
+  });
+});
+
 describe("approveDependencyUpgrade", () => {
   describe("author checks", () => {
     it("refuses a human author", async () => {
@@ -91,6 +146,43 @@ describe("approveDependencyUpgrade", () => {
       const result = await run(gh);
       expect(result.action).toBe("not-eligible");
       expect(result.reasons[0]).toContain("not a Bot");
+    });
+
+    // The deadlock in issue #50, at the operation level. `GET /users/app/renovate` is a 404, so the
+    // users API confirms nothing: requiring a positive "Bot" answer refused this author on every
+    // tick, forever, silently. It reaches a decision now, and the two `[bot]`/`app/` shapes are the
+    // only ones accepted in that gap because neither `[` nor `/` is legal in a human login.
+    it("reaches a decision for an app/-named author the users API cannot resolve", async () => {
+      const gh = seedBotBump();
+      gh.prs.get(`${REPO}#${PR}`)!.author = "app/renovate";
+      gh.setActorType("app/renovate", "unknown");
+
+      const proposed = await run(gh);
+      expect(proposed.action).toBe("proposed");
+      expect(proposed.action).not.toBe("not-eligible");
+      expect(proposed.reasons).toEqual(['autonomy is "propose", not "auto"']);
+    });
+
+    it("still refuses an app/-named author GitHub positively reports as a User", async () => {
+      const gh = seedBotBump();
+      gh.prs.get(`${REPO}#${PR}`)!.author = "app/renovate";
+      gh.setActorType("app/renovate", "User"); // a positive answer outranks the name shape
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("not-eligible");
+      expect(result.reasons[0]).toContain("not a Bot");
+      expect(gh.reviews).toEqual([]);
+      expect(gh.merges).toEqual([]);
+    });
+
+    it("refuses an unresolvable author whose name carries no bot marker, and says which is missing", async () => {
+      const gh = seedBotBump();
+      gh.prs.get(`${REPO}#${PR}`)!.author = "renovate"; // the identity is allowlisted; the account is not vouched for
+      gh.setActorType("renovate", "unknown");
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("not-eligible");
+      expect(result.reasons[0]).toContain("cannot resolve");
+      expect(result.reasons[0]).toContain("[bot]");
+      expect(gh.reviews).toEqual([]);
     });
 
     it("honors a caller-supplied allowlist", async () => {
@@ -734,6 +826,24 @@ describe("approveDependencyUpgrade", () => {
       vacuous.setBranchProtection(REPO, "main", { ...requiresApprovals(0), requiresPullRequestReviews: true });
       await run(vacuous, { autonomy: "auto" });
       expect(vacuous.reviews[0].body).not.toContain("counting this approval");
+    });
+
+    // The body is the audit trail a maintainer reads months later, so it has to state how the author
+    // was confirmed rather than assert a fixed sentence. For an `app/`-named App integration GitHub
+    // resolved nothing at all, and claiming it did would be false on exactly the pull requests behind
+    // issue #50.
+    it("says how the author was confirmed, and does not claim GitHub vouched when it could not", async () => {
+      const byName = seedBotBump();
+      byName.prs.get(`${REPO}#${PR}`)!.author = "app/renovate";
+      byName.setActorType("app/renovate", "unknown");
+      await run(byName, { autonomy: "auto" });
+      expect(byName.reviews[0].body).toContain("Author: app/renovate");
+      expect(byName.reviews[0].body).toContain("GitHub's users API does not resolve it");
+      expect(byName.reviews[0].body).not.toContain("confirmed a Bot account by GitHub");
+
+      const byActorType = seedBotBump();
+      await run(byActorType, { autonomy: "auto" });
+      expect(byActorType.reviews[0].body).toContain(`Author: ${BOT} (confirmed a Bot account by GitHub)`);
     });
 
     it("caps the package list and counts the rest", async () => {

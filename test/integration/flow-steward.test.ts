@@ -225,6 +225,34 @@ describe("Flow C (pr-steward): approve a bot dependency upgrade", () => {
     expect(comments[0].body).toContain("branch protection requirements are not satisfied");
   });
 
+  // Issue #50, end to end: the pull request the flow really discovers. `pr-steward/discover.mjs`
+  // queries `gh --author app/renovate`, so the author reaching this operation is the GraphQL spelling
+  // of the same App the allowlist names `renovate[bot]`, and `GET /users/app/renovate` is a 404. That
+  // combination used to refuse the pull request as not-allowlisted on every tick, write nothing, and
+  // draw no attention line, which made it silent and permanent.
+  it("stewards a bot upgrade whose author arrives under the app/ name the flow discovers by", async () => {
+    const gh = seedBotBump(new RecordingGateway());
+    gh.prs.get(`${REPO}#${PR}`)!.author = "app/renovate";
+    gh.setActorType("app/renovate", "unknown"); // what the users API really answers for an App
+
+    // Tick 1, propose: a decision, and a proposal a maintainer can read.
+    const proposed = await steward(gh, tick(1));
+    expect(proposed.action).toBe("proposed");
+    expect(proposed.action).not.toBe("not-eligible");
+    expect(proposed.reasons).toEqual(['autonomy is "propose", not "auto"']);
+    expect((await gh.listComments(REPO, PR))[0].body).toContain("approve and merge this patch dependency upgrade");
+    expect(gh.writes).toEqual([]);
+
+    // Tick 2, auto: the same author reaches the gate and goes all the way through it.
+    const merged = await steward(gh, tick(2), { autonomy: "auto" });
+    expect(merged).toEqual({ action: "approved-and-merged", reasons: [] });
+    expect(gh.writes).toEqual([`review:APPROVE@${HEAD}`, `merge@${HEAD}`]);
+    expect(gh.reviews[0].author).toBe(ME);
+    expect(gh.reviews[0].author).not.toBe("app/renovate"); // still not a self-approval
+    expect(gh.reviews[0].body).toContain("Author: app/renovate");
+    expect((await gh.getPullRequest(REPO, PR)).state).toBe("merged");
+  });
+
   describe("upgrades this path refuses, writing nothing at all", () => {
     it("refuses a major bump, naming the semver level", async () => {
       const gh = seedBotBump(new FakeGitHubGateway(), [manifest(bumpPatch("left-pad", "1.0.0", "2.0.0"))]);
