@@ -60,10 +60,10 @@ export interface HumanReviewStatus {
  *   the required-approvals rule (rail 5), and counting it a second time as an obstacle is exactly
  *   the deadlock in issue #57.
  * - **A COMMENTED review**, whoever left it and whenever. A comment is not a verdict, which is
- *   already this package's rule everywhere else (see VERDICT_STATES in protection.ts): it states no
- *   position, and GitHub's own protection rules do not count one either. Ignoring only comments
- *   OLDER than the head was the alternative, and it is the same bug in miniature, since a pull request
- *   whose head never moves again would be held forever by one drive-by note. A human who wants a
+ *   already this package's rule everywhere else (see STANDING_VERDICT_STATES in protection.ts): it
+ *   states no position, and GitHub's own protection rules do not count one either. Ignoring only
+ *   comments OLDER than the head was the alternative, and it is the same bug in miniature, since a
+ *   pull request whose head never moves again would be held forever by one drive-by note. A human who wants a
  *   pull request stopped has the button for it, and pressing it lands in `changesRequested` above.
  * - **A DISMISSED review.** A dismissal retires a verdict; there is no position left to respect. The
  *   dangerous case, a maintainer dismissing THIS agent's own approval, is not visible here at all

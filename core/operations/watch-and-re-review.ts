@@ -1,7 +1,6 @@
 import type { GitHubGateway } from "../github.js";
-import type { Review } from "../model.js";
 import { humanReviewStatus } from "../expedition/human-review.js";
-import { sortReviews } from "../expedition/protection.js";
+import { sortReviews, standingVerdicts, STANDING_VERDICT_STATES } from "../expedition/protection.js";
 
 export interface WatchAndReReviewInput {
   repo: string;
@@ -31,11 +30,6 @@ export interface WatchAndReReviewResult {
 }
 
 export const DEFAULT_MAX_REVIEW_ROUNDS = 3;
-
-// States that carry a verdict. A COMMENTED review is a note or a second opinion, not a position on
-// the change, so it never becomes the review this operation follows up on and it never spends a
-// round of the cap below.
-const VERDICT_STATES: ReadonlySet<string> = new Set(["APPROVED", "CHANGES_REQUESTED"]);
 
 /**
  * Decide what to do next about a pull request this agent has already reviewed.
@@ -85,18 +79,29 @@ export async function watchAndReReview(gh: GitHubGateway, input: WatchAndReRevie
   const reviews = await gh.getReviews(repo, pr);
   // Sorted by submission time rather than trusted to arrive in order: which of this agent's reviews
   // is the standing one decides whether the pull request gets touched again.
-  const mine = sortReviews(reviews).filter((r) => r.author === myLogin);
+  const normalizedLogin = myLogin.toLowerCase();
+  const mine = sortReviews(reviews).filter((r) => r.author.toLowerCase() === normalizedLogin);
   if (mine.length === 0) return { action: "none", reason: "this agent has not reviewed this pull request", headMoved: false };
 
-  // Every verdict this agent has left, oldest first: the last one is the standing position, and how
-  // many there are is how many rounds have been spent.
-  const verdicts = mine.filter((r) => VERDICT_STATES.has(r.state));
-  const latest: Review | undefined = verdicts.at(-1);
+  // Every verdict this agent has left, oldest first. The shared standing-verdict map decides which
+  // one is live; the list exists only to count how many review rounds have been spent. In particular,
+  // DISMISSED must never fall through as "comments but no verdict": it is GitHub's record that a
+  // maintainer retired a verdict, including automatically after a push on branches that dismiss stale
+  // reviews.
+  const verdicts = mine.filter((r) => STANDING_VERDICT_STATES.has(r.state));
+  const latest = standingVerdicts(reviews).get(normalizedLogin);
   if (!latest) {
     return { action: "none", reason: "this agent has left comments but no verdict on this pull request", headMoved: false };
   }
   // One answer for every branch below, so the flag and the prose can never say different things.
   const headMoved = pull.headSha !== latest.commitId;
+  if (latest.state === "DISMISSED") {
+    return {
+      action: "hold-for-human",
+      reason: "this agent's standing verdict was dismissed; only a human should decide whether to replace it",
+      headMoved,
+    };
+  }
   if (latest.state === "APPROVED") {
     return headMoved
       ? {

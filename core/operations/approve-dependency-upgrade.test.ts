@@ -839,6 +839,17 @@ describe("approveDependencyUpgrade", () => {
       expect(result.action).toBe("approved-and-merged");
       expect(gh.merges).toHaveLength(1);
     });
+
+    it("does not let an older dismissal override a later standing approval at the same head", async () => {
+      const gh = seedBotBump();
+      await dismissedApproval(gh, HEAD);
+      await gh.submitReview(REPO, PR, { commitId: HEAD, event: "APPROVE", body: "a maintainer allowed a new verdict" });
+
+      const result = await run(gh, { autonomy: "auto" });
+      expect(result.action).toBe("approved-and-merged");
+      expect(gh.reviews).toHaveLength(2); // the later standing approval is reused
+      expect(gh.merges).toHaveLength(1);
+    });
   });
 
   // A dependency upgrade is judged on the content and authorship rails, not on its line count: the

@@ -99,6 +99,28 @@ describe("watchAndReReview", () => {
     expect((await run(gh)).action).toBe("wait"); // the COMMENT did not replace the verdict
   });
 
+  describe("dismissed verdicts", () => {
+    it("hands a dismissed verdict to a human instead of claiming this agent left no verdict", async () => {
+      const gh = seed("sha0002");
+      await reviewAs(gh, ME, "APPROVE", "sha0001");
+      gh.reviews[0].state = "DISMISSED";
+
+      const result = await run(gh);
+      expect(result).toMatchObject({ action: "hold-for-human", headMoved: true });
+      expect(result.reason).toContain("dismissed");
+      expect(result.reason).not.toContain("no verdict");
+    });
+
+    it("uses the latest verdict, so a later approval replaces a dismissal", async () => {
+      const gh = seed("sha0002");
+      await reviewAs(gh, ME, "APPROVE", "sha0001");
+      gh.reviews[0].state = "DISMISSED";
+      await reviewAs(gh, ME, "APPROVE", "sha0002");
+
+      expect(await run(gh)).toMatchObject({ action: "approved", headMoved: false });
+    });
+  });
+
   it("reports re-review once the author pushes", async () => {
     const gh = seed("sha0002");
     await reviewAs(gh, ME, "REQUEST_CHANGES", "sha0001");

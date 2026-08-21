@@ -144,7 +144,7 @@ stateDiagram-v2
   SO --> WT : tick+1
   WT --> WI : head = my CR commit
   WT --> AP : my verdict is APPROVED
-  WT --> HH : cap spent, asked, or refused
+  WT --> HH : dismissed, cap spent, asked, or refused
   WT --> NO : no verdict of mine
   WT --> AB : closed or merged
   WT --> WT : tick+1, nothing moved
@@ -171,7 +171,8 @@ stateDiagram-v2
 |---|---|---|
 | not open | `abandoned` | terminal, correctly |
 | no reviews of mine | `none` | not reachable from the flow: `reviewed-by:@me` is how the item got here |
-| reviews of mine, none `APPROVED` or `CHANGES_REQUESTED` | `none` | terminal in practice. An enricher's `COMMENT`-only history never escapes this |
+| reviews of mine, none `APPROVED`, `CHANGES_REQUESTED`, or `DISMISSED` | `none` | terminal in practice. An enricher's `COMMENT`-only history never escapes this |
+| latest verdict `DISMISSED` | `hold-for-human`, and `headMoved` says whether its commit is stale | a maintainer retired this agent's verdict; only a human decides whether to replace it |
 | latest verdict `APPROVED`, `commitId === H` | `approved`, `headMoved: false` | fixed point while `H` holds |
 | latest verdict `APPROVED`, `commitId !== H` | `approved`, `headMoved: true`, and the reason names the moved head | the approval is stale, so gate rail 5 will not count it either. Re-affirming one is a deferred phase ([#39](https://github.com/input-output-hk/agent-peer-review/issues/39)) |
 | latest verdict `CHANGES_REQUESTED`, `commitId === H` | `wait` | fixed point until the author pushes |
@@ -180,7 +181,7 @@ stateDiagram-v2
 | latest `CHANGES_REQUESTED`, `commitId !== H`, under the cap, a human's standing verdict is `CHANGES_REQUESTED` | `hold-for-human` | clears when that person replaces the verdict with another one |
 | latest `CHANGES_REQUESTED`, `commitId !== H`, under the cap, no human engaged | `re-review` | a full claim / review / complete round |
 
-`hold-for-human` has **three** causes, and the flow's instructions copy the `reason` into the result for that reason: they read identically in a count and mean different things. The round cap is tested **before** the two human tests, so an agent that has spent its rounds hands over for that reason whether or not a human happens to be looking. A human's finished `APPROVED`, and a `COMMENTED` review from anyone, hold nothing: neither is somebody mid-review and neither is a refusal, and reading them as one froze this operation permanently on any pull request a human had ever touched.
+`hold-for-human` has **four** causes, and the flow's instructions copy the `reason` into the result for that reason: they read identically in a count and mean different things. A dismissed verdict is tested first, then the round cap, then the two human tests, so an explicit dismissal cannot be misreported as no verdict and an agent that has spent its rounds hands over for that reason whether or not a human happens to be looking. A human's finished `APPROVED`, and a `COMMENTED` review from anyone, hold nothing: neither is somebody mid-review and neither is a refusal, and reading them as one froze this operation permanently on any pull request a human had ever touched.
 
 `headMoved` is on every answer, not only the ones above that mention it, so a flow can branch on a stale verdict without parsing prose. It is false whenever there is no standing verdict of this agent's for the head to have moved past.
 
@@ -351,6 +352,7 @@ flowchart LR
   W0["watchAndReReview"]
   W0 -->|"not open"| W1["<b>abandoned</b>"]
   W0 -->|"no verdict of mine"| W2["<b>none</b>"]
+  W0 -->|"my verdict was DISMISSED"| W5["<b>hold-for-human</b>"]
   W0 -->|"my latest verdict is APPROVED"| W3["<b>approved</b><br/>headMoved says if it is stale"]
   W0 -->|"CHANGES_REQUESTED at H"| W4["<b>wait</b>"]
   W0 -->|"head moved, cap spent"| W5["<b>hold-for-human</b>"]
@@ -367,10 +369,10 @@ flowchart LR
 | action | means | exit |
 |---|---|---|
 | `abandoned` | the pull request is closed or merged | none. Terminal |
-| `none` | either no reviews by this login at all, or none carrying a verdict. This module's verdict set is `APPROVED` and `CHANGES_REQUESTED` only, so a `COMMENTED` or `DISMISSED` review of its own does not count. Note that `protection.ts` uses a *different* verdict set that does include `DISMISSED` | nothing. An enricher's `COMMENT`-only history never escapes |
+| `none` | either no reviews by this login at all, or none carrying a verdict. `COMMENTED` and `PENDING` are not verdicts | nothing. An enricher's `COMMENT`-only history never escapes |
 | `approved` | this agent's latest verdict is an approval. `headMoved` is true, and the reason names the moved head, when the approval's `commitId` is not `H` | nothing yet. Re-affirming a stale approval is a deferred phase, and `headMoved` is what a flow would branch on to build it |
 | `wait` | nothing has been pushed since this agent requested changes | the author pushes |
-| `hold-for-human` | one of three: the round cap is spent, a human has an open review request (or any team does), or a human's standing verdict is `CHANGES_REQUESTED`. The `reason` says which | the cap never decreases, but the other two do: an open request clears when the person answers, and a standing refusal clears when they replace it |
+| `hold-for-human` | one of four: this agent's standing verdict was `DISMISSED`, the round cap is spent, a human has an open review request (or any team does), or a human's standing verdict is `CHANGES_REQUESTED`. The `reason` says which | a human must decide whether to replace a dismissed verdict; the cap never decreases; an open request clears when the person answers; a standing refusal clears when they replace it |
 | `re-review` | the head moved after this agent requested changes, the cap is not spent, and no human is engaged | the caller runs a full claim / review / complete round |
 
 Every answer carries `headMoved`, not only `approved`. It is false whenever this agent holds no standing verdict for the head to have moved past. The field exists so a flow never has to read the `reason` prose to learn that a verdict is about a commit that is gone, which is exactly what gate rail 5 refuses to count.
