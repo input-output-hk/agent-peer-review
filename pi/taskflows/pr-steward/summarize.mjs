@@ -142,6 +142,12 @@ function main() {
       attention.push(`${label(item)}: the merge was refused${reason ? ` (${reason})` : ""}`);
     } else if (action === "approved") {
       attention.push(`${label(item)}: approved, not merged${reason ? ` (${reason})` : ""}`);
+    } else if (action === "not-eligible") {
+      // A hand-off, not a failure: a major bump, an unreadable version, or a diff that is not
+      // version-only is exactly what this path is supposed to leave to a person. But it writes
+      // nothing at all on the pull request, so without a line here the hand-off is invisible and
+      // permanent, and it lands on precisely the upgrades the flow exists for (issue #50).
+      attention.push(`${label(item)}: not eligible for the automated path, so a human decides it${reason ? ` (${reason})` : ""}`);
     } else if (action === "" || action === "error") {
       attention.push(`${label(item)}: a tool call failed${reason ? ` (${reason})` : ""}`);
     }

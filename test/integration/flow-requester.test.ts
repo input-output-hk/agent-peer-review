@@ -183,6 +183,59 @@ describe("Flow A (pr-requester): stabilize, expedite, request a peer review", ()
     });
   });
 
+  // Issue #52, livelock 1: this flow calls requestPeerReview every tick, and the peer's flow reviews
+  // whatever it is asked to. Keyed on an OPEN request alone, the tick after the peer answered saw a
+  // labeled pull request with no outstanding request and asked again, because submitting a review
+  // clears the request natively. That cost one full agent invocation per tick, per pull request,
+  // forever, with the head never moving. What has to hold is that the sequence converges on its own
+  // and that a real author push still starts a real round.
+  describe("the review round, tick over tick", () => {
+    /** The peer's flow answering the request, recorded under its own login as GitHub records it. */
+    async function peerReviews(gh: FakeGitHubGateway, commitId: string): Promise<void> {
+      const mine = gh.login;
+      gh.login = PEER;
+      try {
+        await gh.submitReview(REPO, PR, { commitId, event: "REQUEST_CHANGES", body: "needs work" });
+      } finally {
+        gh.login = mine;
+      }
+    }
+
+    it("asks once per head: the peer answers, later ticks ask nothing, a push asks again", async () => {
+      const gh = new FakeGitHubGateway();
+      seedPr(gh, HEAD, [DOCS_FILE, SOURCE_FILE]);
+      seedClean(gh, HEAD);
+
+      // -- Tick 1: the change carries source, so the peer is asked.
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] })).status).toBe("requested");
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [PEER], teams: [] });
+
+      // The peer's flow reviews at that head, which clears its own request.
+      await peerReviews(gh, HEAD);
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
+
+      // -- Ticks 2 and 3: the label is still there and no request is outstanding, and neither tick
+      // may ask for anything. This is the loop: before the fix each of these answered "requested".
+      for (const _ of [2, 3]) {
+        expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] })).status).toBe("already-requested");
+      }
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
+      expect(gh.reviews).toHaveLength(1); // one review, not one per tick
+      expect((await gh.getPullRequest(REPO, PR)).labels).toEqual([TRIGGER]);
+
+      // -- Tick 4: the author pushed, which is a genuine new round.
+      push(gh, PUSHED);
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] })).status).toBe("requested");
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [PEER], teams: [] });
+
+      // ... and that round converges the same way.
+      await peerReviews(gh, PUSHED);
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: [PEER] })).status).toBe("already-requested");
+      expect(gh.reviews).toHaveLength(2); // exactly one review per head, across four ticks
+      expect(gh.reviews.map((r) => r.commitId)).toEqual([HEAD, PUSHED]);
+    });
+  });
+
   // Issue #48: a dependency bot's pull request is not a peer's to review. GitHub only forbids
   // approving your OWN pull request, so this agent may review and approve such a change itself, which
   // is the steward flow's job. Handing it to another engineer's agent adds a round trip and a person's

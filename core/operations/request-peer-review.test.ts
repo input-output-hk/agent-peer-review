@@ -89,22 +89,30 @@ describe("requestPeerReview", () => {
       await assertNothingHappened(gh);
     });
 
-    it("is refused for a [bot]-suffixed allowlisted name whatever the actor type says", async () => {
+    // The name shape stands in for the actor type only where GitHub has no answer, never against
+    // one. A login GitHub calls a User is not a bot however it is spelled, which is what keeps an
+    // allowlisted NAME from being squatted into either automated path; `approveDependencyUpgrade`
+    // refuses the same author for the same reason, so the two cannot disagree about who owns it.
+    // Requesting a peer review is also the safe direction to be wrong in: the change gets a look.
+    it("is NOT refused for an allowlisted name GitHub positively reports as a User", async () => {
       const gh = seed();
       gh.prs.get(`${REPO}#${PR}`)!.author = "dependabot[bot]";
-      gh.setActorType("dependabot[bot]", "User"); // the name shape is the confirmation here
-      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("bot-authored");
-      await assertNothingHappened(gh);
+      gh.setActorType("dependabot[bot]", "User");
+      const result = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] });
+      expect(result.status).toBe("requested");
+      expect((await gh.listRequestedReviewers(REPO, PR)).users).toEqual(["peer-bot"]);
     });
 
-    // The shape the pull request in issue #48 really had. GitHub's GraphQL API (and so the `gh` CLI)
-    // names an App integration `app/renovate` while the REST API reports `renovate[bot]`, and the
-    // users API resolves neither, so a caller working from the GraphQL name says so on the allowlist.
-    it("is refused for an app/ author name on a caller-supplied allowlist, actor type unknown", async () => {
+    // The shape the pull requests in issues #48 and #50 really had. GitHub's GraphQL API (and so the
+    // `gh` CLI, and so a discover script) names an App integration `app/renovate` while the REST API
+    // reports `renovate[bot]`, and `GET /users/app/renovate` is a 404, so the users API confirms
+    // nothing. Both spellings fold to one identity, so the DEFAULT allowlist covers this: it used to
+    // take a caller-supplied allowlist naming the GraphQL spelling.
+    it("is refused for an app/ author name on the default allowlist, actor type unknown", async () => {
       const gh = seed();
       gh.prs.get(`${REPO}#${PR}`)!.author = "app/renovate";
       gh.setActorType("app/renovate", "unknown");
-      const result = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"], botAllowlist: ["app/renovate"] });
+      const result = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] });
       expect(result.status).toBe("bot-authored");
       expect(result.reason).toContain("app/renovate");
       await assertNothingHappened(gh);
@@ -114,6 +122,7 @@ describe("requestPeerReview", () => {
       // An earlier round (or a human) may have labeled it. That is not a reason to add a request.
       const gh = seed([TRIGGER]);
       gh.prs.get(`${REPO}#${PR}`)!.author = "dependabot[bot]";
+      gh.setActorType("dependabot[bot]", "Bot");
       expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("bot-authored");
       expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
     });
@@ -157,13 +166,104 @@ describe("requestPeerReview", () => {
       expect((await human.listRequestedReviewers(REPO, PR)).users).toEqual(["peer-bot"]);
     });
 
-    it("caters for case in the bot name shapes", async () => {
+    // Every spelling of the same two bots, against the DEFAULT allowlist and with the users API
+    // resolving nothing: one identity per bot, whichever surface the name arrived on and in whatever
+    // case. This is the refusal half of issue #50; the steward's acceptance half is next to it.
+    it.each(["app/renovate", "renovate[bot]", "app/dependabot", "dependabot[bot]", "App/Renovate", "Dependabot[BOT]"])(
+      "refuses %s on the default allowlist with the actor type unknown",
+      async (author) => {
+        const gh = seed();
+        gh.prs.get(`${REPO}#${PR}`)!.author = author;
+        gh.setActorType(author, "unknown");
+        expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("bot-authored");
+        await assertNothingHappened(gh);
+      },
+    );
+
+    // A login carrying no bot marker at all, which the fold leaves untouched: it may equal a listed
+    // bot's identity and still not be that bot, so GitHub has to vouch for it.
+    it.each(["renovate", "app/some-codegen", "github-actions[bot]", "botanist"])(
+      "does not refuse %s when the users API cannot confirm it",
+      async (author) => {
+        const gh = seed();
+        gh.prs.get(`${REPO}#${PR}`)!.author = author;
+        gh.setActorType(author, "unknown");
+        expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("requested");
+      },
+    );
+  });
+
+  // Issue #52, livelock 1. Returning "already-requested" only while an OPEN request stood made this
+  // operation re-request on the tick after the peer answered, because submitting a review clears the
+  // request natively. The peer's flow then reviewed again, and again, with the head never moving:
+  // one full agent invocation per tick, per pull request, forever. The round decision is keyed on the
+  // head commit now, which is the same per-head idempotency proposals and claim markers use.
+  describe("idempotency per head commit", () => {
+    /** The peer answers the request, exactly as GitHub records it: the open request is cleared. */
+    async function peerReviews(gh: FakeGitHubGateway, commitId: string, event: "APPROVE" | "COMMENT" = "APPROVE"): Promise<void> {
+      const previous = gh.login;
+      gh.login = "peer-bot";
+      try {
+        await gh.submitReview(REPO, PR, { commitId, event, body: "a look" });
+      } finally {
+        gh.login = previous;
+      }
+    }
+
+    it("converges: the tick after the peer answers requests nothing, and a push starts a real round", async () => {
       const gh = seed();
-      gh.prs.get(`${REPO}#${PR}`)!.author = "Dependabot[BOT]";
-      gh.setActorType("Dependabot[BOT]", "unknown");
-      const result = await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"], botAllowlist: ["Dependabot[BOT]"] });
-      expect(result.status).toBe("bot-authored");
-      await assertNothingHappened(gh);
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("requested");
+
+      // Tick 2, same head. The peer has answered, so no request is outstanding any more.
+      await peerReviews(gh, "sha0001");
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] });
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("already-requested");
+      expect(await gh.listRequestedReviewers(REPO, PR)).toEqual({ users: [], teams: [] }); // nothing re-requested
+
+      // Tick 3, still the same head: still nothing. The loop does not restart on its own.
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("already-requested");
+      expect(gh.reviews).toHaveLength(1);
+
+      // The author pushes. THAT is a new round, and the peer is asked again.
+      gh.prs.get(`${REPO}#${PR}`)!.headSha = "sha0002";
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("requested");
+      expect((await gh.listRequestedReviewers(REPO, PR)).users).toEqual(["peer-bot"]);
+    });
+
+    it("counts a COMMENTED review at the head: a second opinion is still an answer to this diff", async () => {
+      const gh = seed();
+      await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] });
+      await peerReviews(gh, "sha0001", "COMMENT");
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("already-requested");
+    });
+
+    it("re-requests when the only review of the head is somebody else's", async () => {
+      const gh = seed([TRIGGER]);
+      gh.login = "carol";
+      await gh.submitReview(REPO, PR, { commitId: "sha0001", event: "COMMENT", body: "drive-by" });
+      gh.login = "me";
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("requested");
+    });
+
+    it("re-requests when the target reviewer's only review is of an earlier head", async () => {
+      const gh = seed([TRIGGER]);
+      await peerReviews(gh, "sha0000");
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("requested");
+    });
+
+    it("recognizes the answer whatever case the API spells the reviewer's login in", async () => {
+      const gh = seed([TRIGGER]);
+      gh.login = "Peer-Bot";
+      await gh.submitReview(REPO, PR, { commitId: "sha0001", event: "APPROVE", body: "a look" });
+      gh.login = "me";
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("already-requested");
+    });
+
+    it("still asks when the trigger label was removed, however the head was reviewed", async () => {
+      // Both halves are required: without the label this pull request is not in the flow at all.
+      const gh = seed();
+      await peerReviews(gh, "sha0001");
+      expect((await requestPeerReview(gh, { repo: REPO, pr: PR, reviewers: ["peer-bot"] })).status).toBe("requested");
     });
   });
 

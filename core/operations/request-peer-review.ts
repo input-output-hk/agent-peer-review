@@ -1,7 +1,7 @@
 import type { GitHubGateway } from "../github.js";
 import { TRIGGER } from "../labels.js";
 import { createReview } from "./create.js";
-import { DEFAULT_BOT_ALLOWLIST, isAllowlistedDependencyBot } from "./approve-dependency-upgrade.js";
+import { DEFAULT_BOT_ALLOWLIST, confirmsBotAuthor, isAllowlistedDependencyBot } from "./approve-dependency-upgrade.js";
 
 export interface RequestPeerReviewInput {
   repo: string;
@@ -27,50 +27,41 @@ export interface RequestPeerReviewResult {
 }
 
 /**
- * Whether an author name is a bot's, judged by name alone.
- *
- * A backstop for `getActorType`, not a replacement: the actor type is GitHub's own answer, but it is
- * read per login and a GitHub App shows up on a pull request under names the users API does not
- * resolve at all. The pull request behind issue #48 reported its author as `app/renovate`, which
- * reads as "unknown" through the users API, so both shapes are covered here: the `[bot]` suffix a
- * bot USER account carries (`dependabot[bot]`) and the `app/` prefix an App integration carries.
- * Lowercased first, because neither shape is a login GitHub compares case-sensitively.
- *
- * This only ever answers "is it really a bot" for a name that is already on the dependency-bot
- * allowlist, so a false positive costs nothing: the name had to be listed to get here. A linear
- * scan, no regex: the value comes from a pull request.
- */
-function looksLikeBotAuthor(author: string): boolean {
-  const name = author.toLowerCase();
-  return name.endsWith("[bot]") || name.startsWith("app/");
-}
-
-/**
- * GitHub's own answer to "is this login a Bot account", or false when it cannot be read.
+ * GitHub's own answer to "what kind of account is this login", or "unknown" when it cannot be read.
  *
  * The gateway maps only 404 to "unknown"; a 403 or a 5xx propagates. That must not turn a peer
- * review request into an error, because this read is a refinement on a call that never made it
- * before: an unreachable users API is not a reason to stop asking humans for reviews. Failing to
- * "not a bot" keeps the previous behavior, and the name shapes above still catch the common cases.
+ * review request into an error, because this read is a refinement on a call that never made one
+ * before: an unreachable users API is not a reason to stop asking humans for reviews. An unreadable
+ * answer is the same as an absent one, so it lands on "unknown", where `confirmsBotAuthor` falls
+ * back to the name shape and the common cases are still caught.
  */
-async function actorTypeSaysBot(gh: GitHubGateway, login: string): Promise<boolean> {
+async function readActorType(gh: GitHubGateway, login: string): Promise<"User" | "Bot" | "Organization" | "unknown"> {
   try {
-    return (await gh.getActorType(login)) === "Bot";
+    return await gh.getActorType(login);
   } catch {
-    return false;
+    return "unknown";
   }
 }
 
 /**
- * Ask a peer agent for a review, at most once per pull request.
+ * Ask a peer agent for a review, at most once per head commit.
  *
- * A taskflow re-runs this on every tick, so it has to be idempotent. The pull request is treated as
- * already handled when it carries the trigger label AND at least one of the target reviewers still
- * has an open review request: both halves matter, because the label alone survives a request the
- * reviewer has already answered (submitting a review clears the request natively), and an open
- * request alone can belong to a human asked by someone else.
+ * A taskflow re-runs this on every tick, so it has to be idempotent, and the unit of idempotency is
+ * the HEAD COMMIT: that is the invariant the rest of this package already keeps, for proposals and
+ * for claim markers alike. The pull request is treated as already handled when it carries the
+ * trigger label AND one of the target reviewers has either an open request or a review of the
+ * current head.
  *
- * Requesting again after the peer has reviewed is intentional, not a bug: that is a new round.
+ * Every part of that is load-bearing. The label alone is not enough: it survives forever, and an
+ * open request alone can belong to a human somebody else asked. An open request alone is not enough
+ * either, and that was a livelock (issue #52): submitting a review clears the request natively, so
+ * the tick after the peer answered saw a labeled pull request with no outstanding request, asked
+ * again, and the peer reviewed again, forever, with the head never moving. Keyed on the head, the
+ * loop converges after one round and a genuine author push is still a genuine new round.
+ *
+ * Any review state at the head counts, COMMENTED included. The question here is whether this exact
+ * diff has been looked at, and a second opinion is a look; the round CAP in watchAndReReview asks a
+ * different question ("how many verdicts has this agent spent") and so counts only verdicts.
  *
  * A pull request authored by an allowlisted DEPENDENCY bot is refused, with the reason, and nothing
  * is written. GitHub only forbids approving your OWN pull request, so this agent may review and
@@ -100,7 +91,7 @@ export async function requestPeerReview(gh: GitHubGateway, input: RequestPeerRev
   // a human account, and the allowlist has to mean "that bot" rather than "that string".
   const allowlist = input.botAllowlist ?? [...DEFAULT_BOT_ALLOWLIST];
   if (isAllowlistedDependencyBot(pull.author, allowlist)
-    && (looksLikeBotAuthor(pull.author) || await actorTypeSaysBot(gh, pull.author))) {
+    && confirmsBotAuthor(pull.author, await readActorType(gh, pull.author))) {
     return {
       status: "bot-authored",
       reviewers: [],
@@ -110,6 +101,18 @@ export async function requestPeerReview(gh: GitHubGateway, input: RequestPeerRev
   if (pull.labels.includes(TRIGGER)) {
     const requested = await gh.listRequestedReviewers(repo, pr);
     if (reviewers.some((r) => requested.users.includes(r))) {
+      return { status: "already-requested", reviewers };
+    }
+    // No outstanding request, which by itself says nothing: answering one clears it. So the reviews
+    // are read too, and a review of THIS head by a target reviewer is the answer to this round.
+    //
+    // Logins are compared case-folded here, unlike the exact comparison above, because this is the
+    // check that has to converge: a gateway spelling the login back as "Peer-Bot" where the config
+    // says "peer-bot" would miss, re-request, and restore the very loop this closes. A miss in the
+    // check above is harmless by comparison, since this one catches it a moment later.
+    const targets = new Set(reviewers.map((r) => r.toLowerCase()));
+    const reviews = await gh.getReviews(repo, pr);
+    if (reviews.some((r) => targets.has(r.author.toLowerCase()) && r.commitId === pull.headSha)) {
       return { status: "already-requested", reviewers };
     }
   }

@@ -18,7 +18,7 @@ import { FakeGitHubGateway } from "../fakes/fake-github.js";
 import { claimReview } from "../../core/operations/claim.js";
 import { completeReview } from "../../core/operations/complete.js";
 import { watchAndReReview } from "../../core/operations/watch-and-re-review.js";
-import { parseMarkers } from "../../core/claim-marker.js";
+import { parseMarkers, PRIMARY_MARKER } from "../../core/claim-marker.js";
 import { TRIGGER } from "../../core/labels.js";
 import type { Config } from "../../core/model.js";
 
@@ -190,6 +190,109 @@ describe("Flow B (pr-reviewer): claim, complete, watch, re-review", () => {
       expect(gh.reviews.map((r) => r.commitId)).toEqual([HEAD1, HEAD2]);
       expect((await watch(gh, { maxReviewRounds: 2 })).action).toBe("hold-for-human");
       expect(await gh.listComments(REPO, PR)).toEqual([]); // and no claim marker was left behind
+    });
+  });
+
+  // Issue #52, livelock 2: a claim marker was a permanent SHA pin. An agent whose run stalled
+  // re-claimed the dead commit on every tick, reviewed code that no longer existed, and the drift
+  // that produced then read to the watch path as an author push, manufacturing another round with no
+  // author action at all. So the loop had no exit: review a dead commit, see "the head moved",
+  // re-review the same dead commit.
+  describe("a claim that outlives the commit it pinned", () => {
+    it("re-pins to the current head, and the completed review is not drifted", async () => {
+      const dir = skillsDir();
+      const gh = new FakeGitHubGateway();
+      seedRequestedPr(gh, HEAD1);
+
+      // Tick 1: the claim lands, and then this agent's run stalls before completing.
+      const stalled = await claimReview({ gh, config: config(dir), machine: MACHINE, now: tick(1) }, { repo: REPO, pr: PR });
+      expect(stalled.headSha).toBe(HEAD1);
+      expect(parseMarkers(await gh.listComments(REPO, PR))[0].marker.sha).toBe(HEAD1);
+
+      // The author pushes twice while nothing is running. HEAD1 is now a commit nobody can review.
+      push(gh, HEAD2);
+      push(gh, HEAD3);
+
+      // Tick 2: the same agent claims again. It must pin the CURRENT head.
+      const resumed = await claimReview({ gh, config: config(dir), machine: MACHINE, now: tick(2) }, { repo: REPO, pr: PR });
+      expect(resumed.headSha).toBe(HEAD3);
+      expect(resumed.role).toBe("anchor"); // re-pinning does not cost the anchor its place
+      const repinned = parseMarkers(await gh.listComments(REPO, PR));
+      expect(repinned).toHaveLength(1); // the stale marker is gone, not merely outnumbered
+      expect(repinned[0].marker).toMatchObject({ sha: HEAD3, claimedAt: tick(1) });
+
+      // The review therefore lands on the live commit, and nothing is flagged as drifted.
+      const completed = await completeReview({ gh, config: config(dir) }, { repo: REPO, pr: PR, event: "request-changes", summary: "needs work" });
+      expect(completed.drifted).toBe(false);
+      expect(gh.reviews).toHaveLength(1);
+      expect(gh.reviews[0]).toMatchObject({ author: ME, commitId: HEAD3, state: "CHANGES_REQUESTED" });
+      expect(gh.reviews[0].body).not.toContain("PR head is now"); // no drift note for a maintainer to read
+
+      // And the tick straight afterwards waits for the author instead of manufacturing a round out of
+      // its own drift.
+      const next = await watch(gh);
+      expect(next.action).toBe("wait");
+      expect(next.reason).toContain(HEAD3);
+    });
+  });
+
+  // Issue #52, livelock 3: the cap counted every review this agent wrote, and a second opinion is a
+  // COMMENTED review. Two of them plus one real verdict spent a cap meant for three rounds of
+  // back-and-forth, and because the count only grows, hold-for-human was then permanent for that
+  // pull request whatever the human did.
+  describe("second opinions and the round cap", () => {
+    const HEAD4 = "sha0004";
+
+    /** A competing primary for the round: another agent's tagged review at `commitId`. */
+    async function competingPrimary(gh: FakeGitHubGateway, login: string, commitId: string): Promise<void> {
+      const mine = gh.login;
+      gh.login = login;
+      try {
+        await gh.submitReview(REPO, PR, { commitId, event: "REQUEST_CHANGES", body: `verdict\n\n${PRIMARY_MARKER}` });
+      } finally {
+        gh.login = mine;
+      }
+    }
+
+    it("two rounds this agent was superseded in do not spend a cap of three", async () => {
+      const dir = skillsDir();
+      const gh = new FakeGitHubGateway();
+      seedRequestedPr(gh, HEAD1);
+
+      // Rounds 1 and 2: a peer agent got its primary in first at each head, so completeReview
+      // downgrades this agent's own write to a second-opinion COMMENT. That is the flow working as
+      // designed, and it asks the author for nothing.
+      for (const head of [HEAD1, HEAD2]) {
+        if (head !== HEAD1) push(gh, head);
+        await competingPrimary(gh, "peer-bot", head);
+        const superseded = await claimReview({ gh, config: config(dir), machine: MACHINE, now: tick(1) }, { repo: REPO, pr: PR });
+        expect(superseded.headSha).toBe(head);
+        const done = await completeReview({ gh, config: config(dir) }, { repo: REPO, pr: PR, event: "request-changes", summary: "also this" });
+        expect(done.superseded).toBe(true);
+      }
+      expect(gh.reviews.filter((r) => r.author === ME).map((r) => r.state)).toEqual(["COMMENTED", "COMMENTED"]);
+
+      // Round 3: no competitor, so this agent's verdict stands. That is round one of three.
+      push(gh, HEAD3);
+      expect(await reviewRound(gh, dir, tick(3), "request-changes")).toBe(HEAD3);
+      expect(gh.reviews.filter((r) => r.author === ME)).toHaveLength(3);
+
+      // The author pushes. Three reviews by this agent, one verdict: the cap is not spent, so the
+      // flow keeps working the pull request instead of handing it over for good.
+      push(gh, HEAD4);
+      const next = await watch(gh, { maxReviewRounds: 3, knownAgentLogins: ["peer-bot"] });
+      expect(next.action).toBe("re-review");
+      expect(next.reason).toContain(HEAD3);
+      expect(next.reason).toContain(HEAD4);
+
+      // ... and the cap still bites once three VERDICTS are in.
+      expect(await reviewRound(gh, dir, tick(4), "request-changes")).toBe(HEAD4);
+      push(gh, "sha0005");
+      expect(await reviewRound(gh, dir, tick(5), "request-changes")).toBe("sha0005");
+      push(gh, "sha0006");
+      const capped = await watch(gh, { maxReviewRounds: 3, knownAgentLogins: ["peer-bot"] });
+      expect(capped.action).toBe("hold-for-human");
+      expect(capped.reason).toContain("3 of 3");
     });
   });
 
