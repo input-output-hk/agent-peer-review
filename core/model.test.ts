@@ -32,7 +32,7 @@ describe("model", () => {
   it("config defaults are all optional", () => {
     const c = ConfigSchema.parse({});
     expect(c.githubLogin).toBeNull();
-    expect(c.runChecks).toBe(false);
+    expect(c.knownAgentLogins).toEqual([]);
   });
   it("accepts a valid label spec", () => {
     const ok = LabelSpecSchema.parse({ name: "needs-review", color: "5319e7", description: "Needs another look" });

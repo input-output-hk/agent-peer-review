@@ -62,6 +62,27 @@ describe("runInit", () => {
     expect(JSON.parse(written)).toEqual({ reviewers: ["patextreme", "yshyn-iohk"] });
   });
 
+  it("writes knownAgentLogins to config.json when --known-agent-login is passed, and names it in the result", async () => {
+    const deps = makeDeps();
+    const result = await runInit({ repos: ["o/r"], knownAgentLogins: ["peer-bot", "yshyn-iohk"] }, deps);
+    const written = deps.writes.get(result.configPath)!;
+    expect(JSON.parse(written)).toEqual({ knownAgentLogins: ["peer-bot", "yshyn-iohk"] });
+    expect(result.knownAgentLogins).toEqual(["peer-bot", "yshyn-iohk"]);
+  });
+
+  it("reports the knownAgentLogins already on record when a later call does not pass any", async () => {
+    const deps = makeDeps();
+    await runInit({ repos: ["o/r"], knownAgentLogins: ["peer-bot"] }, deps);
+    const second = await runInit({ repos: ["o/r"] }, deps);
+    expect(second.knownAgentLogins).toEqual(["peer-bot"]); // carried over, not cleared
+  });
+
+  it("reports no knownAgentLogins when none were ever set", async () => {
+    const deps = makeDeps();
+    const result = await runInit({ repos: ["o/r"] }, deps);
+    expect(result.knownAgentLogins).toEqual([]);
+  });
+
   it("bootstraps every repo passed, each with its own summary", async () => {
     const deps = makeDeps();
     const result = await runInit({ repos: ["o/r1", "o/r2"] }, deps);
@@ -118,5 +139,49 @@ describe("runInit", () => {
     await expect(runInit({ repos: ["o/r"] }, deps)).rejects.toThrow(/not valid JSON/);
     expect(deps.writes.has(configPath)).toBe(false);
     expect(deps.reads.get(configPath)).toBe("{"); // untouched
+  });
+
+  describe("security alerts probe (issue #54)", () => {
+    it("warns when the gateway cannot read Dependabot alerts (its null sentinel)", async () => {
+      const gateway = new FakeGitHubGateway();
+      gateway.setAlertCount("o/r", null); // mirrors a 403/404 from GitHub: no access
+      const deps = makeDeps(gateway);
+      const result = await runInit({ repos: ["o/r"] }, deps);
+      expect(result.securityAlertsWarning).toBeDefined();
+      expect(result.securityAlertsWarning).toContain("Dependabot alerts");
+      expect(result.securityAlertsWarning).toContain("autonomy=auto");
+    });
+
+    it("does not warn when the gateway can read Dependabot alerts, even with alerts open", async () => {
+      const gateway = new FakeGitHubGateway();
+      gateway.setAlertCount("o/r", 3);
+      const deps = makeDeps(gateway);
+      const result = await runInit({ repos: ["o/r"] }, deps);
+      expect(result.securityAlertsWarning).toBeUndefined();
+    });
+
+    it("does not warn by default (FakeGitHubGateway's unset alert count reads as accessible)", async () => {
+      const deps = makeDeps();
+      const result = await runInit({ repos: ["o/r"] }, deps);
+      expect(result.securityAlertsWarning).toBeUndefined();
+    });
+
+    it("is best-effort: a thrown error from the probe still warns but never fails init", async () => {
+      const gateway = new FakeGitHubGateway();
+      gateway.listOpenSecurityAlertCount = () => Promise.reject(new Error("network blip"));
+      const deps = makeDeps(gateway);
+      const result = await runInit({ repos: ["o/r"] }, deps); // must not reject
+      expect(result.securityAlertsWarning).toBeDefined();
+      expect(result.configPath).toBeDefined(); // the rest of init still completed
+    });
+
+    it("checks only the first repo, not every repo passed", async () => {
+      const gateway = new FakeGitHubGateway();
+      gateway.setAlertCount("o/r1", 0);
+      gateway.setAlertCount("o/r2", null); // would warn if this one were checked instead
+      const deps = makeDeps(gateway);
+      const result = await runInit({ repos: ["o/r1", "o/r2"] }, deps);
+      expect(result.securityAlertsWarning).toBeUndefined();
+    });
   });
 });

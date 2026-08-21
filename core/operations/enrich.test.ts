@@ -3,7 +3,7 @@ import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
 import { enrichReview } from "./enrich.js";
 import { serializeMarker, parseMarkers, PRIMARY_MARKER } from "../claim-marker.js";
 import { parseMeta } from "../review-meta.js";
-const cfg = { githubLogin: null as string | null, skillsDir: null, runChecks: false, captureMetadata: false, reviewers: [], knownAgentLogins: [] };
+const cfg = { githubLogin: null as string | null, skillsDir: null, captureMetadata: false, reviewers: [], knownAgentLogins: [] };
 // Capture-on variant, scoped to the footer tests below: the shared `cfg` above must stay
 // captureMetadata:false so every existing test keeps exercising today's (no-footer) behavior.
 const cfgCapture = { ...cfg, captureMetadata: true, model: "claude-opus-4-8", agent: "claude-code" };
