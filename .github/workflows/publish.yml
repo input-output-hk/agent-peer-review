@@ -3,11 +3,21 @@ name: Publish
 # Publishes both workspace packages to GitHub Packages (https://npm.pkg.github.com):
 #   @input-output-hk/agent-review      (core: CLI + MCP)
 #   @input-output-hk/agent-review-pi   (pi.dev extension + skill)
-# Trigger by publishing a GitHub release (tag must be v<version>), or run manually.
+#
+# Publishing a GitHub release triggers this. A manual run must name an existing
+# release tag: this workflow only ever publishes a tag, never a branch, so a
+# dispatch cannot ship unreviewed code. Either way the run goes through the
+# `release` environment, whose required reviewers approve every publish, and the
+# tag/version check and the test suite run for both triggers. See issue #69.
 on:
   release:
     types: [published]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish, e.g. v0.5.0"
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -20,27 +30,51 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Required reviewers on this environment are the gate on a manual publish.
+    # Same shape as the `github-pages` environment in pages.yml.
+    environment: release
     steps:
+      # The tag being published, resolved from whichever trigger fired. Forced
+      # under refs/tags/ so a `workflow_dispatch` can never select a branch (a
+      # branch named like a version would otherwise satisfy the check below).
+      # This is an action input, not a shell word, so nothing is interpolated
+      # into a command here.
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+          persist-credentials: false
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://npm.pkg.github.com
           scope: "@input-output-hk"
 
-      - run: npm ci
+      # No install scripts: nothing on the publish path needs one, so no
+      # dependency runs code in a job that holds `packages: write`.
+      - run: npm ci --ignore-scripts
 
-      # On a release, the tag must match the root package version (v<version>),
-      # so a mistyped tag can never publish the wrong version.
-      - name: Verify release tag matches package version
-        if: github.event_name == 'release'
+      # The tag must match the root package version (v<version>), so a mistyped
+      # tag can never publish the wrong version. Runs for a manual dispatch too,
+      # where it pins the requested tag to the version in the tree at that tag.
+      # The tag reaches the shell through `env:`, never through `${{ }}` inside
+      # `run:`, so a tag containing shell metacharacters is only ever compared.
+      - name: Verify tag matches package version
+        env:
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
         run: |
           want="v$(node -p "require('./package.json').version")"
-          got="${{ github.event.release.tag_name }}"
-          if [ "$got" != "$want" ]; then
-            echo "::error::release tag '$got' does not match package version '$want'"
+          if [ "$TAG" != "$want" ]; then
+            echo "::error::release tag '$TAG' does not match package version '$want'"
             exit 1
           fi
+
+      # Both packages are versioned in lockstep and published together, so drift
+      # between them must stop the publish, not half of it. check:lockfile cannot
+      # protect the `npm ci` above (it needs node_modules to run), but it does
+      # stop a tag with an unpinned lockfile from being published at all.
+      - run: npm run check:version
+      - run: npm run check:lockfile
 
       # Build both before publishing either, so a build failure never leaves a
       # half-published pair.
@@ -48,6 +82,13 @@ jobs:
         run: |
           npm run build
           npm run -w pi build
+
+      # Gate on the same tests CI runs for the two published packages. A tag can
+      # reach this workflow without ever having passed CI.
+      - name: Test
+        run: |
+          npm test
+          npm run -w pi test
 
       # Each publish is skipped if that exact version is already on the registry,
       # so a partial-failure re-run is safe.
