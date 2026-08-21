@@ -4,6 +4,9 @@ import { EnrichmentSchema } from "../model.js";
 import { parseMarkers, sortMarkers, isPrimaryReview } from "../claim-marker.js";
 import { serializeMeta, type ReviewMeta } from "../review-meta.js";
 
+/** One shared staleness policy for every adapter; user-facing poll deadlines do not alter it. */
+export const DEFAULT_CLAIM_TTL_MS = 30 * 60_000;
+
 export async function enrichReview(
   deps: { gh: GitHubGateway; config: Config; ttlMs: number; nowMs: number },
   input: { repo: string; pr: number } & Enrichment,

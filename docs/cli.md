@@ -136,7 +136,7 @@ Used by an enricher in a panel review. Waits for the panel's primary review to e
 - `--summary <text|@file>` (required): literal text, or a path prefixed with `@` to read the summary from a file.
 - `--comments <@file>` (optional): a JSON array of `{path, line, body}` new findings, typically read from a file the same way.
 - `--poll <seconds>` (optional): seconds between polls. Defaults to `5`.
-- `--timeout <seconds>` (optional): seconds before giving up. Defaults to `1800`.
+- `--timeout <seconds>` (optional): seconds before the CLI gives up polling. Defaults to `1800`; it does not change the fixed 30-minute claim-staleness threshold used to promote an enricher.
 
 ```bash
 agent-review enrich --repo input-output-hk/some-repo --pr 42 --verdict mixed --summary @summary.md --comments @comments.json

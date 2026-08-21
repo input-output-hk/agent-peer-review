@@ -22,7 +22,7 @@ export { createReview } from "./operations/create.js";
 export { listReviews } from "./operations/list.js";
 export { claimReview } from "./operations/claim.js";
 export { completeReview } from "./operations/complete.js";
-export { enrichReview } from "./operations/enrich.js";
+export { enrichReview, DEFAULT_CLAIM_TTL_MS } from "./operations/enrich.js";
 export { stabilize, type StabilizeResult } from "./operations/stabilize.js";
 export { expedite, type ExpediteInput, type ExpediteResult } from "./operations/expedite.js";
 export { requestPeerReview, type RequestPeerReviewInput, type RequestPeerReviewResult } from "./operations/request-peer-review.js";

@@ -6,7 +6,7 @@ import path from "node:path";
 import { Command } from "commander";
 import {
   loadConfig, OctokitGateway, bootstrap, SKILL_NAMES, ensureAgentHome, skillsRoot,
-  createReview, listReviews, claimReview, completeReview, enrichReview,
+  createReview, listReviews, claimReview, completeReview, enrichReview, DEFAULT_CLAIM_TTL_MS,
 } from "../core/index.js";
 import { printJson, printLine, printErrLine } from "./render.js";
 import { runInit, promptForInit, describeInitFailure, parseList } from "./init.js";
@@ -201,11 +201,14 @@ program.command("enrich")
   .option("--timeout <seconds>", "seconds before giving up", "1800")
   .action(async (o) => {
     const enrichment = { overallVerdict: o.verdict, summary: readMaybeFile(o.summary), newFindings: o.comments ? JSON.parse(readMaybeFile(o.comments)) : undefined };
-    const repo = repoOf(o), pr = Number(o.pr), ttlMs = Number(o.timeout) * 1000;
-    const deadline = Date.now() + ttlMs;
+    const repo = repoOf(o), pr = Number(o.pr), waitMs = Number(o.timeout) * 1000;
+    const deadline = Date.now() + waitMs;
     const ghi = gh(), config = cfg();
     for (;;) {
-      const res = await enrichReview({ gh: ghi, config, ttlMs, nowMs: Date.now() }, { repo, pr, ...enrichment });
+      const res = await enrichReview(
+        { gh: ghi, config, ttlMs: DEFAULT_CLAIM_TTL_MS, nowMs: Date.now() },
+        { repo, pr, ...enrichment },
+      );
       if (res.status === "enriched") { printJson(res); return; }
       if (res.status === "promote") {
         const event = o.verdict === "agree" ? "approve" : o.verdict === "disagree" ? "request-changes" : "comment";

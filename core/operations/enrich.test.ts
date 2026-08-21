@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { FakeGitHubGateway } from "../../test/fakes/fake-github.js";
-import { enrichReview } from "./enrich.js";
+import { enrichReview, DEFAULT_CLAIM_TTL_MS } from "./enrich.js";
 import { serializeMarker, parseMarkers, PRIMARY_MARKER } from "../claim-marker.js";
 import { parseMeta } from "../review-meta.js";
 const cfg = { githubLogin: null as string | null, skillsDir: null, captureMetadata: false, reviewers: [], knownAgentLogins: [] };
 // Capture-on variant, scoped to the footer tests below: the shared `cfg` above must stay
 // captureMetadata:false so every existing test keeps exercising today's (no-footer) behavior.
 const cfgCapture = { ...cfg, captureMetadata: true, model: "claude-opus-4-8", agent: "claude-code" };
-const TTL = 30 * 60_000;
+const TTL = DEFAULT_CLAIM_TTL_MS;
 
 function panelPr(gh: FakeGitHubGateway) {
   gh.seedPr({ number: 9, title: "t", author: "a", headSha: "head", baseSha: "b", url: "u", state: "open", labels: ["ai-review"] });
@@ -15,6 +15,10 @@ function panelPr(gh: FakeGitHubGateway) {
 }
 
 describe("enrichReview", () => {
+  it("keeps one 30-minute claim-staleness policy for every adapter", () => {
+    expect(DEFAULT_CLAIM_TTL_MS).toBe(30 * 60_000);
+  });
+
   it("submits ONE consolidated COMMENT review at the primary's commit when the primary exists", async () => {
     const gh = new FakeGitHubGateway(); panelPr(gh);
     // alice claims + posts primary

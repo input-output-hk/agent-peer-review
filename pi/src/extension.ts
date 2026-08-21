@@ -4,7 +4,7 @@ import { hostname } from "node:os";
 import {
   loadConfig, OctokitGateway, createReview, listReviews, claimReview, completeReview, enrichReview, bootstrap,
   stabilize, expedite, requestPeerReview, approveDependencyUpgrade, watchAndReReview,
-  DEFAULT_GATE_POLICY, DEPS_GATE_POLICY, DEFAULT_MAX_REVIEW_ROUNDS,
+  DEFAULT_GATE_POLICY, DEPS_GATE_POLICY, DEFAULT_MAX_REVIEW_ROUNDS, DEFAULT_CLAIM_TTL_MS,
   type GitHubGateway, type Config, type AllowedMergeMethods,
 } from "@input-output-hk/agent-review";
 
@@ -98,7 +98,7 @@ export function registerTools(
 
   pi.registerTool({ name: "review_enrich", label: "Enrich a review", description: "Post a consolidated second opinion once the primary exists; else waiting/promote.",
     parameters: Type.Object({ repo: Type.String(), pr: Type.Number(), verdict: Type.Union([Type.Literal("agree"), Type.Literal("disagree"), Type.Literal("mixed")]), summary: Type.String(), newFindings: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Number(), body: Type.String() }))) }),
-    async execute(_id, p) { return ok(await enrichReview({ gh: gh(), config: cfg(), ttlMs: 30 * 60_000, nowMs: Date.now() }, { repo: p.repo, pr: p.pr, overallVerdict: p.verdict, summary: p.summary, newFindings: p.newFindings })); } });
+    async execute(_id, p) { return ok(await enrichReview({ gh: gh(), config: cfg(), ttlMs: DEFAULT_CLAIM_TTL_MS, nowMs: Date.now() }, { repo: p.repo, pr: p.pr, overallVerdict: p.verdict, summary: p.summary, newFindings: p.newFindings })); } });
 
   pi.registerTool({ name: "labels_bootstrap", label: "Bootstrap labels", description: "Idempotently create/update the ai-review + skill labels.",
     parameters: Type.Object({ repo: Type.String() }),
