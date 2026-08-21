@@ -47,6 +47,14 @@ describe("workflow supply-chain boundaries", () => {
     expect(workflow("release.yml")).toContain("It must not be a repository-level secret");
   });
 
+  it("never lets a workflow-dispatch value select the privileged release checkout", () => {
+    const source = workflow("release.yml");
+    expect(source).not.toContain("ref: ${{ needs.resolve.outputs.sha }}");
+    expect(job("release.yml", "validate")).toContain("ref: main");
+    expect(job("release.yml", "release")).toContain("ref: main");
+    expect(source.match(/RESOLVED_SHA: \$\{\{ needs\.resolve\.outputs\.sha \}\}/g)).toHaveLength(2);
+  });
+
   it("publishes prebuilt tarballs in a clean environment-credentialed job with lifecycle scripts disabled", () => {
     const privileged = job("publish.yml", "publish");
     expect(privileged).not.toContain("packages: write");

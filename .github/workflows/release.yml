@@ -33,8 +33,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Resolve main before any repository dependency runs. Both later jobs consume this output, so a
-  # dependency in validate cannot redirect the privileged checkout to another commit.
+  # Resolve main before any repository dependency runs. Later jobs check out the literal `main`
+  # ref and compare it with this output. Keeping the output out of checkout's `ref` prevents a
+  # workflow-dispatch value from ever selecting code for the privileged job.
   resolve:
     runs-on: ubuntu-latest
     outputs:
@@ -55,8 +56,17 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ needs.resolve.outputs.sha }}
+          ref: main
           persist-credentials: false
+
+      - name: Confirm resolved release commit
+        env:
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          if [ "$(git rev-parse HEAD)" != "$RESOLVED_SHA" ]; then
+            echo "::error::main moved after the release started; run the workflow again"
+            exit 1
+          fi
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 22, cache: npm }
@@ -126,9 +136,18 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ needs.resolve.outputs.sha }}
+          ref: main
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Confirm validated release commit
+        env:
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          if [ "$(git rev-parse HEAD)" != "$RESOLVED_SHA" ]; then
+            echo "::error::main moved after validation; run the workflow again"
+            exit 1
+          fi
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 22 }

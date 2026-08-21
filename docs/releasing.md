@@ -17,8 +17,8 @@ The two published packages, `@input-output-hk/agent-review` and `@input-output-h
 The workflow then:
 
 1. resolves the exact commit at `main`, before any repository dependency runs,
-2. validates the release candidate in an unprivileged job: it exercises the ordinary version and changelog scripts, verifies version, generated schemas, and lockfile integrity, and runs every CI lane,
-3. starts a fresh job with no `node_modules` and uses the dependency-free `scripts/write-release.mjs` to make the same deterministic version, lockfile, and changelog edits,
+2. checks out the literal `main` ref in an unprivileged job, fails closed if it no longer matches the resolved commit, then validates the release candidate: it exercises the ordinary version and changelog scripts, verifies version, generated schemas, and lockfile integrity, and runs every CI lane,
+3. starts a fresh job with no `node_modules`, checks the literal `main` checkout against that same validated commit, and uses the dependency-free `scripts/write-release.mjs` to make the deterministic version, lockfile, and changelog edits,
 4. commits those seven explicit files to `main` and creates the GitHub release.
 
 Creating the release fires the existing `Publish` workflow. Its unprivileged job validates, tests, builds, and packs both packages with lifecycle scripts disabled; a separate environment-credentialed job downloads only those two tarballs and publishes them with `--ignore-scripts`. Its automatic `GITHUB_TOKEN` stays read-only, and only the protected environment supplies the package credential. A dependency process therefore never shares a runner with `RELEASE_TOKEN` or the package token. Publishing is idempotent: a version already on the registry is skipped, so a re-run is safe.
