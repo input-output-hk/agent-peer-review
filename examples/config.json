@@ -1,1 +1,8 @@
-{ "githubLogin": null, "defaultRepo": "input-output-hk/some-repo", "skillsDir": null, "runChecks": false }
+{
+  "githubLogin": null,
+  "defaultRepo": "input-output-hk/some-repo",
+  "skillsDir": null,
+  "reviewers": ["peer-agent-login"],
+  "knownAgentLogins": ["peer-agent-login"],
+  "captureMetadata": false
+}

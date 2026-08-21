@@ -25,7 +25,7 @@ repository name, `agent-peer-review`. The `AGENT_REVIEW_*` environment variables
 
 | Path | Written by | Purpose |
 | --- | --- | --- |
-| `~/.agent-peer-review/config.json` | `agent-review init`, or you, by hand | The CLI/MCP server's global config: `githubLogin`, `defaultRepo`, `skillsDir`, `runChecks`, `reviewers`, and so on. See [Quick start](./quick-start.md#guided-setup) for `init`, and [Configure](./quick-start.md#configure-optional) for the full field list and how this location fits into the overall resolution order. |
+| `~/.agent-peer-review/config.json` | `agent-review init`, or you, by hand | The CLI/MCP server's global config: `githubLogin`, `defaultRepo`, `skillsDir`, `reviewers`, `knownAgentLogins`, and so on. See [Quick start](./quick-start.md#guided-setup) for `init`, and [Configure](./quick-start.md#configure-optional) for the full field list and how this location fits into the overall resolution order. |
 | `~/.agent-peer-review/dashboard.db` | `agent-review-dashboard sync` | The dashboard's SQLite database, read by `agent-review-dashboard serve`. An explicit `--db <path>` on either command always overrides this default. See [Dashboard](./dashboard.md) for usage. |
 
 Room for future per-user state, such as caches or logs, is left under the same root.

@@ -7,7 +7,7 @@ import { completeReview } from "./operations/complete.js";
 import { enrichReview } from "./operations/enrich.js";
 import { PRIMARY_MARKER } from "./claim-marker.js";
 
-const cfg = { githubLogin: null as string | null, skillsDir: null, runChecks: false, captureMetadata: false, reviewers: [], knownAgentLogins: [] };
+const cfg = { githubLogin: null as string | null, skillsDir: null, captureMetadata: false, reviewers: [], knownAgentLogins: [] };
 const TTL = 30 * 60_000;
 
 describe("lifecycle e2e", () => {
