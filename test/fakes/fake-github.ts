@@ -35,6 +35,9 @@ export class FakeGitHubGateway implements GitHubGateway {
   merges: Array<{ repo: string; pr: number; sha: string; method: "merge" | "squash" | "rebase"; commitTitle?: string }> = [];
   updateBranchCalls: Array<{ repo: string; pr: number; expectedHeadSha?: string; previousHeadSha?: string }> = [];
   removedLabels: Array<{ repo: string; pr: number; label: string }> = [];
+  // Every listLabels call, in order, by repo: what a caller ensuring a whole label profile costs in
+  // round trips is a property worth asserting, not just the labels it ended up with.
+  listLabelsCalls: string[] = [];
   assigneesAdded: Array<{ repo: string; pr: number; assignees: string[] }> = [];
   private commentId = 1;
   private reviewSeq = 1;
@@ -90,12 +93,24 @@ export class FakeGitHubGateway implements GitHubGateway {
     const stored = this.prs.get(this.key(repo, pr))!;
     stored.labels = [...new Set([...stored.labels, ...labels])];
   }
-  async listLabels(repo: string): Promise<LabelSpec[]> { return this.labels.get(repo) ?? []; }
-  async ensureLabel(repo: string, label: LabelSpec): Promise<"created" | "updated" | "unchanged"> {
-    const list = this.labels.get(repo) ?? [];
-    const existing = list.find((l) => l.name === label.name);
-    if (!existing) { this.labels.set(repo, [...list, label]); return "created"; }
-    if (existing.color !== label.color || existing.description !== label.description) { Object.assign(existing, label); return "updated"; }
+  async listLabels(repo: string): Promise<LabelSpec[]> {
+    this.listLabelsCalls.push(repo);
+    return this.labels.get(repo) ?? [];
+  }
+  // Mirrors OctokitGateway.ensureLabel, including that it lists for itself only when the caller did
+  // not pass a snapshot: that is the whole point of the `known` parameter, so a fake that always
+  // read its own map would make the round-trip count untestable (core/operations/bootstrap.ts).
+  // The decision comes from `known`, the write always from the stored array, so an entry created
+  // since the snapshot was taken is never dropped.
+  async ensureLabel(repo: string, label: LabelSpec, known?: readonly LabelSpec[]): Promise<"created" | "updated" | "unchanged"> {
+    const seen = known ?? await this.listLabels(repo);
+    const stored = this.labels.get(repo) ?? [];
+    const existing = seen.find((l) => l.name === label.name);
+    if (!existing) { this.labels.set(repo, [...stored, label]); return "created"; }
+    if (existing.color !== label.color || existing.description !== label.description) {
+      Object.assign(stored.find((l) => l.name === label.name) ?? existing, label);
+      return "updated";
+    }
     return "unchanged";
   }
   async listComments(repo: string, pr: number): Promise<IssueComment[]> { return this.comments.get(this.key(repo, pr)) ?? []; }

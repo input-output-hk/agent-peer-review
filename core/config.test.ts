@@ -138,6 +138,71 @@ describe("config", () => {
     writeFileSync(file, "{}");
     expect(loadConfig(file).knownAgentLogins).toEqual([]);
   });
+  // Issue #67 item 3: the schema used to strip unknown keys, so a config of
+  // {"knownAgentLogin": [...], "reviewer": [...], "defaultRepoo": "a/b"} loaded as all defaults,
+  // exit 0, no warning. schemas/config.schema.json has always said additionalProperties: false.
+  describe("an unknown key is rejected, not discarded (issue #67)", () => {
+    const write = (config: unknown): string => {
+      const file = path.join(mkdtempSync(path.join(tmpdir(), "cfg-")), "config.json");
+      writeFileSync(file, JSON.stringify(config));
+      return file;
+    };
+
+    it("names the file, the key, and the field it was probably meant to be", () => {
+      const file = write({ knownAgentLogin: ["peer-bot"] });
+      expect(() => loadConfig(file)).toThrow(file);
+      expect(() => loadConfig(file)).toThrow(/"knownAgentLogin": did you mean "knownAgentLogins"\?/);
+    });
+
+    it("suggests the singular-to-plural near miss on reviewers too", () => {
+      expect(() => loadConfig(write({ reviewer: ["alice"] }))).toThrow(/"reviewer": did you mean "reviewers"\?/);
+    });
+
+    it("suggests the nearest field for a doubled letter", () => {
+      expect(() => loadConfig(write({ defaultRepoo: "a/b" }))).toThrow(/"defaultRepoo": did you mean "defaultRepo"\?/);
+    });
+
+    it("reports every unknown key at once rather than one per run", () => {
+      const message = (() => {
+        try { loadConfig(write({ knownAgentLogin: [], reviewer: [], defaultRepoo: "a/b" })); return ""; }
+        catch (e) { return (e as Error).message; }
+      })();
+      expect(message).toContain("knownAgentLogin");
+      expect(message).toContain("reviewer");
+      expect(message).toContain("defaultRepoo");
+      expect(message).toContain("Valid fields:"); // the full list, once, at the end
+      expect(message).toContain("knownAgentLogins");
+    });
+
+    it("offers no suggestion for a key that resembles nothing, and still lists the valid fields", () => {
+      const file = write({ somethingElseEntirely: 1 });
+      expect(() => loadConfig(file)).toThrow(/"somethingElseEntirely": not a config field\./);
+      expect(() => loadConfig(file)).toThrow(/Valid fields: githubLogin, defaultRepo/);
+    });
+
+    // A config written by an older version of this tool, which accepted runChecks. It resembles no
+    // current field, so a near-miss suggestion would be silence; the removal is what to say instead.
+    it("explains a field an older version wrote instead of guessing at a near miss", () => {
+      const file = write({ githubLogin: "me", runChecks: false });
+      expect(() => loadConfig(file)).toThrow(/"runChecks": removed with issue #55/);
+      expect(() => loadConfig(file)).toThrow(/delete the key/);
+    });
+
+    it("still reports a wrong type the way it always did", () => {
+      // Not an unknown key: the field exists and its value is wrong, so the zod error stands.
+      expect(() => loadConfig(write({ reviewers: "alice" }))).toThrow(/expected array|Expected array/i);
+    });
+
+    it("accepts every field the schema declares, so the strictness cannot reject a valid config", () => {
+      const file = write({
+        githubLogin: "me", defaultRepo: "o/r", skillsDir: "/x", model: "m", agent: "a", toolVersion: "1.2.3",
+        captureMetadata: true, reviewers: ["alice"], knownAgentLogins: ["peer-bot"],
+        mergeMethodByRepo: { "o/r": "squash" },
+      });
+      expect(loadConfig(file).defaultRepo).toBe("o/r");
+    });
+  });
+
   it("falls back to <agentHome>/config.json when no explicit path or AGENT_REVIEW_CONFIG is set", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "agent-home-"));
     vi.stubEnv("AGENT_PEER_REVIEW_HOME", dir);

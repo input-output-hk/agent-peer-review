@@ -51,7 +51,11 @@ export interface GitHubGateway {
   requestReviewers(repo: string, pr: number, reviewers: string[]): Promise<void>;
   addLabels(repo: string, pr: number, labels: string[]): Promise<void>;
   listLabels(repo: string): Promise<LabelSpec[]>;
-  ensureLabel(repo: string, label: LabelSpec): Promise<"created" | "updated" | "unchanged">;
+  // `existing` is the repository's current labels, already fetched by the caller: a caller ensuring
+  // a whole profile (see operations/bootstrap.ts) lists once and passes the snapshot to every call
+  // instead of paying one list per label. Omit it and the method lists for itself, so a single
+  // ensureLabel call still works standalone.
+  ensureLabel(repo: string, label: LabelSpec, existing?: readonly LabelSpec[]): Promise<"created" | "updated" | "unchanged">;
   listComments(repo: string, pr: number): Promise<IssueComment[]>;
   createComment(repo: string, pr: number, body: string): Promise<IssueComment>;
   deleteComment(repo: string, commentId: number): Promise<void>;
@@ -166,6 +170,16 @@ export class OctokitGateway implements GitHubGateway {
       // evaluated. Adding 409 here also stops repos.getContent from retrying GitHub's 409 for an
       // empty repository instead of failing fast.
       retry: { retries: 2, doNotRetry: [400, 401, 403, 404, 405, 409, 410, 422, 451] },
+      // @octokit/plugin-request-log narrates every request, and its failure line goes to
+      // `log.error`, which Octokit sends to console.error by default. That is how a bare
+      // `GET /user - 401 with id ABCD:... in 570ms` came to print above the CLI's own friendly
+      // "Could not authenticate to GitHub" message, reading like a crash. Nothing is swallowed by
+      // dropping it: the RequestError itself is still thrown to the caller, which is what decides
+      // what the user sees. `warn` stays on the console because it carries messages of substance
+      // that have no other route out: GitHub's deprecation notices (@octokit/request,
+      // plugin-rest-endpoint-methods) and this constructor's own rate-limit hooks above. In this
+      // dependency tree plugin-request-log is the only caller of log.debug/info/error.
+      log: { debug: () => {}, info: () => {}, error: () => {}, warn: console.warn.bind(console) },
     });
     this.wireConditionalCache();
   }
@@ -245,9 +259,9 @@ export class OctokitGateway implements GitHubGateway {
     const items = await this.kit.paginate(this.kit.issues.listLabelsForRepo, { owner, repo: name, per_page: 100 });
     return items.map((l) => ({ name: l.name, color: l.color, description: l.description ?? "" }));
   }
-  async ensureLabel(repo: string, label: LabelSpec): Promise<"created" | "updated" | "unchanged"> {
+  async ensureLabel(repo: string, label: LabelSpec, known?: readonly LabelSpec[]): Promise<"created" | "updated" | "unchanged"> {
     const [owner, name] = split(repo);
-    const existing = (await this.listLabels(repo)).find((l) => l.name === label.name);
+    const existing = (known ?? await this.listLabels(repo)).find((l) => l.name === label.name);
     if (!existing) { await this.kit.issues.createLabel({ owner, repo: name, ...label }); return "created"; }
     if (existing.color !== label.color || existing.description !== label.description) {
       await this.kit.issues.updateLabel({ owner, repo: name, name: label.name, color: label.color, description: label.description });

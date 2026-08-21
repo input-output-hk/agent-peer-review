@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+// Strict, not stripping: an unknown key is a typo or a field an older version wrote, and either way
+// the value the user meant to set is not in effect. zod's default strip mode discarded it silently,
+// which hurts most on knownAgentLogins, the one field whose failure mode is a safety gate quietly
+// treating a peer agent as a human. schemas/config.schema.json has always published
+// additionalProperties: false, so this makes the runtime agree with the schema. loadConfig turns the
+// resulting error into a message naming the key (see core/config.ts).
 export const ConfigSchema = z.object({
   githubLogin: z.string().nullable().default(null),
   defaultRepo: z.string().optional(),
@@ -32,7 +38,7 @@ export const ConfigSchema = z.object({
   // leaving it undefined when unset avoids widening every other Config literal across the
   // codebase with a field it does not use.
   mergeMethodByRepo: z.record(z.string(), z.enum(["merge", "squash", "rebase"])).optional(),
-});
+}).strict();
 export type Config = z.infer<typeof ConfigSchema>;
 
 export const ReviewRequestSchema = z.object({

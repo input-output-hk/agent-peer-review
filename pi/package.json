@@ -11,6 +11,7 @@
   "pi": { "extensions": ["./dist/extension.js"], "skills": ["./skills"] },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

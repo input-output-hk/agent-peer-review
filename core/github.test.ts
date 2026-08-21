@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { OctokitGateway } from "./github.js";
+import type { LabelSpec } from "./model.js";
 
 describe("OctokitGateway construction", () => {
   it("constructs with a token without throwing (throttling + retry plugins registered)", () => {
@@ -689,5 +690,98 @@ describe("OctokitGateway.listOpenSecurityAlertCount", () => {
   it("propagates other errors", async () => {
     const { fetch } = fakeAlertsFetch({ "o/4": { status: 400 } });
     await expect(new OctokitGateway("fake-token", fetch).listOpenSecurityAlertCount("o/4")).rejects.toThrow();
+  });
+});
+
+// A fake fetch over one repository's labels: GET lists whatever the test seeded, POST and PATCH
+// answer success without recording state. `calls` is what matters here, since these tests are about
+// how many round trips each path costs.
+function fakeLabelFetch(existing: LabelSpec[]) {
+  const calls: string[] = [];
+  const fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === "string" ? input : input.toString();
+    const method = (init?.method ?? "GET").toUpperCase();
+    calls.push(`${method} ${new URL(url).pathname}`);
+    const body = method === "GET" ? existing : { ok: true };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } });
+  }) as typeof globalThis.fetch;
+  return { fetch, calls };
+}
+
+const TRIGGER_LABEL: LabelSpec = { name: "ai-review", color: "0e8a16", description: "Request an AI agent review" };
+
+describe("OctokitGateway.ensureLabel", () => {
+  it("lists the repository's labels itself when the caller passes no snapshot", async () => {
+    const { fetch, calls } = fakeLabelFetch([]);
+    const gw = new OctokitGateway("fake-token", fetch);
+    expect(await gw.ensureLabel("o/r", TRIGGER_LABEL)).toBe("created");
+    expect(calls).toEqual(["GET /repos/o/r/labels", "POST /repos/o/r/labels"]);
+  });
+
+  it("decides from a snapshot the caller already has, without listing again", async () => {
+    const { fetch, calls } = fakeLabelFetch([]);
+    const gw = new OctokitGateway("fake-token", fetch);
+    expect(await gw.ensureLabel("o/r", TRIGGER_LABEL, [])).toBe("created");
+    expect(calls).toEqual(["POST /repos/o/r/labels"]); // no list: that is the point of the parameter
+  });
+
+  it("reports unchanged from a snapshot without writing or listing anything", async () => {
+    const { fetch, calls } = fakeLabelFetch([]);
+    const gw = new OctokitGateway("fake-token", fetch);
+    expect(await gw.ensureLabel("o/r", TRIGGER_LABEL, [TRIGGER_LABEL])).toBe("unchanged");
+    expect(calls).toEqual([]);
+  });
+
+  it("updates a drifted label found in the snapshot, exactly as it would from its own list", async () => {
+    const drifted: LabelSpec = { ...TRIGGER_LABEL, description: "an older description" };
+    const { fetch: passed, calls: passedCalls } = fakeLabelFetch([]);
+    expect(await new OctokitGateway("fake-token", passed).ensureLabel("o/r", TRIGGER_LABEL, [drifted])).toBe("updated");
+    expect(passedCalls).toEqual(["PATCH /repos/o/r/labels/ai-review"]);
+
+    const { fetch: listed, calls: listedCalls } = fakeLabelFetch([drifted]);
+    expect(await new OctokitGateway("fake-token", listed).ensureLabel("o/r", TRIGGER_LABEL)).toBe("updated");
+    expect(listedCalls).toEqual(["GET /repos/o/r/labels", "PATCH /repos/o/r/labels/ai-review"]);
+  });
+});
+
+describe("OctokitGateway request logging", () => {
+  // Issue #67 item 5: @octokit/plugin-request-log narrates a failed request through log.error, which
+  // Octokit routes to console.error by default, so `GET /user - 401 with id ... in 570ms` printed
+  // above the CLI's own friendly message and read like a crash.
+  it("does not narrate a failed request to the console, and still throws the error", async () => {
+    const fetch = (async () => new Response(JSON.stringify({ message: "Bad credentials" }), {
+      status: 401, headers: { "content-type": "application/json; charset=utf-8" },
+    })) as typeof globalThis.fetch;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const gw = new OctokitGateway("bad-token", fetch);
+      await expect(gw.getAuthenticatedLogin()).rejects.toThrow(/Bad credentials/);
+      expect(errors).not.toHaveBeenCalled(); // the caller decides what the user sees
+      expect(logs).not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+      logs.mockRestore();
+    }
+  });
+
+  it("leaves warnings alone: a GitHub deprecation notice still reaches the console", async () => {
+    // @octokit/request warns on a `deprecation` response header. Nothing else routes that message
+    // anywhere, so silencing warn would lose it outright.
+    const fetch = (async () => new Response(JSON.stringify({ login: "me" }), {
+      status: 200,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        deprecation: "Tue, 01 Sep 2026 00:00:00 GMT",
+        sunset: "Tue, 01 Dec 2026 00:00:00 GMT",
+      },
+    })) as typeof globalThis.fetch;
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await new OctokitGateway("fake-token", fetch).getAuthenticatedLogin()).toBe("me");
+      expect(warns).toHaveBeenCalled();
+    } finally {
+      warns.mockRestore();
+    }
   });
 });

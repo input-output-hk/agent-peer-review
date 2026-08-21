@@ -9,7 +9,7 @@ import {
   createReview, listReviews, claimReview, completeReview, enrichReview,
 } from "../core/index.js";
 import { printJson, printLine, printErrLine } from "./render.js";
-import { runInit } from "./init.js";
+import { runInit, promptForInit, describeInitFailure, parseList } from "./init.js";
 
 const program = new Command();
 program.name("agent-review").description("Minimal async PR review over GitHub").version("0.5.0");
@@ -22,7 +22,7 @@ const repoOf = (o: { repo?: string }): string => {
   if (!r) throw new Error("--repo is required (or set defaultRepo in your config)");
   return r;
 };
-const csv = (v?: string): string[] => (v ? v.split(",").map((s) => s.trim()).filter(Boolean) : []);
+const csv = (v?: string): string[] => (v ? parseList(v) : []);
 const readMaybeFile = (v: string): string => (v.startsWith("@") ? readFileSync(v.slice(1), "utf8") : v);
 
 program.command("config").description("Show the resolved machine config").action(() => printJson(cfg()));
@@ -47,28 +47,12 @@ program.command("labels")
 
 const REPO_HINT = "Pass one or more --repo <owner/name>, or run `agent-review init` interactively from a terminal (without --yes).";
 
-function isAuthError(e: unknown): boolean {
-  const err = e as { status?: number; message?: string };
-  if (err?.status === 401) return true;
-  return /token|credentials|authenticat/i.test(err?.message ?? "");
-}
-
-async function promptForInit(): Promise<{ repos: string[]; captureMetadata: boolean; model?: string; agent?: string }> {
+// The interactive questions themselves live in cli/init.ts over an injected `ask`; this only binds
+// them to a real terminal.
+async function askInteractively(): Promise<Awaited<ReturnType<typeof promptForInit>>> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const repoAnswer = await rl.question("Repositories to bootstrap (owner/name, comma-separated): ");
-    const repos = csv(repoAnswer);
-    const captureAnswer = await rl.question(
-      "Enable review metadata capture? This writes model/agent/machine into the public review (y/N): ",
-    );
-    const captureMetadata = ["y", "yes"].includes(captureAnswer.trim().toLowerCase());
-    let model: string | undefined;
-    let agent: string | undefined;
-    if (captureMetadata) {
-      model = (await rl.question("Model identifier (optional, press enter to skip): ")).trim() || undefined;
-      agent = (await rl.question("Agent/host identifier (optional, press enter to skip): ")).trim() || undefined;
-    }
-    return { repos, captureMetadata, model, agent };
+    return await promptForInit((question) => rl.question(question));
   } finally {
     rl.close();
   }
@@ -89,6 +73,8 @@ program.command("init")
     let captureMetadata = opts.captureMetadata;
     let model = opts.model;
     let agent = opts.agent;
+    let reviewers = opts.reviewer;
+    let knownAgentLogins = opts.knownAgentLogin;
 
     if (repos.length === 0) {
       if (opts.yes || !process.stdin.isTTY) {
@@ -96,11 +82,13 @@ program.command("init")
         process.exitCode = 1;
         return;
       }
-      const answers = await promptForInit();
+      const answers = await askInteractively();
       repos = answers.repos;
       if (captureMetadata === undefined) captureMetadata = answers.captureMetadata;
       model = model ?? answers.model;
       agent = agent ?? answers.agent;
+      reviewers = reviewers ?? answers.reviewers;
+      knownAgentLogins = knownAgentLogins ?? answers.knownAgentLogins;
     }
 
     if (repos.length === 0) {
@@ -112,10 +100,7 @@ program.command("init")
     let result;
     try {
       result = await runInit(
-        {
-          repos, captureMetadata, model, agent, toolVersion: opts.toolVersion,
-          reviewers: opts.reviewer, knownAgentLogins: opts.knownAgentLogin,
-        },
+        { repos, captureMetadata, model, agent, toolVersion: opts.toolVersion, reviewers, knownAgentLogins },
         {
           gateway: gh(),
           home: ensureAgentHome(),
@@ -125,8 +110,7 @@ program.command("init")
         },
       );
     } catch (e) {
-      if (isAuthError(e)) printLine("Could not authenticate to GitHub. Set GITHUB_TOKEN or run `gh auth login`.");
-      else printLine(`Error: ${(e as Error).message}`);
+      for (const line of describeInitFailure(e)) printLine(line);
       process.exitCode = 1;
       return;
     }
@@ -136,6 +120,18 @@ program.command("init")
     for (const b of result.bootstrapped) {
       printLine(`Bootstrapped ${b.repo}: created [${b.created.join(", ")}], unchanged [${b.unchanged.join(", ")}]`);
     }
+    // The three fields that decide whether the next command works. Each is named either way, set or
+    // unset, so a successful init cannot hide the one thing still missing.
+    printLine(
+      result.defaultRepo !== undefined
+        ? `Default repo: ${result.defaultRepo}`
+        : "Default repo: (none set; every command needs --repo until \"defaultRepo\" names one)",
+    );
+    printLine(
+      result.reviewers.length > 0
+        ? `Default reviewers: ${result.reviewers.join(", ")}`
+        : "Default reviewers: (none set; `request` needs --reviewers until --reviewer lists your peer agents)",
+    );
     printLine(
       result.knownAgentLogins.length > 0
         ? `Known agent logins: ${result.knownAgentLogins.join(", ")}`
